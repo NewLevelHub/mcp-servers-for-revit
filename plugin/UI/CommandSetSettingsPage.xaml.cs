@@ -407,6 +407,19 @@ namespace revit_mcp_plugin.UI
                               MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
+
+        private void OpenLogsFolderButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Process.Start("explorer.exe", PathManager.GetLogsDirectoryPath());
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error opening Logs folder: {ex.Message}", "Error",
+                              MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
     }
 
     // Data models
