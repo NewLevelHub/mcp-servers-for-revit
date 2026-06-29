@@ -3,9 +3,14 @@ import * as os from "os";
 import * as path from "path";
 import { RevitClientConnection } from "./SocketClient.js";
 
-// Mutex to serialize all Revit connections - prevents race conditions
+// Mutex to serialize all Revit commands - prevents race conditions
 // when multiple requests are made in parallel
 let connectionMutex: Promise<void> = Promise.resolve();
+
+const REVIT_HOST = "localhost";
+const REVIT_PORT = 8080;
+
+let sharedClient: RevitClientConnection | null = null;
 
 const LOG_DIR = path.join(os.homedir(), ".mcp-servers-for-revit", "logs");
 
@@ -85,8 +90,17 @@ function wrapSendCommand(client: RevitClientConnection): void {
   };
 }
 
+function getSharedClient(): RevitClientConnection {
+  if (!sharedClient) {
+    sharedClient = new RevitClientConnection(REVIT_HOST, REVIT_PORT);
+    wrapSendCommand(sharedClient);
+  }
+  return sharedClient;
+}
+
 /**
  * Connect to the Revit client and execute an operation.
+ * Reuses a single persistent connection for the MCP server process lifetime.
  */
 export async function withRevitConnection<T>(
   operation: (client: RevitClientConnection) => Promise<T>
@@ -98,40 +112,20 @@ export async function withRevitConnection<T>(
   });
   await previousMutex;
 
-  const revitClient = new RevitClientConnection("localhost", 8080);
-  wrapSendCommand(revitClient);
+  const revitClient = getSharedClient();
 
   try {
-    if (!revitClient.isConnected) {
-      await new Promise<void>((resolve, reject) => {
-        const onConnect = () => {
-          revitClient.socket.removeListener("connect", onConnect);
-          revitClient.socket.removeListener("error", onError);
-          resolve();
-        };
-
-        const onError = () => {
-          revitClient.socket.removeListener("connect", onConnect);
-          revitClient.socket.removeListener("error", onError);
-          reject(new Error("connect to revit client failed"));
-        };
-
-        revitClient.socket.on("connect", onConnect);
-        revitClient.socket.on("error", onError);
-
-        revitClient.connect();
-
-        setTimeout(() => {
-          revitClient.socket.removeListener("connect", onConnect);
-          revitClient.socket.removeListener("error", onError);
-          reject(new Error("连接到Revit客户端失败"));
-        }, 5000);
-      });
-    }
-
+    await revitClient.ensureConnected();
     return await operation(revitClient);
   } finally {
-    revitClient.disconnect();
     releaseMutex!();
+  }
+}
+
+/** Closes the persistent connection (e.g. on server shutdown). */
+export function closeRevitConnection(): void {
+  if (sharedClient) {
+    sharedClient.disconnect();
+    sharedClient = null;
   }
 }
