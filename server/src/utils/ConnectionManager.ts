@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import {
+  invalidateCacheForBatchResults,
   invalidateModelStatisticsCache,
   modelStatisticsCache,
   shouldInvalidateCacheForCommand,
@@ -70,7 +71,9 @@ function wrapSendCommand(client: RevitClientConnection): void {
 
       modelStatisticsCache.updateLastKnownProjectNameFromResponse(result);
 
-      if (shouldInvalidateCacheForCommand(command)) {
+      if (command === "batch_execute") {
+        invalidateCacheForBatchResults(result);
+      } else if (shouldInvalidateCacheForCommand(command)) {
         const projectName =
           result &&
           typeof result === "object" &&

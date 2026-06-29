@@ -182,6 +182,11 @@
       "commandName": "create_finish_schedule",
       "description": "Create a room finish schedule from export_room_finish_data with project template support",
       "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "batch_execute",
+      "description": "Execute multiple Revit commands in one request with partial success (plugin built-in, max 20 commands)",
+      "assemblyPath": "plugin:builtin"
     }
   ]
 }

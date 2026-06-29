@@ -222,6 +222,13 @@ namespace revit_mcp_plugin.Core
                 bool success = IsSuccessResponse(responseJson);
                 string errorDetails = success ? null : ExtractErrorDetails(responseJson);
                 LogRequestMetrics(commandName, stopwatch, responseJson, success, errorDetails);
+
+                if (string.Equals(commandName, CommandExecutor.BatchExecuteMethod, StringComparison.OrdinalIgnoreCase)
+                    && success)
+                {
+                    LogBatchSubCommandMetrics(responseJson);
+                }
+
                 return responseJson;
             }
             catch (JsonException ex)
@@ -261,6 +268,43 @@ namespace revit_mcp_plugin.Core
                 success,
                 Encoding.UTF8.GetByteCount(responseJson ?? string.Empty),
                 errorDetails);
+        }
+
+        private void LogBatchSubCommandMetrics(string responseJson)
+        {
+            try
+            {
+                var response = JObject.Parse(responseJson);
+                var results = response["result"]?["results"] as JArray;
+                if (results == null)
+                    return;
+
+                foreach (var item in results)
+                {
+                    var command = item["command"]?.ToString() ?? "unknown";
+                    var success = item["success"]?.Value<bool>() ?? false;
+                    string errorDetails = null;
+
+                    if (!success)
+                    {
+                        var error = item["error"];
+                        errorDetails = error?["data"]?["stackTrace"]?.ToString()
+                            ?? error?["message"]?.ToString();
+                    }
+
+                    var itemJson = item.ToString(Formatting.None);
+                    _logger.LogCommandMetrics(
+                        $"{CommandExecutor.BatchExecuteMethod}:{command}",
+                        0,
+                        success,
+                        Encoding.UTF8.GetByteCount(itemJson),
+                        errorDetails);
+                }
+            }
+            catch
+            {
+                // Metrics logging should not affect command execution.
+            }
         }
 
         private static bool IsSuccessResponse(string responseJson)

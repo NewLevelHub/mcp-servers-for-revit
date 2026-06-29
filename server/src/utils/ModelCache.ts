@@ -168,6 +168,32 @@ export function shouldInvalidateCacheForCommand(command: string): boolean {
   return MUTATING_COMMANDS.has(command);
 }
 
+export function invalidateCacheForBatchResults(result: unknown): void {
+  if (!result || typeof result !== "object" || !("results" in result)) {
+    return;
+  }
+
+  const results = (result as { results: unknown }).results;
+  if (!Array.isArray(results)) {
+    return;
+  }
+
+  for (const item of results) {
+    if (
+      item &&
+      typeof item === "object" &&
+      "success" in item &&
+      (item as { success: unknown }).success === true &&
+      "command" in item &&
+      typeof (item as { command: unknown }).command === "string" &&
+      shouldInvalidateCacheForCommand((item as { command: string }).command)
+    ) {
+      invalidateModelStatisticsCache();
+      return;
+    }
+  }
+}
+
 export function invalidateModelStatisticsCache(projectName?: string): void {
   modelStatisticsCache.invalidate(projectName);
 }

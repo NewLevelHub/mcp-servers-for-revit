@@ -83,6 +83,23 @@ namespace revit_mcp_plugin.UI
                             // Loop through each command
                             foreach (var command in commandSetData.Commands)
                             {
+                                if (!string.IsNullOrEmpty(command.AssemblyPath) &&
+                                    command.AssemblyPath.StartsWith("plugin:", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    var builtInConfig = new CommandConfig
+                                    {
+                                        CommandName = command.CommandName,
+                                        Description = command.Description,
+                                        AssemblyPath = command.AssemblyPath,
+                                        Enabled = true,
+                                        SupportedRevitVersions = versionDirectories.ToArray()
+                                    };
+
+                                    newCommandSet.Commands.Add(builtInConfig);
+                                    availableCommandNames.Add(command.CommandName);
+                                    continue;
+                                }
+
                                 // 创建一个命令配置，但通过检查文件夹确定支持的版本
                                 List<string> supportedCommandVersions = new List<string>();
                                 string dllBasePath = null;
@@ -250,6 +267,9 @@ namespace revit_mcp_plugin.UI
             {
                 foreach (var command in currentCommands)
                 {
+                    if (command.IsBuiltIn)
+                        continue;
+
                     command.Enabled = true;
                 }
 
@@ -265,6 +285,9 @@ namespace revit_mcp_plugin.UI
             {
                 foreach (var command in currentCommands)
                 {
+                    if (command.IsBuiltIn)
+                        continue;
+
                     command.Enabled = false;
                 }
 
@@ -329,6 +352,9 @@ namespace revit_mcp_plugin.UI
 
                     foreach (var command in commandSet.Commands)
                     {
+                        if (command.IsBuiltIn)
+                            continue;
+
                         // 只添加启用的命令到注册表
                         if (command.Enabled)
                         {
