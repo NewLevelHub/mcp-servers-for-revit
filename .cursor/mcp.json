@@ -1,8 +1,10 @@
 {
-    "mcpServers": {
-      "mcp-server-for-revit": {
-        "command": "node",
-        "args": ["C:/Users/yessimkhanuly13/Desktop/mcp-servers-for-revit/server/build/index.js"]
-      }
+  "mcpServers": {
+    "mcp-server-for-revit": {
+      "command": "node",
+      "args": [
+        "C:/Mac/Home/Documents/NewLevelHub/mcp-servers-for-revit/server/build/index.js"
+      ]
     }
   }
+}

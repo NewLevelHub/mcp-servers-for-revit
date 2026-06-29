@@ -49,18 +49,35 @@ namespace revit_mcp_plugin.Core
                 }
                 catch (CommandExecutionException ex)
                 {
-                    _logger.Error("命令 {0} 执行失败: {1}\nCommand {0} failed to execute: {1}", request.Method, ex.Message);
-                    return CreateErrorResponse(request.Id,
-                        ex.ErrorCode,
+                    _logger.Error(
+                        "命令 {0} 执行失败: {1}\nCommand {0} failed to execute: {1}\n{2}",
+                        request.Method,
                         ex.Message,
-                        ex.ErrorData);
+                        ex.ToString());
+                    var errorData = new JObject
+                    {
+                        ["stackTrace"] = ex.ToString(),
+                        ["revitMessage"] = ex.Message
+                    };
+                    if (ex.ErrorData != null)
+                    {
+                        errorData["details"] = ex.ErrorData is JToken token
+                            ? token
+                            : JToken.FromObject(ex.ErrorData);
+                    }
+                    return CreateErrorResponse(request.Id, ex.ErrorCode, ex.Message, errorData);
                 }
                 catch (Exception ex)
                 {
-                    _logger.Error("命令 {0} 执行时发生异常: {1}\nAn exception occurred while executing command {0}: {1}", request.Method, ex.Message);
+                    _logger.Error(
+                        "命令 {0} 执行时发生异常: {1}\nAn exception occurred while executing command {0}: {1}\n{2}",
+                        request.Method,
+                        ex.Message,
+                        ex.ToString());
                     return CreateErrorResponse(request.Id,
                         JsonRPCErrorCodes.InternalError,
-                        ex.Message);
+                        ex.Message,
+                        new { stackTrace = ex.ToString(), revitMessage = ex.Message });
                 }
             }
             catch (Exception ex)
