@@ -11,15 +11,20 @@ namespace RevitMCPCommandSet.Services.DataExtraction
     {
         private bool _includeUnplacedRooms;
         private bool _includeNotEnclosedRooms;
+        private bool _includeMaterials = true;
 
         public ExportRoomFinishDataResult ResultInfo { get; private set; }
         public bool TaskCompleted { get; private set; }
         private readonly ManualResetEvent _resetEvent = new ManualResetEvent(false);
 
-        public void SetParameters(bool includeUnplacedRooms = false, bool includeNotEnclosedRooms = false)
+        public void SetParameters(
+            bool includeUnplacedRooms = false,
+            bool includeNotEnclosedRooms = false,
+            bool includeMaterials = true)
         {
             _includeUnplacedRooms = includeUnplacedRooms;
             _includeNotEnclosedRooms = includeNotEnclosedRooms;
+            _includeMaterials = includeMaterials;
             TaskCompleted = false;
             _resetEvent.Reset();
         }
@@ -60,7 +65,8 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                     if (!_includeNotEnclosedRooms && room.Area == 0)
                         continue;
 
-                    var roomData = ExtractRoomFinishData(doc, room, boundaryOptions, ref geometryCalculator);
+                    var roomData = ExtractRoomFinishData(
+                        doc, room, boundaryOptions, ref geometryCalculator, _includeMaterials);
                     if (roomData.Warnings.Count > 0)
                         roomsWithMissingFinishes++;
 
@@ -107,7 +113,8 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             Document doc,
             Room room,
             SpatialElementBoundaryOptions boundaryOptions,
-            ref SpatialElementGeometryCalculator geometryCalculator)
+            ref SpatialElementGeometryCalculator geometryCalculator,
+            bool includeMaterials)
         {
             var roomData = new RoomFinishDataModel
             {
@@ -130,7 +137,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             roomData.CeilingFinish = GetFinishParameter(
                 room, BuiltInParameter.ROOM_FINISH_CEILING, "ceiling", roomData.Warnings);
 
-            if (room.Area > 0)
+            if (includeMaterials && room.Area > 0)
             {
                 roomData.Materials = ExtractFaceMaterials(doc, room, boundaryOptions, ref geometryCalculator);
             }
