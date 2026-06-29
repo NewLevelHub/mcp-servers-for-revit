@@ -94,6 +94,11 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "validate_schedule",
+      "description": "Compare schedule element counts against model elements for Doors, Windows, or Floors",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "create_grid",
       "description": "Create grid system with smart spacing generation for project layout (alphabetic/numeric naming)",
       "assemblyPath": "RevitMCPCommandSet.dll"
