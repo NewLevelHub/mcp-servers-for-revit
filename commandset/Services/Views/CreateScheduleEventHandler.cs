@@ -41,8 +41,11 @@ public class CreateScheduleEventHandler : IExternalEventHandler, IWaitableExtern
                 schedule = CreateOrDuplicateSchedule(doc, _scheduleInfo, warnings);
                 ConfigureScheduleDefinition(doc, schedule, _scheduleInfo, warnings);
                 ApplyDisplayOptions(schedule, _scheduleInfo, warnings);
+                SyncViewPhase(doc, schedule, app.ActiveUIDocument?.ActiveView, _scheduleInfo, warnings);
                 tx.Commit();
             }
+
+            RefreshScheduleView(app, schedule, warnings);
 
             var definition = schedule.Definition;
             ResultInfo = new ScheduleCreationResult
@@ -255,6 +258,105 @@ public class CreateScheduleEventHandler : IExternalEventHandler, IWaitableExtern
             catch (Exception ex)
             {
                 warnings.Add($"Failed to add group field '{groupInfo.FieldName}': {ex.Message}");
+            }
+        }
+    }
+
+    private static void SyncViewPhase(
+        Document doc,
+        ViewSchedule schedule,
+        View activeView,
+        ScheduleCreationInfo info,
+        List<string> warnings)
+    {
+        try
+        {
+            var targetPhaseId = activeView?.get_Parameter(BuiltInParameter.VIEW_PHASE)?.AsElementId();
+            if (targetPhaseId == null || targetPhaseId == ElementId.InvalidElementId)
+                targetPhaseId = null;
+
+            if (targetPhaseId != null)
+                SetViewPhase(schedule, targetPhaseId);
+
+            if (IsRoomsCategory(info) && CountRoomsInSchedule(doc, schedule) == 0)
+            {
+                var roomPhaseId = GetPrimaryRoomPhaseId(doc);
+                if (roomPhaseId != null && roomPhaseId != ElementId.InvalidElementId)
+                {
+                    SetViewPhase(schedule, roomPhaseId);
+                    var phaseName = doc.GetElement(roomPhaseId)?.Name ?? roomPhaseId.ToString();
+                    warnings.Add(
+                        $"Schedule view phase set to '{phaseName}' so placed rooms appear in the schedule.");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            warnings.Add($"Failed to sync schedule view phase: {ex.Message}");
+        }
+    }
+
+    private static void SetViewPhase(View view, ElementId phaseId)
+    {
+        var phaseParam = view.get_Parameter(BuiltInParameter.VIEW_PHASE);
+        if (phaseParam != null && !phaseParam.IsReadOnly)
+            phaseParam.Set(phaseId);
+    }
+
+    private static int CountRoomsInSchedule(Document doc, ViewSchedule schedule)
+    {
+        return new FilteredElementCollector(doc, schedule.Id)
+            .OfCategory(BuiltInCategory.OST_Rooms)
+            .WhereElementIsNotElementType()
+            .GetElementCount();
+    }
+
+    private static ElementId GetPrimaryRoomPhaseId(Document doc)
+    {
+        var room = new FilteredElementCollector(doc)
+            .OfCategory(BuiltInCategory.OST_Rooms)
+            .WhereElementIsNotElementType()
+            .FirstOrDefault(element => element.get_Parameter(BuiltInParameter.ROOM_AREA)?.AsDouble() > 0);
+
+        return room?.get_Parameter(BuiltInParameter.ROOM_PHASE)?.AsElementId();
+    }
+
+    private static bool IsRoomsCategory(ScheduleCreationInfo info)
+    {
+        if (info.CategoryId > 0)
+            return info.CategoryId == (int)BuiltInCategory.OST_Rooms;
+
+        return info.CategoryName?.Trim().Equals("Rooms", StringComparison.OrdinalIgnoreCase) == true
+            || info.CategoryName?.Trim().Equals("Room", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    private static void RefreshScheduleView(UIApplication app, ViewSchedule schedule, List<string> warnings)
+    {
+        var uiDoc = app.ActiveUIDocument;
+        if (uiDoc == null)
+            return;
+
+        var previousView = uiDoc.ActiveView;
+        try
+        {
+            uiDoc.ActiveView = schedule;
+            uiDoc.RefreshActiveView();
+        }
+        catch (Exception ex)
+        {
+            warnings.Add($"Schedule created but view refresh skipped: {ex.Message}");
+            return;
+        }
+
+        if (previousView != null && previousView.Id != schedule.Id)
+        {
+            try
+            {
+                uiDoc.ActiveView = previousView;
+            }
+            catch (Exception ex)
+            {
+                warnings.Add($"Restored previous view after schedule refresh: {ex.Message}");
             }
         }
     }
