@@ -134,6 +134,11 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "dimension_room_walls",
+      "description": "Create chained wall dimensions for a room on the active floor plan",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "create_door_schedule",
       "description": "Export structured door schedule data grouped by family type with mark, size, level, and count",
       "assemblyPath": "RevitMCPCommandSet.dll"
