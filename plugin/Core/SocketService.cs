@@ -109,11 +109,13 @@ namespace revit_mcp_plugin.Core
                 {
                     IsBackground = true
                 };
-                _listenerThread.Start();              
+                _listenerThread.Start();
+                RibbonStatusManager.UpdateStatus(_isRunning);
             }
             catch (Exception)
             {
                 _isRunning = false;
+                RibbonStatusManager.UpdateStatus(_isRunning);
             }
         }
 
@@ -132,6 +134,8 @@ namespace revit_mcp_plugin.Core
                 {
                     _listenerThread.Join(1000);
                 }
+
+                RibbonStatusManager.UpdateStatus(_isRunning);
             }
             catch (Exception)
             {
