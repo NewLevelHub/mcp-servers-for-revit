@@ -142,6 +142,11 @@
       "commandName": "create_floor_schedule",
       "description": "Export structured floor schedule data grouped by family type with mark, size, level, and count",
       "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "create_schedule",
+      "description": "Create a ViewSchedule from project template with fields, filters, sorting, and grouping",
+      "assemblyPath": "RevitMCPCommandSet.dll"
     }
   ]
 }
