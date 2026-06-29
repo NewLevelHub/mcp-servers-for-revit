@@ -127,6 +127,21 @@
       "commandName": "create_dimensions",
       "description": "Create dimension annotations between elements or points in the current view",
       "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "create_door_schedule",
+      "description": "Export structured door schedule data grouped by family type with mark, size, level, and count",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "create_window_schedule",
+      "description": "Export structured window schedule data grouped by family type with mark, size, level, and count",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "create_floor_schedule",
+      "description": "Export structured floor schedule data grouped by family type with mark, size, level, and count",
+      "assemblyPath": "RevitMCPCommandSet.dll"
     }
   ]
 }
