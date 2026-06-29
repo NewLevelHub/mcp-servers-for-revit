@@ -104,6 +104,11 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "configure_grid_display",
+      "description": "Configure 2D grid extents and bubble display on floor plans for existing grids",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "create_structural_framing_system",
       "description": "Create structural beam framing system with configurable spacing and direction",
       "assemblyPath": "RevitMCPCommandSet.dll"
