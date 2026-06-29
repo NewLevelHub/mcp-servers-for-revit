@@ -26,6 +26,11 @@
                 <CheckBox x:Name="AutoStartCheckBox"
                           Content="Start MCP server automatically when Revit opens"
                           ToolTip="When enabled, the MCP server starts as soon as Revit is ready."/>
+                <TextBlock Text="Command timing and diagnostics are written to the Logs folder."
+                           Foreground="#666666" Margin="0,10,0,6" TextWrapping="Wrap"/>
+                <Button Content="Open Logs Folder" Width="140" Height="28" HorizontalAlignment="Left"
+                        Click="OpenLogsFolderButton_Click"
+                        ToolTip="Open the folder containing command-metrics JSONL files for slow-command analysis."/>
             </StackPanel>
         </Border>
         <!-- Main Content Area -->
