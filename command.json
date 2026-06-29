@@ -79,6 +79,11 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "export_room_finish_data",
+      "description": "Export room finish data: wall/floor/ceiling finish parameters, boundary face materials and areas (read-only)",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "get_material_quantities",
       "description": "Calculate material quantities and takeoffs with area and volume calculations per material",
       "assemblyPath": "RevitMCPCommandSet.dll"
