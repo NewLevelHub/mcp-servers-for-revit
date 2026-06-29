@@ -10,6 +10,7 @@ export class RevitClientConnection {
   isConnected: boolean = false;
   private intentionallyClosed: boolean = false;
   private connectPromise: Promise<void> | null = null;
+  private disconnectCallbacks: Array<() => void> = [];
   responseCallbacks: Map<string, (response: string) => void> = new Map();
   buffer: string = "";
 
@@ -46,7 +47,18 @@ export class RevitClientConnection {
     });
   }
 
+  public onDisconnect(callback: () => void): void {
+    this.disconnectCallbacks.push(callback);
+  }
+
+  private notifyDisconnect(): void {
+    for (const callback of this.disconnectCallbacks) {
+      callback();
+    }
+  }
+
   private handleDisconnect(): void {
+    this.notifyDisconnect();
     this.isConnected = false;
     this.connectPromise = null;
     this.buffer = "";

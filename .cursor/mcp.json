@@ -2,9 +2,7 @@
   "mcpServers": {
     "mcp-server-for-revit-local": {
       "command": "node",
-      "args": [
-        "C:/Users/yessimkhanuly13/Desktop/mcp-servers-for-revit/server/build/index.js"
-      ]
+      "args": ["${workspaceFolder}/server/build/index.js"]
     }
   }
 }

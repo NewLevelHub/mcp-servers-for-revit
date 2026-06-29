@@ -1,6 +1,11 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import {
+  invalidateModelStatisticsCache,
+  modelStatisticsCache,
+  shouldInvalidateCacheForCommand,
+} from "./ModelCache.js";
 import { RevitClientConnection } from "./SocketClient.js";
 
 // Mutex to serialize all Revit commands - prevents race conditions
@@ -62,6 +67,20 @@ function wrapSendCommand(client: RevitClientConnection): void {
     try {
       const result = await originalSendCommand(command, params);
       responseSize = Buffer.byteLength(JSON.stringify(result ?? null), "utf8");
+
+      modelStatisticsCache.updateLastKnownProjectNameFromResponse(result);
+
+      if (shouldInvalidateCacheForCommand(command)) {
+        const projectName =
+          result &&
+          typeof result === "object" &&
+          "projectName" in result &&
+          typeof (result as { projectName: unknown }).projectName === "string"
+            ? (result as { projectName: string }).projectName
+            : modelStatisticsCache.getLastKnownProjectName() ?? undefined;
+        invalidateModelStatisticsCache(projectName);
+      }
+
       logCommandMetrics({
         event: "command",
         timestamp: new Date().toISOString(),
@@ -93,6 +112,7 @@ function wrapSendCommand(client: RevitClientConnection): void {
 function getSharedClient(): RevitClientConnection {
   if (!sharedClient) {
     sharedClient = new RevitClientConnection(REVIT_HOST, REVIT_PORT);
+    sharedClient.onDisconnect(() => invalidateModelStatisticsCache());
     wrapSendCommand(sharedClient);
   }
   return sharedClient;
@@ -125,6 +145,7 @@ export async function withRevitConnection<T>(
 /** Closes the persistent connection (e.g. on server shutdown). */
 export function closeRevitConnection(): void {
   if (sharedClient) {
+    invalidateModelStatisticsCache();
     sharedClient.disconnect();
     sharedClient = null;
   }
