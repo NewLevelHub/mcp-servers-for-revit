@@ -51,9 +51,6 @@ public static class GridDisplayHelper
 
                 try
                 {
-#if REVIT2024_OR_GREATER
-                    grid.ResetExtentsInView(view);
-#endif
                     ApplyGridExtentInView(grid, view, bounds);
 
                     if (options.ShowBubbles)

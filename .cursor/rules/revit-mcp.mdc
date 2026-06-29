@@ -52,7 +52,7 @@ MCP **не создаёт** новый проект. Сообщи пользов
 
 ## ТЭП и ведомости
 
-Данные — через `export_room_data`, `get_material_quantities`, `analyze_model_statistics`.  
+Данные — через `export_tep_data`, `export_room_data`, `get_material_quantities`, `analyze_model_statistics`.  
 Оформление — **только шаблоны проекта**. Нет шаблона → сказать пользователю, не подменять кодом.
 
 ## Карта задач → MCP
@@ -69,7 +69,7 @@ MCP **не создаёт** новый проект. Сообщи пользов
 | Уровни, оси, помещения | `create_level`, `create_grid`, `create_room` |
 | Удаление / видимость | `delete_element`, `operate_element` |
 | Маркировка | `tag_all_rooms`, `tag_all_walls` |
-| Данные для ведомостей | `export_room_data`, `get_material_quantities` |
+| Данные для ведомостей / ТЭП | `export_tep_data`, `export_room_data`, `get_material_quantities` |
 | Спецификации дверей/окон/полов | `create_door_schedule`, `create_window_schedule`, `create_floor_schedule` |
 
 ## Создание здания (порядок вызовов)

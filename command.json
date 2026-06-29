@@ -79,6 +79,11 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "export_tep_data",
+      "description": "Aggregate structured TEP data: building footprint, total area, storey count, per-level areas, volume, rooms by purpose",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "export_room_finish_data",
       "description": "Export room finish data: wall/floor/ceiling finish parameters, boundary face materials and areas (read-only)",
       "assemblyPath": "RevitMCPCommandSet.dll"
