@@ -76,6 +76,12 @@ public class CreateSheetTests : RevitApiTest
         ViewSheet sheet = null;
         ViewPlan floorPlan = null;
         Viewport viewport = null;
+        List<string> warnings = null;
+        var placementInfo = new ViewportCreationInfo
+        {
+            PositionX = 10000,
+            PositionY = 10000
+        };
 
         using (var tx = new Transaction(_doc, "Place Floor Plan Test"))
         {
@@ -92,13 +98,14 @@ public class CreateSheetTests : RevitApiTest
 
             await Assert.That(floorPlan).IsNotNull();
 
-            var location = new XYZ(300.0 / 304.8, 200.0 / 304.8, 0);
-            viewport = Viewport.Create(_doc, sheet.Id, floorPlan.Id, location);
+            viewport = InvokePlaceViewport(sheet, floorPlan, placementInfo, out warnings);
 
             tx.Commit();
         }
 
         await Assert.That(viewport).IsNotNull();
+        await AssertOutlineInsideSheet(viewport.GetBoxOutline(), sheet.Outline);
+        await Assert.That(warnings.Any(w => w.Contains("Viewport position was clamped", StringComparison.Ordinal))).IsTrue();
     }
 
     [Test]
@@ -113,6 +120,12 @@ public class CreateSheetTests : RevitApiTest
         ViewSheet sheet = null;
         ViewSchedule schedule = null;
         ScheduleSheetInstance instance = null;
+        List<string> warnings = null;
+        var placementInfo = new ViewportCreationInfo
+        {
+            PositionX = 10000,
+            PositionY = 10000
+        };
 
         using (var tx = new Transaction(_doc, "Place Schedule Test"))
         {
@@ -125,13 +138,16 @@ public class CreateSheetTests : RevitApiTest
             schedule = ViewSchedule.CreateSchedule(_doc, new ElementId(BuiltInCategory.OST_Doors));
             schedule.Name = "MCP Door Schedule Placement Test";
 
-            var origin = new XYZ(100.0 / 304.8, 100.0 / 304.8, 0);
-            instance = ScheduleSheetInstance.Create(_doc, sheet.Id, schedule.Id, origin);
+            instance = InvokePlaceSchedule(sheet, schedule, placementInfo, out warnings);
 
             tx.Commit();
         }
 
         await Assert.That(instance).IsNotNull();
+        var scheduleOutline = GetElementOutlineOnSheet(instance, sheet);
+        await Assert.That(scheduleOutline).IsNotNull();
+        await AssertOutlineInsideSheet(scheduleOutline, sheet.Outline);
+        await Assert.That(warnings.Any(w => w.Contains("Schedule position was clamped", StringComparison.Ordinal))).IsTrue();
     }
 
     [Test]
@@ -148,15 +164,17 @@ public class CreateSheetTests : RevitApiTest
         ViewSchedule schedule = null;
         Viewport viewport = null;
         ScheduleSheetInstance scheduleInstance = null;
+        List<string> viewportWarnings = null;
+        List<string> scheduleWarnings = null;
         var placementInfo = new ViewportCreationInfo
         {
-            PositionX = 250,
-            PositionY = 250
+            PositionX = 10000,
+            PositionY = 10000
         };
         var schedulePlacementInfo = new ViewportCreationInfo
         {
-            PositionX = 600,
-            PositionY = 250
+            PositionX = 10000,
+            PositionY = 10000
         };
 
         using (var tx = new Transaction(_doc, "Sheet Plan Schedule Scenario"))
@@ -172,11 +190,13 @@ public class CreateSheetTests : RevitApiTest
                 .Cast<ViewPlan>()
                 .FirstOrDefault(v => v.ViewType == ViewType.FloorPlan);
 
+            await Assert.That(floorPlan).IsNotNull();
+
             schedule = ViewSchedule.CreateSchedule(_doc, new ElementId(BuiltInCategory.OST_Doors));
             schedule.Name = "MCP Scenario Door Schedule";
 
-            viewport = InvokePlaceViewport(sheet, floorPlan, placementInfo);
-            scheduleInstance = InvokePlaceSchedule(sheet, schedule, schedulePlacementInfo);
+            viewport = InvokePlaceViewport(sheet, floorPlan, placementInfo, out viewportWarnings);
+            scheduleInstance = InvokePlaceSchedule(sheet, schedule, schedulePlacementInfo, out scheduleWarnings);
 
             tx.Commit();
         }
@@ -185,27 +205,17 @@ public class CreateSheetTests : RevitApiTest
         await Assert.That(viewport).IsNotNull();
         await Assert.That(scheduleInstance).IsNotNull();
 
-        var sheetOutline = sheet.Outline;
-        var viewportOutline = viewport.GetBoxOutline();
-        var viewportCenter = viewport.GetBoxCenter();
-
-        var viewportWidth = viewportOutline.MaximumPoint.X - viewportOutline.MinimumPoint.X;
-        var viewportHeight = viewportOutline.MaximumPoint.Y - viewportOutline.MinimumPoint.Y;
-        var expectedCenterX = sheetOutline.Min.U + (placementInfo.PositionX / 304.8) + viewportWidth / 2.0;
-        var expectedCenterY = sheetOutline.Min.V + (placementInfo.PositionY / 304.8) + viewportHeight / 2.0;
-
-        await Assert.That(viewportOutline.MinimumPoint.X >= sheetOutline.Min.U).IsTrue();
-        await Assert.That(viewportOutline.MinimumPoint.Y >= sheetOutline.Min.V).IsTrue();
-        await Assert.That(viewportOutline.MaximumPoint.X <= sheetOutline.Max.U).IsTrue();
-        await Assert.That(viewportOutline.MaximumPoint.Y <= sheetOutline.Max.V).IsTrue();
-
-        await Assert.That(Math.Abs(viewportCenter.X - expectedCenterX) < 1e-6).IsTrue();
-        await Assert.That(Math.Abs(viewportCenter.Y - expectedCenterY) < 1e-6).IsTrue();
+        await AssertOutlineInsideSheet(viewport.GetBoxOutline(), sheet.Outline);
+        var scheduleOutline = GetElementOutlineOnSheet(scheduleInstance, sheet);
+        await Assert.That(scheduleOutline).IsNotNull();
+        await AssertOutlineInsideSheet(scheduleOutline, sheet.Outline);
+        await Assert.That(viewportWarnings.Any(w => w.Contains("Viewport position was clamped", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(scheduleWarnings.Any(w => w.Contains("Schedule position was clamped", StringComparison.Ordinal))).IsTrue();
     }
 
-    private static Viewport InvokePlaceViewport(ViewSheet sheet, View view, ViewportCreationInfo info)
+    private static Viewport InvokePlaceViewport(ViewSheet sheet, View view, ViewportCreationInfo info, out List<string> warnings)
     {
-        var warnings = new List<string>();
+        warnings = new List<string>();
         var method = typeof(PlaceViewOnSheetEventHandler).GetMethod(
             "PlaceViewport",
             BindingFlags.NonPublic | BindingFlags.Static);
@@ -214,14 +224,33 @@ public class CreateSheetTests : RevitApiTest
         return result as Viewport;
     }
 
-    private static ScheduleSheetInstance InvokePlaceSchedule(ViewSheet sheet, ViewSchedule schedule, ViewportCreationInfo info)
+    private static ScheduleSheetInstance InvokePlaceSchedule(ViewSheet sheet, ViewSchedule schedule, ViewportCreationInfo info, out List<string> warnings)
     {
-        var warnings = new List<string>();
+        warnings = new List<string>();
         var method = typeof(PlaceViewOnSheetEventHandler).GetMethod(
             "PlaceSchedule",
             BindingFlags.NonPublic | BindingFlags.Static);
 
         var result = method?.Invoke(null, new object[] { _doc, sheet, schedule, info, warnings });
         return result as ScheduleSheetInstance;
+    }
+
+    private static Outline GetElementOutlineOnSheet(Element element, ViewSheet sheet)
+    {
+        var bbox = element.get_BoundingBox(sheet);
+        if (bbox == null)
+            return null;
+
+        return new Outline(
+            new XYZ(bbox.Min.X, bbox.Min.Y, 0),
+            new XYZ(bbox.Max.X, bbox.Max.Y, 0));
+    }
+
+    private static async Task AssertOutlineInsideSheet(Outline outline, BoundingBoxUV sheetOutline)
+    {
+        await Assert.That(outline.MinimumPoint.X >= sheetOutline.Min.U).IsTrue();
+        await Assert.That(outline.MinimumPoint.Y >= sheetOutline.Min.V).IsTrue();
+        await Assert.That(outline.MaximumPoint.X <= sheetOutline.Max.U).IsTrue();
+        await Assert.That(outline.MaximumPoint.Y <= sheetOutline.Max.V).IsTrue();
     }
 }

@@ -104,8 +104,13 @@ public class PlaceViewOnSheetEventHandler : IExternalEventHandler, IWaitableExte
         if (alreadyPlaced)
             warnings.Add($"Schedule '{scheduleView.Name}' is already placed on this sheet.");
 
-        var origin = new XYZ(MmToFeet(info.PositionX), MmToFeet(info.PositionY), 0);
+        var sheetOutline = sheet.Outline
+            ?? throw new InvalidOperationException($"Sheet '{sheet.SheetNumber}' has no outline.");
+        var requestedLowerLeft = GetRequestedLowerLeftPoint(sheetOutline, info);
+        var origin = new XYZ(requestedLowerLeft.X, requestedLowerLeft.Y, 0);
         var instance = ScheduleSheetInstance.Create(doc, sheet.Id, scheduleView.Id, origin);
+        doc.Regenerate();
+        ClampScheduleToSheet(doc, sheet, instance, info, warnings);
 
         if (Math.Abs(info.Rotation) > double.Epsilon)
             warnings.Add("Schedule rotation is not supported via API and was ignored.");
@@ -132,7 +137,6 @@ public class PlaceViewOnSheetEventHandler : IExternalEventHandler, IWaitableExte
         try
         {
             viewport = Viewport.Create(doc, sheet.Id, view.Id, GetSheetCenter(sheet));
-            MoveViewportToRequestedLocation(viewport, sheet, info, warnings);
         }
         catch (Exception ex)
         {
@@ -165,6 +169,9 @@ public class PlaceViewOnSheetEventHandler : IExternalEventHandler, IWaitableExte
         if (Math.Abs(info.Rotation) > double.Epsilon)
             warnings.Add("Viewport rotation is not supported in this command and was ignored.");
 
+        doc.Regenerate();
+        MoveViewportToRequestedLocation(viewport, sheet, info, warnings);
+
         return viewport;
     }
 
@@ -186,31 +193,116 @@ public class PlaceViewOnSheetEventHandler : IExternalEventHandler, IWaitableExte
     {
         var sheetOutline = sheet.Outline
             ?? throw new InvalidOperationException($"Sheet '{sheet.SheetNumber}' has no outline.");
-        var viewportOutline = viewport.GetBoxOutline();
 
-        var viewportWidth = viewportOutline.MaximumPoint.X - viewportOutline.MinimumPoint.X;
-        var viewportHeight = viewportOutline.MaximumPoint.Y - viewportOutline.MinimumPoint.Y;
-        var halfWidth = viewportWidth / 2.0;
-        var halfHeight = viewportHeight / 2.0;
+        var requestedLowerLeft = GetRequestedLowerLeftPoint(sheetOutline, info);
+        var requestedCenter = GetCenterForLowerLeft(requestedLowerLeft, viewport.GetBoxOutline());
+        viewport.SetBoxCenter(requestedCenter);
 
-        var requestedLowerLeftX = sheetOutline.Min.U + MmToFeet(info.PositionX);
-        var requestedLowerLeftY = sheetOutline.Min.V + MmToFeet(info.PositionY);
+        var movedOutline = viewport.GetBoxOutline();
+        var clampedLowerLeft = ClampLowerLeftToSheetBounds(movedOutline, sheetOutline, requestedLowerLeft);
 
-        var requestedCenterX = requestedLowerLeftX + halfWidth;
-        var requestedCenterY = requestedLowerLeftY + halfHeight;
+        if (HasPositionChanged(requestedLowerLeft, clampedLowerLeft))
+        {
+            warnings.Add(BuildClampWarning(
+                "Viewport",
+                requestedLowerLeft,
+                clampedLowerLeft,
+                sheetOutline));
+        }
 
-        var minCenterX = sheetOutline.Min.U + halfWidth;
-        var maxCenterX = sheetOutline.Max.U - halfWidth;
-        var minCenterY = sheetOutline.Min.V + halfHeight;
-        var maxCenterY = sheetOutline.Max.V - halfHeight;
+        viewport.SetBoxCenter(GetCenterForLowerLeft(clampedLowerLeft, movedOutline));
+    }
 
-        var targetCenterX = ClampOrCenter(requestedCenterX, minCenterX, maxCenterX, sheetOutline.Min.U, sheetOutline.Max.U);
-        var targetCenterY = ClampOrCenter(requestedCenterY, minCenterY, maxCenterY, sheetOutline.Min.V, sheetOutline.Max.V);
+    private static void ClampScheduleToSheet(
+        Document doc,
+        ViewSheet sheet,
+        ScheduleSheetInstance instance,
+        ViewportCreationInfo info,
+        List<string> warnings)
+    {
+        var sheetOutline = sheet.Outline
+            ?? throw new InvalidOperationException($"Sheet '{sheet.SheetNumber}' has no outline.");
+        var requestedLowerLeft = GetRequestedLowerLeftPoint(sheetOutline, info);
+        var scheduleOutline = GetElementOutlineOnSheet(instance, sheet);
+        if (scheduleOutline == null)
+            return;
 
-        if (Math.Abs(targetCenterX - requestedCenterX) > 1e-9 || Math.Abs(targetCenterY - requestedCenterY) > 1e-9)
-            warnings.Add("Viewport position was adjusted to stay within the sheet outline.");
+        var clampedLowerLeft = ClampLowerLeftToSheetBounds(scheduleOutline, sheetOutline, requestedLowerLeft);
+        if (!HasPositionChanged(requestedLowerLeft, clampedLowerLeft))
+            return;
 
-        viewport.SetBoxCenter(new XYZ(targetCenterX, targetCenterY, 0));
+        ElementTransformUtils.MoveElement(
+            doc,
+            instance.Id,
+            new XYZ(
+                clampedLowerLeft.X - requestedLowerLeft.X,
+                clampedLowerLeft.Y - requestedLowerLeft.Y,
+                0));
+
+        warnings.Add(BuildClampWarning(
+            "Schedule",
+            requestedLowerLeft,
+            clampedLowerLeft,
+            sheetOutline));
+    }
+
+    private static Outline GetElementOutlineOnSheet(Element element, ViewSheet sheet)
+    {
+        var bbox = element.get_BoundingBox(sheet);
+        if (bbox == null)
+            return null;
+
+        return new Outline(
+            new XYZ(bbox.Min.X, bbox.Min.Y, 0),
+            new XYZ(bbox.Max.X, bbox.Max.Y, 0));
+    }
+
+    private static XYZ GetRequestedLowerLeftPoint(BoundingBoxUV sheetOutline, ViewportCreationInfo info)
+    {
+        return new XYZ(
+            sheetOutline.Min.U + MmToFeet(info.PositionX),
+            sheetOutline.Min.V + MmToFeet(info.PositionY),
+            0);
+    }
+
+    private static XYZ GetCenterForLowerLeft(XYZ lowerLeft, Outline elementOutline)
+    {
+        var width = elementOutline.MaximumPoint.X - elementOutline.MinimumPoint.X;
+        var height = elementOutline.MaximumPoint.Y - elementOutline.MinimumPoint.Y;
+        return new XYZ(lowerLeft.X + width / 2.0, lowerLeft.Y + height / 2.0, 0);
+    }
+
+    private static XYZ ClampLowerLeftToSheetBounds(Outline elementOutline, BoundingBoxUV sheetOutline, XYZ requestedLowerLeft)
+    {
+        var width = elementOutline.MaximumPoint.X - elementOutline.MinimumPoint.X;
+        var height = elementOutline.MaximumPoint.Y - elementOutline.MinimumPoint.Y;
+
+        var minX = sheetOutline.Min.U;
+        var maxX = sheetOutline.Max.U - width;
+        var minY = sheetOutline.Min.V;
+        var maxY = sheetOutline.Max.V - height;
+
+        var targetX = ClampOrCenter(requestedLowerLeft.X, minX, maxX, sheetOutline.Min.U, sheetOutline.Max.U - width);
+        var targetY = ClampOrCenter(requestedLowerLeft.Y, minY, maxY, sheetOutline.Min.V, sheetOutline.Max.V - height);
+        return new XYZ(targetX, targetY, 0);
+    }
+
+    private static bool HasPositionChanged(XYZ requested, XYZ actual)
+    {
+        return Math.Abs(requested.X - actual.X) > 1e-9 || Math.Abs(requested.Y - actual.Y) > 1e-9;
+    }
+
+    private static string BuildClampWarning(
+        string elementType,
+        XYZ requestedLowerLeft,
+        XYZ finalLowerLeft,
+        BoundingBoxUV sheetOutline)
+    {
+        var requestedX = FeetToMm(requestedLowerLeft.X - sheetOutline.Min.U);
+        var requestedY = FeetToMm(requestedLowerLeft.Y - sheetOutline.Min.V);
+        var finalX = FeetToMm(finalLowerLeft.X - sheetOutline.Min.U);
+        var finalY = FeetToMm(finalLowerLeft.Y - sheetOutline.Min.V);
+        return $"{elementType} position was clamped to sheet bounds: requested=({requestedX:F1}, {requestedY:F1}) mm, actual=({finalX:F1}, {finalY:F1}) mm.";
     }
 
     private static double ClampOrCenter(
@@ -303,6 +395,7 @@ public class PlaceViewOnSheetEventHandler : IExternalEventHandler, IWaitableExte
     }
 
     private static double MmToFeet(double millimeters) => millimeters / 304.8;
+    private static double FeetToMm(double feet) => feet * 304.8;
 
     private static long GetElementIdValue(ElementId elementId)
     {
