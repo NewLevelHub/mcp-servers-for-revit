@@ -9,10 +9,10 @@ const placementSchema = z.object({
   viewUniqueId: z.string().optional().default(""),
   positionX: z
     .number()
-    .describe("X position on sheet in millimeters"),
+    .describe("X position in millimeters from the lower-left sheet outline corner"),
   positionY: z
     .number()
-    .describe("Y position on sheet in millimeters"),
+    .describe("Y position in millimeters from the lower-left sheet outline corner"),
   viewportTypeId: z.number().optional().default(0),
   displayTitle: z.boolean().optional(),
   scaleOverride: z.number().optional().default(0),
@@ -27,7 +27,7 @@ export function registerPlaceViewOnSheetTool(server: McpServer) {
     "Place a floor plan, view, or schedule on a sheet at coordinates in millimeters. Schedules use ScheduleSheetInstance; other views use Viewport.",
     {
       placement: placementSchema.describe(
-        "Placement settings. Provide sheetId or sheetUniqueId and viewId or viewUniqueId. Positions are in mm from the sheet origin."
+        "Placement settings. Provide sheetId or sheetUniqueId and viewId or viewUniqueId. Positions are in mm from lower-left sheet outline; viewports are clamped inside the sheet."
       ),
     },
     async (args) => {

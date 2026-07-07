@@ -128,11 +128,11 @@ public class PlaceViewOnSheetEventHandler : IExternalEventHandler, IWaitableExte
         if (existingViewport)
             warnings.Add($"View '{view.Name}' is already placed on this sheet.");
 
-        var location = new XYZ(MmToFeet(info.PositionX), MmToFeet(info.PositionY), 0);
         Viewport viewport;
         try
         {
-            viewport = Viewport.Create(doc, sheet.Id, view.Id, location);
+            viewport = Viewport.Create(doc, sheet.Id, view.Id, GetSheetCenter(sheet));
+            MoveViewportToRequestedLocation(viewport, sheet, info, warnings);
         }
         catch (Exception ex)
         {
@@ -166,6 +166,75 @@ public class PlaceViewOnSheetEventHandler : IExternalEventHandler, IWaitableExte
             warnings.Add("Viewport rotation is not supported in this command and was ignored.");
 
         return viewport;
+    }
+
+    private static XYZ GetSheetCenter(ViewSheet sheet)
+    {
+        var outline = sheet.Outline
+            ?? throw new InvalidOperationException($"Sheet '{sheet.SheetNumber}' has no outline.");
+
+        var centerX = (outline.Min.U + outline.Max.U) / 2.0;
+        var centerY = (outline.Min.V + outline.Max.V) / 2.0;
+        return new XYZ(centerX, centerY, 0);
+    }
+
+    private static void MoveViewportToRequestedLocation(
+        Viewport viewport,
+        ViewSheet sheet,
+        ViewportCreationInfo info,
+        List<string> warnings)
+    {
+        var sheetOutline = sheet.Outline
+            ?? throw new InvalidOperationException($"Sheet '{sheet.SheetNumber}' has no outline.");
+        var viewportOutline = viewport.GetBoxOutline();
+
+        var viewportWidth = viewportOutline.MaximumPoint.X - viewportOutline.MinimumPoint.X;
+        var viewportHeight = viewportOutline.MaximumPoint.Y - viewportOutline.MinimumPoint.Y;
+        var halfWidth = viewportWidth / 2.0;
+        var halfHeight = viewportHeight / 2.0;
+
+        var requestedLowerLeftX = sheetOutline.Min.U + MmToFeet(info.PositionX);
+        var requestedLowerLeftY = sheetOutline.Min.V + MmToFeet(info.PositionY);
+
+        var requestedCenterX = requestedLowerLeftX + halfWidth;
+        var requestedCenterY = requestedLowerLeftY + halfHeight;
+
+        var minCenterX = sheetOutline.Min.U + halfWidth;
+        var maxCenterX = sheetOutline.Max.U - halfWidth;
+        var minCenterY = sheetOutline.Min.V + halfHeight;
+        var maxCenterY = sheetOutline.Max.V - halfHeight;
+
+        var targetCenterX = ClampOrCenter(requestedCenterX, minCenterX, maxCenterX, sheetOutline.Min.U, sheetOutline.Max.U);
+        var targetCenterY = ClampOrCenter(requestedCenterY, minCenterY, maxCenterY, sheetOutline.Min.V, sheetOutline.Max.V);
+
+        if (Math.Abs(targetCenterX - requestedCenterX) > 1e-9 || Math.Abs(targetCenterY - requestedCenterY) > 1e-9)
+            warnings.Add("Viewport position was adjusted to stay within the sheet outline.");
+
+        viewport.SetBoxCenter(new XYZ(targetCenterX, targetCenterY, 0));
+    }
+
+    private static double ClampOrCenter(
+        double value,
+        double minValue,
+        double maxValue,
+        double fallbackMin,
+        double fallbackMax)
+    {
+        if (minValue > maxValue)
+            return (fallbackMin + fallbackMax) / 2.0;
+
+        return Clamp(value, minValue, maxValue);
+    }
+
+    private static double Clamp(double value, double min, double max)
+    {
+        if (value < min)
+            return min;
+
+        if (value > max)
+            return max;
+
+        return value;
     }
 
     private static void ApplyViewportDisplayTitle(Viewport viewport, bool displayTitle, List<string> warnings)
