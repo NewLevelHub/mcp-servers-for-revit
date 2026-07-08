@@ -280,6 +280,9 @@ namespace RevitMCPCommandSet.Services
 
                             if (tag != null)
                             {
+                                if (tag.GetTypeId() != roomTagType.Id)
+                                    tag.ChangeTypeId(roomTagType.Id);
+
                                 // Set leader if requested
                                 if (_useLeader)
                                 {
