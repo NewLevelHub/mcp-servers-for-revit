@@ -107,6 +107,7 @@ namespace RevitMCPCommandSet.Services
                         Line gridLine = Line.CreateBound(startPoint, endPoint);
                         Grid grid = Grid.Create(doc, gridLine);
                         grid.Name = uniqueLabel;
+                        GridDisplayHelper.EnsureGridSpansAllLevels(doc, grid);
                         createdGridElements.Add(grid);
 
 #if REVIT2024_OR_GREATER
@@ -164,6 +165,7 @@ namespace RevitMCPCommandSet.Services
                         Line gridLine = Line.CreateBound(startPoint, endPoint);
                         Grid grid = Grid.Create(doc, gridLine);
                         grid.Name = uniqueLabel;
+                        GridDisplayHelper.EnsureGridSpansAllLevels(doc, grid);
                         createdGridElements.Add(grid);
 
 #if REVIT2024_OR_GREATER

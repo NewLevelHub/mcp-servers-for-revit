@@ -6,6 +6,7 @@ namespace RevitMCPCommandSet.Services;
 public static class GridDisplayHelper
 {
     private const double MillimetersToFeet = 1.0 / 304.8;
+    private const double AxisEpsilon = 1e-6;
 
     private sealed class ExtentBounds
     {
@@ -44,15 +45,34 @@ public static class GridDisplayHelper
             if (gridType != null && grid.GetTypeId() != gridType.Id)
                 grid.ChangeTypeId(gridType.Id);
 
+            try
+            {
+                EnsureGridSpansAllLevels(doc, grid);
+            }
+            catch (Exception ex)
+            {
+                warnings.Add($"Grid '{grid.Name}' (3D extents): {ex.Message}");
+            }
+
             foreach (var view in views)
             {
                 if (!grid.CanBeVisibleInView(view))
                     continue;
 
+                var viewUpdated = false;
+
                 try
                 {
-                    ApplyGridExtentInView(grid, view, bounds);
+                    if (ApplyGridExtentInView(grid, view, bounds))
+                        viewUpdated = true;
+                }
+                catch (Exception ex)
+                {
+                    warnings.Add($"Grid '{grid.Name}' on view '{view.Name}' (extent): {ex.Message}");
+                }
 
+                try
+                {
                     if (options.ShowBubbles)
                     {
                         grid.ShowBubbleInView(DatumEnds.End0, view);
@@ -64,12 +84,15 @@ public static class GridDisplayHelper
                         grid.HideBubbleInView(DatumEnds.End1, view);
                     }
 
-                    gridViewUpdates++;
+                    viewUpdated = true;
                 }
                 catch (Exception ex)
                 {
-                    warnings.Add($"Grid '{grid.Name}' on view '{view.Name}': {ex.Message}");
+                    warnings.Add($"Grid '{grid.Name}' on view '{view.Name}' (bubbles): {ex.Message}");
                 }
+
+                if (viewUpdated)
+                    gridViewUpdates++;
             }
         }
 
@@ -216,29 +239,137 @@ public static class GridDisplayHelper
         };
     }
 
-    private static void ApplyGridExtentInView(Grid grid, ViewPlan view, ExtentBounds bounds)
+    /// <summary>
+    /// Ensures the grid intersects all level elevations so it can appear on every floor plan.
+    /// Newly created grids may only span the active level range until extended.
+    /// </summary>
+    public static void EnsureGridSpansAllLevels(Document doc, Grid grid)
     {
-        if (grid.Curve is not Line modelLine)
+        try
+        {
+            grid.Maximize3DExtents();
+            return;
+        }
+        catch
+        {
+            // Fall back to explicit level-based vertical range.
+        }
+
+        var levels = new FilteredElementCollector(doc)
+            .OfClass(typeof(Level))
+            .Cast<Level>()
+            .ToList();
+
+        if (levels.Count == 0)
             return;
 
-        var direction = (modelLine.GetEndPoint(1) - modelLine.GetEndPoint(0)).Normalize();
-        Line viewCurve;
+        var bottom = levels.Min(level => level.Elevation);
+        var top = levels.Max(level => level.Elevation);
+        const double paddingFeet = 10.0;
 
-        if (Math.Abs(direction.X) < Math.Abs(direction.Y))
+        grid.SetVerticalExtents(bottom - paddingFeet, top + paddingFeet);
+    }
+
+    private static bool ApplyGridExtentInView(Grid grid, ViewPlan view, ExtentBounds bounds)
+    {
+        if (grid.Curve is not Line modelLine)
+            return false;
+
+        EnsureViewSpecificExtent(grid, view);
+
+        var viewCurve = BuildViewCurve(grid, view, bounds, modelLine);
+        if (viewCurve == null)
+            return false;
+
+        grid.SetCurveInView(DatumExtentType.ViewSpecific, view, viewCurve);
+        return true;
+    }
+
+    private static void EnsureViewSpecificExtent(Grid grid, ViewPlan view)
+    {
+        foreach (var end in new[] { DatumEnds.End0, DatumEnds.End1 })
         {
-            var x = modelLine.GetEndPoint(0).X;
-            viewCurve = Line.CreateBound(
-                new XYZ(x, bounds.MinYFeet, 0),
-                new XYZ(x, bounds.MaxYFeet, 0));
+            if (grid.GetDatumExtentTypeInView(end, view) == DatumExtentType.ViewSpecific)
+                continue;
+
+            grid.SetDatumExtentType(end, view, DatumExtentType.ViewSpecific);
+        }
+    }
+
+    private static Line BuildViewCurve(Grid grid, ViewPlan view, ExtentBounds bounds, Line modelLine)
+    {
+        var p0 = modelLine.GetEndPoint(0);
+        var p1 = modelLine.GetEndPoint(1);
+        var delta = p1 - p0;
+        var length = delta.GetLength();
+        if (length < 1e-9)
+            return null;
+
+        var direction = delta / length;
+        var z = p0.Z;
+
+        var xMin = Math.Min(bounds.MinXFeet, bounds.MaxXFeet);
+        var xMax = Math.Max(bounds.MinXFeet, bounds.MaxXFeet);
+        var yMin = Math.Min(bounds.MinYFeet, bounds.MaxYFeet);
+        var yMax = Math.Max(bounds.MinYFeet, bounds.MaxYFeet);
+
+        var candidates = new List<Line>();
+
+        if (Math.Abs(direction.X) < AxisEpsilon)
+        {
+            var x = (p0.X + p1.X) * 0.5;
+            candidates.Add(Line.CreateBound(new XYZ(x, yMin, z), new XYZ(x, yMax, z)));
+        }
+        else if (Math.Abs(direction.Y) < AxisEpsilon)
+        {
+            var y = (p0.Y + p1.Y) * 0.5;
+            candidates.Add(Line.CreateBound(new XYZ(xMin, y, z), new XYZ(xMax, y, z)));
         }
         else
         {
-            var y = modelLine.GetEndPoint(0).Y;
-            viewCurve = Line.CreateBound(
-                new XYZ(bounds.MinXFeet, y, 0),
-                new XYZ(bounds.MaxXFeet, y, 0));
+            candidates.Add(BuildProjectedViewCurve(p0, direction, bounds));
         }
 
-        grid.SetCurveInView(DatumExtentType.ViewSpecific, view, viewCurve);
+        candidates.Add(modelLine);
+
+        foreach (var candidate in candidates)
+        {
+            if (candidate == null)
+                continue;
+
+            if (grid.IsCurveValidInView(DatumExtentType.ViewSpecific, view, candidate))
+                return candidate;
+        }
+
+        return null;
+    }
+
+    private static Line BuildProjectedViewCurve(XYZ origin, XYZ direction, ExtentBounds bounds)
+    {
+        var ts = new List<double>();
+
+        if (Math.Abs(direction.X) > AxisEpsilon)
+        {
+            ts.Add((bounds.MinXFeet - origin.X) / direction.X);
+            ts.Add((bounds.MaxXFeet - origin.X) / direction.X);
+        }
+
+        if (Math.Abs(direction.Y) > AxisEpsilon)
+        {
+            ts.Add((bounds.MinYFeet - origin.Y) / direction.Y);
+            ts.Add((bounds.MaxYFeet - origin.Y) / direction.Y);
+        }
+
+        if (ts.Count < 2)
+            throw new InvalidOperationException("Unable to project grid extent along the datum line.");
+
+        var tMin = ts.Min();
+        var tMax = ts.Max();
+        if (Math.Abs(tMax - tMin) < 1e-9)
+            throw new InvalidOperationException("Projected grid extent is too small.");
+
+        return Line.CreateBound(
+            origin + (direction * tMin),
+            origin + (direction * tMax));
     }
 }

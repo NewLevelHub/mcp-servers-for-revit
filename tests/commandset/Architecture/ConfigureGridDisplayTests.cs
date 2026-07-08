@@ -103,6 +103,113 @@ public class ConfigureGridDisplayTests : RevitApiTest
     }
 
     [Test]
+    public async Task ConfigureGridDisplay_SlightlyOffAxisGrid_UpdatesGridExtents()
+    {
+        Grid slightlyOffAxisGrid;
+
+        using (var tx = new Transaction(_doc, "Create Off-Axis Grid"))
+        {
+            tx.Start();
+            slightlyOffAxisGrid = Grid.Create(
+                _doc,
+                Line.CreateBound(
+                    new XYZ(15 + 1e-9, 0, 0),
+                    new XYZ(15 - 1e-9, 30, 0)));
+            slightlyOffAxisGrid.Name = "OffAxis";
+            tx.Commit();
+        }
+
+        GridDisplayConfigurationResult result;
+
+        using (var tx = new Transaction(_doc, "Configure Off-Axis Grid Display"))
+        {
+            tx.Start();
+            result = GridDisplayHelper.ConfigureGrids(
+                _doc,
+                new[] { slightlyOffAxisGrid },
+                new GridDisplayConfigurationInfo
+                {
+                    XExtentMin = 0,
+                    XExtentMax = 20000,
+                    YExtentMin = 0,
+                    YExtentMax = 30000,
+                    ShowBubbles = true,
+                    ApplyToAllFloorPlans = true
+                });
+            tx.Commit();
+        }
+
+        await Assert.That(result.GridViewUpdates).IsGreaterThanOrEqualTo(2);
+
+        var curves = slightlyOffAxisGrid.GetCurvesInView(
+            DatumExtentType.ViewSpecific,
+            _level1Plan);
+
+        await Assert.That(curves.Count).IsGreaterThan(0);
+    }
+
+    [Test]
+    public async Task ConfigureGridDisplay_NewGridOnThreeLevels_VisibleOnAllFloorPlans()
+    {
+        var level3 = Level.Create(_doc, 20.0);
+        level3.Name = "Grid Level 3";
+
+        var floorPlanType = new FilteredElementCollector(_doc)
+            .OfClass(typeof(ViewFamilyType))
+            .Cast<ViewFamilyType>()
+            .First(vft => vft.ViewFamily == ViewFamily.FloorPlan);
+
+        ViewPlan level3Plan;
+
+        using (var tx = new Transaction(_doc, "Create Level 3 Plan"))
+        {
+            tx.Start();
+            level3Plan = ViewPlan.Create(_doc, floorPlanType.Id, level3.Id);
+            tx.Commit();
+        }
+
+        Grid newGrid;
+
+        using (var tx = new Transaction(_doc, "Create Grid For Level 3 Test"))
+        {
+            tx.Start();
+            newGrid = Grid.Create(
+                _doc,
+                Line.CreateBound(new XYZ(25, 0, 0), new XYZ(25, 30, 0)));
+            newGrid.Name = "Level3Grid";
+            GridDisplayHelper.EnsureGridSpansAllLevels(_doc, newGrid);
+            tx.Commit();
+        }
+
+        GridDisplayConfigurationResult result;
+
+        using (var tx = new Transaction(_doc, "Configure Level 3 Grid Display"))
+        {
+            tx.Start();
+            result = GridDisplayHelper.ConfigureGrids(
+                _doc,
+                new[] { newGrid },
+                new GridDisplayConfigurationInfo
+                {
+                    XExtentMin = 0,
+                    XExtentMax = 20000,
+                    YExtentMin = 0,
+                    YExtentMax = 30000,
+                    ShowBubbles = true,
+                    ApplyToAllFloorPlans = true
+                });
+            tx.Commit();
+        }
+
+        await Assert.That(result.ViewsProcessed).IsGreaterThanOrEqualTo(3);
+        await Assert.That(result.GridViewUpdates).IsGreaterThanOrEqualTo(3);
+        await Assert.That(newGrid.CanBeVisibleInView(level3Plan)).IsTrue();
+
+        var level3Curves = newGrid.GetCurvesInView(DatumExtentType.ViewSpecific, level3Plan);
+        await Assert.That(level3Curves.Count).IsGreaterThan(0);
+    }
+
+    [Test]
     public async Task ConfigureGridDisplay_ExistingGrids_AppliesProjectGridType()
     {
         var projectGridType = new FilteredElementCollector(_doc)
