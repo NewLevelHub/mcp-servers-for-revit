@@ -187,6 +187,11 @@
       "commandName": "batch_execute",
       "description": "Execute multiple Revit commands in one request with partial success (plugin built-in, max 20 commands)",
       "assemblyPath": "plugin:builtin"
+    },
+    {
+      "commandName": "get_document_styles",
+      "description": "Return project annotation styles: dimensions, grids, text note types, line patterns, graphics styles, and title blocks",
+      "assemblyPath": "RevitMCPCommandSet.dll"
     }
   ]
 }
