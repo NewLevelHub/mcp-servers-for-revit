@@ -192,6 +192,16 @@
       "commandName": "get_document_styles",
       "description": "Return project annotation styles: dimensions, grids, text note types, line patterns, graphics styles, and title blocks",
       "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "get_element_parameters",
+      "description": "Read all parameters of an element by id (name, value, units, read-only flag)",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "set_element_parameter",
+      "description": "Write a parameter value on an element by id inside a transaction",
+      "assemblyPath": "RevitMCPCommandSet.dll"
     }
   ]
 }
