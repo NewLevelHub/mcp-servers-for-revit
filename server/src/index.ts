@@ -13,12 +13,12 @@ const server = new McpServer({
 // 启动服务器
 async function main() {
   // 注册工具
-  await registerTools(server);
+  const toolCount = await registerTools(server);
 
   // 连接到传输层
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Revit MCP Server start success");
+  console.error(`Revit MCP Server start success (${toolCount} tools registered)`);
 }
 
 main().catch((error) => {

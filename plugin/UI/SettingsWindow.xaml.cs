@@ -21,6 +21,8 @@ namespace revit_mcp_plugin.UI
             // 加载默认页面
             ContentFrame.Navigate(commandSetPage);
 
+            Loaded += (sender, args) => commandSetPage.ReloadCommandSets();
+
             isInitialized = true;
         }
 

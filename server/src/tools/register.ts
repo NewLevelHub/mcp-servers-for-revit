@@ -3,10 +3,11 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
-export async function registerTools(server: McpServer) {
+export async function registerTools(server: McpServer): Promise<number> {
   // 获取当前文件的目录路径
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
+  let registeredToolCount = 0;
 
   // 读取tools目录下的所有文件
   const files = fs.readdirSync(__dirname);
@@ -37,6 +38,7 @@ export async function registerTools(server: McpServer) {
 
       if (registerFunctionName) {
         module[registerFunctionName](server);
+        registeredToolCount += 1;
         console.error(`已注册工具: ${file}`);
       } else {
         console.warn(`警告: 在文件 ${file} 中未找到注册函数`);
@@ -45,4 +47,6 @@ export async function registerTools(server: McpServer) {
       console.error(`注册工具 ${file} 时出错:`, error);
     }
   }
+
+  return registeredToolCount;
 }
