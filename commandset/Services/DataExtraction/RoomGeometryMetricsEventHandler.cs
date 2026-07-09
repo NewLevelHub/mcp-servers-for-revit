@@ -52,7 +52,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                         continue;
                     }
 
-                    var (widthMm, depthMm) = CalculateRoomFootprint(room);
+                    var (widthMm, depthMm) = RoomFootprintCalculator.Calculate(room);
                     var roomName = room.get_Parameter(BuiltInParameter.ROOM_NAME)?.AsString() ?? string.Empty;
                     bool isCorridor = IsCorridor(roomName);
 
@@ -106,40 +106,5 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                 || normalized.Contains("hall");
         }
 
-        private static (double widthMm, double depthMm) CalculateRoomFootprint(Room room)
-        {
-            var options = new SpatialElementBoundaryOptions();
-            var boundaries = room.GetBoundarySegments(options);
-
-            if (boundaries == null || boundaries.Count == 0)
-                return (0, 0);
-
-            var points = new List<XYZ>();
-            foreach (var loop in boundaries)
-            {
-                foreach (var segment in loop)
-                {
-                    var curve = segment?.GetCurve();
-                    if (curve == null)
-                        continue;
-
-                    points.Add(curve.GetEndPoint(0));
-                    points.Add(curve.GetEndPoint(1));
-                }
-            }
-
-            if (points.Count == 0)
-                return (0, 0);
-
-            double minX = points.Min(p => p.X);
-            double maxX = points.Max(p => p.X);
-            double minY = points.Min(p => p.Y);
-            double maxY = points.Max(p => p.Y);
-
-            double xSpanMm = RevitUnitConversion.ToMillimeters(maxX - minX);
-            double ySpanMm = RevitUnitConversion.ToMillimeters(maxY - minY);
-
-            return xSpanMm <= ySpanMm ? (xSpanMm, ySpanMm) : (ySpanMm, xSpanMm);
-        }
     }
 }
