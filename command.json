@@ -207,6 +207,16 @@
       "commandName": "set_element_parameter",
       "description": "Write a parameter value on an element by id inside a transaction",
       "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "get_room_geometry_metrics",
+      "description": "Extract room geometry metrics: width/depth/area and corridor width hints",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "get_door_egress_info",
+      "description": "Extract door width, type, host wall, and egress-path hints",
+      "assemblyPath": "RevitMCPCommandSet.dll"
     }
   ]
 }
