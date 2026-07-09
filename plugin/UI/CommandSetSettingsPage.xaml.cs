@@ -29,10 +29,27 @@ namespace revit_mcp_plugin.UI
             CommandSetListBox.ItemsSource = commandSets;
             FeaturesListView.ItemsSource = currentCommands;
             // Load command sets
-            LoadCommandSets();
-            LoadServerSettings();
+            ReloadCommandSets();
             // Initial state
             NoSelectionTextBlock.Visibility = Visibility.Visible;
+        }
+
+        public void ReloadCommandSets()
+        {
+            var selectedCommandSetName = (CommandSetListBox.SelectedItem as CommandSet)?.Name;
+            LoadCommandSets();
+            LoadServerSettings();
+
+            if (!string.IsNullOrWhiteSpace(selectedCommandSetName))
+            {
+                var restoredIndex = commandSets
+                    .Select((commandSet, index) => new { commandSet, index })
+                    .FirstOrDefault(item => item.commandSet.Name == selectedCommandSetName)
+                    ?.index ?? -1;
+
+                if (restoredIndex >= 0)
+                    CommandSetListBox.SelectedIndex = restoredIndex;
+            }
         }
 
         private void LoadServerSettings()
@@ -249,15 +266,7 @@ namespace revit_mcp_plugin.UI
 
         private void RefreshButton_Click(object sender, RoutedEventArgs e)
         {
-            // Save current selection state
-            var selectedIndex = CommandSetListBox.SelectedIndex;
-            // Reload command sets
-            LoadCommandSets();
-            // Restore selection
-            if (selectedIndex >= 0 && selectedIndex < commandSets.Count)
-            {
-                CommandSetListBox.SelectedIndex = selectedIndex;
-            }
+            ReloadCommandSets();
         }
 
         private void SelectAllButton_Click(object sender, RoutedEventArgs e)
