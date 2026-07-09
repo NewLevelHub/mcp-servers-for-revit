@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { ensureNormRulesSchema } from '../normatives/rulesStore.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -62,6 +63,9 @@ export function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_rooms_project_id ON rooms(project_id);
     CREATE INDEX IF NOT EXISTS idx_rooms_room_number ON rooms(room_number);
   `);
+
+  // Norm rules library (REV-30)
+  ensureNormRulesSchema(db);
 }
 
 // Initialize on module load
