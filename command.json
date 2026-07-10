@@ -217,6 +217,11 @@
       "commandName": "get_door_egress_info",
       "description": "Extract door width, type, host wall, and egress-path hints",
       "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "apply_norm_result",
+      "description": "Write norm-check results into the model: status parameter, marks, highlight, violation schedule (with preview and overwrite protection)",
+      "assemblyPath": "RevitMCPCommandSet.dll"
     }
   ]
 }
