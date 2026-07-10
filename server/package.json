@@ -14,7 +14,7 @@
         "clean": "rimraf build",
         "prebuild": "npm run clean",
     "build": "tsc",
-    "test": "npm run build && node --test build/normatives",
+    "test": "npm run build && node --test \"build/normatives/*.test.js\"",
     "prepublishOnly": "npm run build"
     },
     "files": [
