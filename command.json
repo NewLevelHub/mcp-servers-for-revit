@@ -219,6 +219,11 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "check_room_depth",
+      "description": "Check room depths against a normative min/max limit, report and optionally highlight violators",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "check_fire_doors",
       "description": "Pilot normative check: doors required to be fire-rated on egress routes or between compartments",
       "assemblyPath": "RevitMCPCommandSet.dll"
