@@ -217,6 +217,11 @@
       "commandName": "get_door_egress_info",
       "description": "Extract door width, type, host wall, and egress-path hints",
       "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "check_fire_doors",
+      "description": "Pilot normative check: doors required to be fire-rated on egress routes or between compartments",
+      "assemblyPath": "RevitMCPCommandSet.dll"
     }
   ]
 }
