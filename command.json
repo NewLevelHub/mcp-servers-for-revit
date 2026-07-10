@@ -232,6 +232,11 @@
       "commandName": "check_evacuation_width",
       "description": "Check evacuation corridor widths against a normative minimum, report and optionally highlight violators",
       "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "check_min_dimensions",
+      "description": "Check minimum dimensions of balconies, loggias, and fire piers against normative limits, report and optionally highlight violators",
+      "assemblyPath": "RevitMCPCommandSet.dll"
     }
   ]
 }

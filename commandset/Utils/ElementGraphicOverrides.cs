@@ -8,11 +8,20 @@ namespace RevitMCPCommandSet.Utils
     /// </summary>
     public static class ElementGraphicOverrides
     {
-        public static OverrideGraphicSettings CreateSolidColorOverrides(Document doc, Color color)
+        /// <summary>
+        /// Line-only overrides for room tags (name, area, leaders) without room fill.
+        /// </summary>
+        public static OverrideGraphicSettings CreateTagLineColorOverrides(Color color)
         {
             var overrides = new OverrideGraphicSettings();
             overrides.SetProjectionLineColor(color);
             overrides.SetCutLineColor(color);
+            return overrides;
+        }
+
+        public static OverrideGraphicSettings CreateSolidColorOverrides(Document doc, Color color)
+        {
+            var overrides = CreateTagLineColorOverrides(color);
             overrides.SetSurfaceForegroundPatternColor(color);
             overrides.SetSurfaceBackgroundPatternColor(color);
             overrides.SetCutForegroundPatternColor(color);
@@ -76,8 +85,31 @@ namespace RevitMCPCommandSet.Utils
             return count;
         }
 
+        public static int ApplyTagColorToView(View view, IEnumerable<ElementId> tagIds, int[] rgb)
+        {
+            if (rgb == null || rgb.Length < 3)
+            {
+                rgb = new[] { 255, 0, 0 };
+            }
+
+            var color = new Color(
+                (byte)Math.Max(0, Math.Min(255, rgb[0])),
+                (byte)Math.Max(0, Math.Min(255, rgb[1])),
+                (byte)Math.Max(0, Math.Min(255, rgb[2])));
+
+            var overrides = CreateTagLineColorOverrides(color);
+            int count = 0;
+            foreach (var id in tagIds)
+            {
+                view.SetElementOverrides(id, overrides);
+                count++;
+            }
+
+            return count;
+        }
+
         /// <summary>
-        /// Highlight rooms and their tags in the active view (red solid fill + red tag text/lines).
+        /// Color room tag labels in the active view (name, area, leaders) without filling the room.
         /// </summary>
         public static int HighlightRoomsAndTags(
             View view,
@@ -85,14 +117,13 @@ namespace RevitMCPCommandSet.Utils
             IEnumerable<ElementId> roomIds,
             int[] rgb)
         {
-            var targetIds = new List<ElementId>();
+            var tagIds = new List<ElementId>();
             foreach (var roomId in roomIds)
             {
-                targetIds.Add(roomId);
-                targetIds.AddRange(FindRoomTagIds(doc, view, roomId));
+                tagIds.AddRange(FindRoomTagIds(doc, view, roomId));
             }
 
-            return ApplyToView(view, doc, targetIds, rgb);
+            return ApplyTagColorToView(view, tagIds.Distinct(), rgb);
         }
     }
 }

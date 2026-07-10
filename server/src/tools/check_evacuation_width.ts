@@ -155,7 +155,7 @@ export function formatEvacuationWidthReport(result: CheckEvacuationWidthResult):
 export function registerCheckEvacuationWidthTool(server: McpServer) {
   server.tool(
     "check_evacuation_width",
-    "Check evacuation corridor widths against norms from repo/normatives PDFs (ГОСТ/СП/СН РК) or an explicit minWidthMm. Reads rules automatically when minWidthMm is omitted. Compares with actual room widths from Revit (bounding footprint, mm). Reports violations with element ids; mode 'highlight' colors violators in the active view. Checks rooms named or designated as corridors, tambours, lift halls, stairs, etc.",
+    "Check evacuation corridor widths against norms from repo/normatives PDFs (ГОСТ/СП/СН РК) or an explicit minWidthMm. Reads rules automatically when minWidthMm is omitted. Compares with actual room widths from Revit (bounding footprint, mm). Reports violations with element ids; mode 'highlight' colors violating room tag labels red in the active view without filling the room. Checks rooms named or designated as corridors, tambours, lift halls, stairs, etc.",
     {
       minWidthMm: z
         .number()
