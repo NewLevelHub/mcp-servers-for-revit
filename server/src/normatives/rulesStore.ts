@@ -174,6 +174,38 @@ function escapeLikeTerm(term: string): string {
   return term.replace(/[\\%_]/g, (match) => `\\${match}`);
 }
 
+/** Default semantic tags when the agent omits them on save_norm_rule. */
+export function suggestRuleTags(rule: NormativeRule): string[] {
+  const tags = new Set<string>([rule.object, rule.source.document]);
+  const text = `${rule.object} ${rule.source.quote}`.toLowerCase();
+
+  const add = (...items: string[]) => {
+    for (const item of items) tags.add(item);
+  };
+
+  if (/надпис|штамп/i.test(text)) {
+    add("основная надпись", "штамп", "штамп чертежа", "басты жазу", "мөр");
+  }
+  if (/коридор|дәліз/i.test(text)) {
+    add("коридор", "ширина коридора", "проход", "дәліз", "дәліз ені");
+  }
+  if (/двер|есік/i.test(text)) add("дверь", "дверной проём", "есік");
+  if (/площад|алаң|аудан/i.test(text)) add("площадь", "алаң", "ауданы");
+  if (/ширин|ені/i.test(text)) add("ширина", "ені");
+  if (/высот|биікт/i.test(text)) add("высота", "биіктігі");
+  if (/жил|тұрғын/i.test(text)) add("жилое помещение", "тұрғын үй-жай");
+  if (/эвакуац/i.test(text)) add("эвакуация", "эвакуационный коридор");
+
+  return [...tags].slice(0, 8);
+}
+
+export function withSuggestedTags(rules: SaveableNormRule[]): SaveableNormRule[] {
+  return rules.map((rule) => ({
+    ...rule,
+    tags: rule.tags?.length ? rule.tags : suggestRuleTags(rule),
+  }));
+}
+
 export function saveNormRules(
   db: Database,
   rules: SaveableNormRule[],

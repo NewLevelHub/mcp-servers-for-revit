@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import db from "../database/db.js";
 import { normativeRuleSchema } from "../normatives/types.js";
-import { saveNormRules } from "../normatives/rulesStore.js";
+import { saveNormRules, withSuggestedTags } from "../normatives/rulesStore.js";
 
 export function registerSaveNormRuleTool(server: McpServer) {
   server.tool(
@@ -33,7 +33,7 @@ export function registerSaveNormRuleTool(server: McpServer) {
     },
     async (args) => {
       try {
-        const result = saveNormRules(db, args.rules, {
+        const result = saveNormRules(db, withSuggestedTags(args.rules), {
           documentVersion: args.documentVersion,
         });
 

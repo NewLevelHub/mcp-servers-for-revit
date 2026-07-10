@@ -6,6 +6,7 @@ import {
   buildRuleKey,
   queryNormRules,
   saveNormRules,
+  withSuggestedTags,
 } from "./rulesStore.js";
 
 function makeCorridorRule(overrides: Partial<NormativeRule> = {}): NormativeRule {
@@ -202,6 +203,25 @@ describe("rulesStore", () => {
     const replaced = queryNormRules(db, { topic: "галерея" });
     assert.equal(replaced.length, 1);
     assert.deepEqual(replaced[0].tags, ["галерея"]);
+  });
+
+  it("suggests default tags when none are provided on save", () => {
+    const tagged = withSuggestedTags([
+      {
+        ...makeCorridorRule(),
+        object: "основная надпись",
+        source: {
+          document: "ГОСТ 21.101-97",
+          clause: "п. 5.1.4",
+          quote: "Основная надпись выполняется с высотой строки не менее 5 мм.",
+        },
+      },
+    ]);
+    assert.ok(tagged[0].tags?.some((tag) => /штамп/i.test(tag)));
+    saveNormRules(db, tagged, { documentVersion: "97" });
+    const found = queryNormRules(db, { topic: "штамп чертежа" });
+    assert.equal(found.length, 1);
+    assert.equal(found[0].documentVersion, "97");
   });
 
   it("migrates a pre-tags norm_rules table", () => {
