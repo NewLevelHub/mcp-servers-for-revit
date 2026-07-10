@@ -79,6 +79,9 @@ MCP **не создаёт** новый проект. Сообщи пользов
 | Данные для ведомостей / ТЭП | `export_tep_data`, `export_room_data`, `get_material_quantities` |
 | Спецификации дверей/окон/полов | `create_door_schedule`, `create_window_schedule`, `create_floor_schedule` |
 | Нормативы: извлечь / сохранить / найти | `extract_norm_rules_from_pdf` (topic = поиск; pdfPath = извлечение; saveToLibrary) |
+| Нормоконтроль: ширина эвак. коридора | `query_norm_rules` → `check_evacuation_width` |
+| Нормоконтроль: глубина помещений | `query_norm_rules` → `check_room_depth` |
+| Нормоконтроль: противопожарные двери | `check_fire_doors` |
 
 ## Создание здания (порядок вызовов)
 
