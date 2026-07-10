@@ -227,6 +227,11 @@
       "commandName": "check_fire_doors",
       "description": "Pilot normative check: doors required to be fire-rated on egress routes or between compartments",
       "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "check_evacuation_width",
+      "description": "Check evacuation corridor widths against a normative minimum, report and optionally highlight violators",
+      "assemblyPath": "RevitMCPCommandSet.dll"
     }
   ]
 }

@@ -54,7 +54,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
 
                     var (widthMm, depthMm) = RoomFootprintCalculator.Calculate(room);
                     var roomName = room.get_Parameter(BuiltInParameter.ROOM_NAME)?.AsString() ?? string.Empty;
-                    bool isCorridor = IsCorridor(roomName);
+                    bool isCorridor = CorridorClassifier.IsCorridor(roomName);
 
                     metrics.Add(new RoomGeometryMetric
                     {
@@ -94,17 +94,5 @@ namespace RevitMCPCommandSet.Services.DataExtraction
         }
 
         public string GetName() => "Get Room Geometry Metrics";
-
-        private static bool IsCorridor(string roomName)
-        {
-            if (string.IsNullOrWhiteSpace(roomName))
-                return false;
-
-            var normalized = roomName.ToLowerInvariant();
-            return normalized.Contains("коридор")
-                || normalized.Contains("corridor")
-                || normalized.Contains("hall");
-        }
-
     }
 }
