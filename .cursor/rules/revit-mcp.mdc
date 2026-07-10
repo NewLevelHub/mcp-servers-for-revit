@@ -55,6 +55,13 @@ MCP **не создаёт** новый проект. Сообщи пользов
 Данные — через `export_tep_data`, `export_room_data`, `get_material_quantities`, `analyze_model_statistics`.  
 Оформление — **только шаблоны проекта**. Нет шаблона → сказать пользователю, не подменять кодом.
 
+## Нормативы (ГОСТ / СП / СН РК)
+
+- Поиск в библиотеке: `extract_norm_rules_from_pdf` с **`topic`** (без pdfPath), например topic «основная надпись». Пользователю не нужно писать action=query.
+- Пустой результат → повтори 1–2 раза с синонимами (ru/kz: дәліз, есік, ені, штамп).
+- Извлечение из PDF: `pdfPath` + при необходимости **`saveToLibrary=true`** и `documentVersion`.
+- **Никогда не выдумывай нормативные значения** — только из ответа tool; цитируй документ, пункт и quote.
+
 ## Карта задач → MCP
 
 | Задача | Инструмент |
@@ -71,6 +78,7 @@ MCP **не создаёт** новый проект. Сообщи пользов
 | Маркировка | `tag_all_rooms`, `tag_all_walls` |
 | Данные для ведомостей / ТЭП | `export_tep_data`, `export_room_data`, `get_material_quantities` |
 | Спецификации дверей/окон/полов | `create_door_schedule`, `create_window_schedule`, `create_floor_schedule` |
+| Нормативы: извлечь / сохранить / найти | `extract_norm_rules_from_pdf` (topic = поиск; pdfPath = извлечение; saveToLibrary) |
 
 ## Создание здания (порядок вызовов)
 
