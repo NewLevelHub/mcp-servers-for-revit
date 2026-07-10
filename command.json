@@ -217,6 +217,11 @@
       "commandName": "get_door_egress_info",
       "description": "Extract door width, type, host wall, and egress-path hints",
       "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "check_room_depth",
+      "description": "Check room depths against a normative min/max limit, report and optionally highlight violators",
+      "assemblyPath": "RevitMCPCommandSet.dll"
     }
   ]
 }
