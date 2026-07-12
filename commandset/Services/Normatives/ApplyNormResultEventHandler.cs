@@ -99,7 +99,7 @@ namespace RevitMCPCommandSet.Services.Normatives
 
                 foreach (var input in _elements)
                 {
-                    var element = doc.GetElement(ElementIdExtensions.FromLong(input.ElementId));
+                    var element = doc.GetElement(RevitMCPCommandSet.Utils.ElementIdExtensions.FromLong(input.ElementId));
                     if (element == null)
                     {
                         warnings.Add($"Element {input.ElementId} was not found and was skipped.");
@@ -148,7 +148,7 @@ namespace RevitMCPCommandSet.Services.Normatives
                         foreach (var change in changes.Where(
                                      c => c.Status == NormResultChangeStatus.Planned))
                         {
-                            var element = doc.GetElement(ElementIdExtensions.FromLong(change.ElementId));
+                            var element = doc.GetElement(RevitMCPCommandSet.Utils.ElementIdExtensions.FromLong(change.ElementId));
                             var parameter = ResolveParameter(element, change.ParameterName);
                             parameter.Set(change.NewValue);
                             change.Status = NormResultChangeStatus.Applied;
@@ -307,16 +307,24 @@ namespace RevitMCPCommandSet.Services.Normatives
             // Localization-independent fallbacks: on a Russian Revit the visible
             // names are "Комментарии" / "Марка", so agents passing the English
             // aliases still hit the built-in parameters.
-            var builtIn = parameterName.Trim().ToLowerInvariant() switch
+            var key = parameterName.Trim().ToLowerInvariant();
+            var builtIn = key switch
             {
                 "comments" or "комментарии" => BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS,
                 "mark" or "марка" => BuiltInParameter.ALL_MODEL_MARK,
+                "number" or "номер" => BuiltInParameter.ROOM_NUMBER,
                 _ => BuiltInParameter.INVALID
             };
 
             var parameter = builtIn == BuiltInParameter.INVALID
                 ? null
                 : element.get_Parameter(builtIn);
+
+            // Rooms have no ALL_MODEL_MARK — their visible identity is Number.
+            if (parameter == null && (key is "mark" or "марка"))
+            {
+                parameter = element.get_Parameter(BuiltInParameter.ROOM_NUMBER);
+            }
 
             return parameter
                 ?? throw new ArgumentException(
