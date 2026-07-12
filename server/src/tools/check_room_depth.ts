@@ -5,7 +5,7 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerCheckRoomDepthTool(server: McpServer) {
   server.tool(
     "check_room_depth",
-    "Check actual room depths in the open Revit model against a normative depth limit. Obtain the limit from a normative source first (extract_norm_rules_from_pdf / query_norm_rules) and pass it here together with its source — the report echoes the norm with the original quote, lists every checked room with its actual depth, and returns violators with element ids. Mode 'highlight' additionally colors violating rooms in the active view. Depth is the larger side of the room's bounding footprint, in millimeters.",
+    "Check actual room depths in the open Revit model against a normative depth limit. Obtain the limit from a normative source first (extract_norm_rules_from_pdf / query_norm_rules) and pass it here together with its source — the report echoes the norm with the original quote, lists every checked room with its actual depth, and returns violators with element ids. Mode 'highlight' colors violating room tag labels red in the active view without filling the room. Depth is the larger side of the room's bounding footprint, in millimeters.",
     {
       minDepthMm: z
         .number()
@@ -33,7 +33,7 @@ export function registerCheckRoomDepthTool(server: McpServer) {
         .optional()
         .default("report")
         .describe(
-          "'report' returns data only; 'highlight' also colors violating rooms in the active view."
+          "'report' returns data only; 'highlight' also colors violating room tag labels red in the active view."
         ),
       levelName: z.string().optional().default("").describe("Optional level name filter."),
       roomNameFilter: z

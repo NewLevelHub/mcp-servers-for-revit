@@ -7,40 +7,40 @@ using RevitMCPSDK.API.Interfaces;
 
 namespace RevitMCPCommandSet.Services.Normatives
 {
-    public class CheckRoomDepthEventHandler : IExternalEventHandler, IWaitableExternalEventHandler
+    public class CheckEvacuationWidthEventHandler : IExternalEventHandler, IWaitableExternalEventHandler
     {
         public const string ModeReport = "report";
         public const string ModeHighlight = "highlight";
 
-        private double? _minDepthMm;
-        private double? _maxDepthMm;
+        private double? _minWidthMm;
         private string _mode = ModeReport;
         private string _levelNameFilter = string.Empty;
         private string _roomNameFilter = string.Empty;
         private bool _includeCompliant;
+        private bool _corridorOnly = true;
         private int[] _highlightColor = { 255, 0, 0 };
 
-        public CheckRoomDepthResult ResultInfo { get; private set; } = new();
+        public CheckEvacuationWidthResult ResultInfo { get; private set; } = new();
         public bool TaskCompleted { get; private set; }
         private readonly ManualResetEvent _resetEvent = new(false);
 
         public void SetParameters(
-            double? minDepthMm,
-            double? maxDepthMm,
+            double? minWidthMm,
             string mode = ModeReport,
             string levelName = "",
             string roomNameFilter = "",
             bool includeCompliant = false,
+            bool corridorOnly = true,
             int[] highlightColor = null)
         {
-            _minDepthMm = minDepthMm;
-            _maxDepthMm = maxDepthMm;
+            _minWidthMm = minWidthMm;
             _mode = string.Equals(mode, ModeHighlight, StringComparison.OrdinalIgnoreCase)
                 ? ModeHighlight
                 : ModeReport;
             _levelNameFilter = levelName ?? string.Empty;
             _roomNameFilter = roomNameFilter ?? string.Empty;
             _includeCompliant = includeCompliant;
+            _corridorOnly = corridorOnly;
             if (highlightColor is { Length: 3 })
             {
                 _highlightColor = highlightColor;
@@ -59,12 +59,12 @@ namespace RevitMCPCommandSet.Services.Normatives
         {
             try
             {
-                if (_minDepthMm == null && _maxDepthMm == null)
+                if (_minWidthMm == null)
                 {
-                    ResultInfo = new CheckRoomDepthResult
+                    ResultInfo = new CheckEvacuationWidthResult
                     {
                         Success = false,
-                        Message = "Either minDepthMm or maxDepthMm must be provided."
+                        Message = "minWidthMm must be provided."
                     };
                     return;
                 }
@@ -76,8 +76,8 @@ namespace RevitMCPCommandSet.Services.Normatives
                     .Cast<Room>()
                     .Where(room => room.Area > 0);
 
-                var violations = new List<RoomDepthCheckItem>();
-                var compliant = new List<RoomDepthCheckItem>();
+                var violations = new List<EvacuationWidthCheckItem>();
+                var compliant = new List<EvacuationWidthCheckItem>();
                 var violationElementIds = new List<ElementId>();
                 int checkedCount = 0;
 
@@ -91,8 +91,15 @@ namespace RevitMCPCommandSet.Services.Normatives
                     }
 
                     var roomName = room.get_Parameter(BuiltInParameter.ROOM_NAME)?.AsString() ?? string.Empty;
+                    var roomPurpose = CorridorClassifier.ReadRoomPurpose(room);
                     if (!string.IsNullOrWhiteSpace(_roomNameFilter) &&
-                        roomName.IndexOf(_roomNameFilter, StringComparison.OrdinalIgnoreCase) < 0)
+                        roomName.IndexOf(_roomNameFilter, StringComparison.OrdinalIgnoreCase) < 0 &&
+                        roomPurpose.IndexOf(_roomNameFilter, StringComparison.OrdinalIgnoreCase) < 0)
+                    {
+                        continue;
+                    }
+
+                    if (_corridorOnly && !CorridorClassifier.IsEvacuationCorridor(roomName, roomPurpose))
                     {
                         continue;
                     }
@@ -100,20 +107,22 @@ namespace RevitMCPCommandSet.Services.Normatives
                     checkedCount++;
 
                     var (widthMm, depthMm) = RoomFootprintCalculator.Calculate(room);
-                    bool isCompliant = IsDepthCompliant(depthMm, _minDepthMm, _maxDepthMm);
+                    bool isCompliant = IsWidthCompliant(widthMm, _minWidthMm.Value);
 
-                    var item = new RoomDepthCheckItem
+                    var item = new EvacuationWidthCheckItem
                     {
                         Id = room.Id.GetValue(),
                         UniqueId = room.UniqueId,
                         Name = roomName,
                         Number = room.Number ?? string.Empty,
                         Level = levelName,
+                        RoomPurpose = roomPurpose,
+                        ActualWidthMm = widthMm,
                         DepthMm = depthMm,
-                        WidthMm = widthMm,
                         AreaM2 = RevitUnitConversion.ToSquareMeters(room.Area),
+                        RequiredWidthMm = _minWidthMm.Value,
                         IsCompliant = isCompliant,
-                        DeviationMm = CalculateDeviationMm(depthMm, _minDepthMm, _maxDepthMm)
+                        DeviationMm = CalculateDeviationMm(widthMm, _minWidthMm.Value)
                     };
 
                     if (isCompliant)
@@ -133,26 +142,26 @@ namespace RevitMCPCommandSet.Services.Normatives
                     highlightedCount = HighlightRooms(app, doc, violationElementIds);
                 }
 
-                ResultInfo = new CheckRoomDepthResult
+                ResultInfo = new CheckEvacuationWidthResult
                 {
                     Success = true,
-                    Message = $"Checked {checkedCount} rooms: {violations.Count} violate the depth requirement.",
+                    Message = $"Checked {checkedCount} corridors: {violations.Count} violate the width requirement.",
                     Mode = _mode,
-                    MinDepthMm = _minDepthMm,
-                    MaxDepthMm = _maxDepthMm,
-                    TotalRoomsChecked = checkedCount,
+                    MinWidthMm = _minWidthMm,
+                    CorridorOnly = _corridorOnly,
+                    TotalCorridorsChecked = checkedCount,
                     ViolationCount = violations.Count,
                     Violations = violations,
-                    CompliantRooms = _includeCompliant ? compliant : new List<RoomDepthCheckItem>(),
+                    CompliantCorridors = _includeCompliant ? compliant : new List<EvacuationWidthCheckItem>(),
                     HighlightedCount = highlightedCount
                 };
             }
             catch (Exception ex)
             {
-                ResultInfo = new CheckRoomDepthResult
+                ResultInfo = new CheckEvacuationWidthResult
                 {
                     Success = false,
-                    Message = $"Failed to check room depth: {ex.Message}"
+                    Message = $"Failed to check evacuation corridor width: {ex.Message}"
                 };
             }
             finally
@@ -162,23 +171,17 @@ namespace RevitMCPCommandSet.Services.Normatives
             }
         }
 
-        public string GetName() => "Check Room Depth";
+        public string GetName() => "Check Evacuation Width";
 
-        public static bool IsDepthCompliant(double depthMm, double? minDepthMm, double? maxDepthMm)
+        public static bool IsWidthCompliant(double actualWidthMm, double minWidthMm)
         {
-            if (minDepthMm.HasValue && depthMm < minDepthMm.Value)
-                return false;
-            if (maxDepthMm.HasValue && depthMm > maxDepthMm.Value)
-                return false;
-            return true;
+            return actualWidthMm >= minWidthMm;
         }
 
-        public static double CalculateDeviationMm(double depthMm, double? minDepthMm, double? maxDepthMm)
+        public static double CalculateDeviationMm(double actualWidthMm, double minWidthMm)
         {
-            if (minDepthMm.HasValue && depthMm < minDepthMm.Value)
-                return minDepthMm.Value - depthMm;
-            if (maxDepthMm.HasValue && depthMm > maxDepthMm.Value)
-                return depthMm - maxDepthMm.Value;
+            if (actualWidthMm < minWidthMm)
+                return minWidthMm - actualWidthMm;
             return 0;
         }
 
@@ -187,7 +190,7 @@ namespace RevitMCPCommandSet.Services.Normatives
             var uidoc = app.ActiveUIDocument;
             var activeView = uidoc.ActiveView;
 
-            using var transaction = new Transaction(doc, "Check Room Depth Highlight");
+            using var transaction = new Transaction(doc, "Check Evacuation Width Highlight");
             transaction.Start();
 
             int highlighted = ElementGraphicOverrides.HighlightRoomsAndTags(
