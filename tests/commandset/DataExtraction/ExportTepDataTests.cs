@@ -76,14 +76,44 @@ public class ExportTepDataTests : RevitApiTest
     }
 
     [Test]
-    public async Task ExportTep_StoreyCount_MatchesLevelsWithPlacedRooms()
+    public async Task StoreyLevelClassifier_KorotkiyBlokStyleNames_MatchExpectedKinds()
+    {
+        await Assert.That(StoreyLevelClassifier.Classify("-1 этаж", -4200)).IsEqualTo(StoreyLevelClassifier.Basement);
+        await Assert.That(StoreyLevelClassifier.Classify("1 этаж", 0)).IsEqualTo(StoreyLevelClassifier.AboveGround);
+        await Assert.That(StoreyLevelClassifier.Classify("16 этаж", 45900)).IsEqualTo(StoreyLevelClassifier.AboveGround);
+        await Assert.That(StoreyLevelClassifier.Classify("Тех.этаж", 48900)).IsEqualTo(StoreyLevelClassifier.Technical);
+        await Assert.That(StoreyLevelClassifier.Classify("Кровля", 51150)).IsEqualTo(StoreyLevelClassifier.Roof);
+        await Assert.That(StoreyLevelClassifier.Classify("Цоколь", -3000)).IsEqualTo(StoreyLevelClassifier.Basement);
+    }
+
+    [Test]
+    public async Task StoreyLevelClassifier_ExtraNamingVariants_MatchExpectedKinds()
+    {
+        await Assert.That(StoreyLevelClassifier.Classify("Техэтаж", 48000)).IsEqualTo(StoreyLevelClassifier.Technical);
+        await Assert.That(StoreyLevelClassifier.Classify("MEP", 48000)).IsEqualTo(StoreyLevelClassifier.Technical);
+        await Assert.That(StoreyLevelClassifier.Classify("Чердак", 50000)).IsEqualTo(StoreyLevelClassifier.Roof);
+        await Assert.That(StoreyLevelClassifier.Classify("Уровень 1", 0)).IsEqualTo(StoreyLevelClassifier.AboveGround);
+        await Assert.That(StoreyLevelClassifier.Classify("Уровень 7", 9000)).IsEqualTo(StoreyLevelClassifier.AboveGround);
+        await Assert.That(StoreyLevelClassifier.Classify("Основание B.O.", -4600)).IsEqualTo(StoreyLevelClassifier.Basement);
+        await Assert.That(StoreyLevelClassifier.Classify("Фунд. стена T.O.", -300)).IsEqualTo(StoreyLevelClassifier.Basement);
+        // Numbered floor wins over slightly negative elevation noise
+        await Assert.That(StoreyLevelClassifier.Classify("1 этаж", -50)).IsEqualTo(StoreyLevelClassifier.AboveGround);
+    }
+
+    [Test]
+    public async Task ExportTep_StoreyCount_CountsAboveGroundLevelsOnly()
     {
         var result = ExportTepDataEventHandler.Compute(_doc);
 
         await Assert.That(result.StoreyCount).IsEqualTo(2);
+        await Assert.That(result.BasementStoreyCount).IsEqualTo(0);
+        await Assert.That(result.TechnicalStoreyCount).IsEqualTo(0);
+        await Assert.That(result.RoofStoreyCount).IsEqualTo(0);
         await Assert.That(result.Levels.Count).IsEqualTo(2);
         await Assert.That(result.Levels[0].LevelName).IsEqualTo("TEP Level 1");
+        await Assert.That(result.Levels[0].StoreyKind).IsEqualTo(StoreyLevelClassifier.AboveGround);
         await Assert.That(result.Levels[1].LevelName).IsEqualTo("TEP Level 2");
+        await Assert.That(result.Levels[1].StoreyKind).IsEqualTo(StoreyLevelClassifier.AboveGround);
     }
 
     [Test]
@@ -113,7 +143,7 @@ public class ExportTepDataTests : RevitApiTest
     }
 
     [Test]
-    public async Task ExportTep_BuildingFootprint_UsesLowestLevelRoomAreasOnly()
+    public async Task ExportTep_BuildingFootprint_UsesLowestAboveGroundLevelRoomAreas()
     {
         var result = ExportTepDataEventHandler.Compute(_doc);
 
