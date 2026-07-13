@@ -7,16 +7,53 @@ const finishScheduleSchema = z.object({
     .string()
     .optional()
     .default("Room Finish Schedule")
-    .describe("Schedule view name"),
+    .describe("Base name for the created schedule(s)"),
   templateId: z
     .string()
     .optional()
     .default("")
-    .describe("UniqueId or ElementId of an existing room finish schedule template in the project"),
+    .describe(
+      "UniqueId or ElementId of a single room finish schedule template. When provided without chain template names, the pre-chain single-schedule behavior is used."
+    ),
   type: z
     .enum(["Regular", "KeySchedule", "MaterialTakeoff"])
     .optional()
     .default("Regular"),
+  reproduceTemplateChain: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe(
+      "Reproduce the full ADSK_RU finish schedule chain: key styles schedule → data-filling schedule → output finish list(s). Defaults to true."
+    ),
+  keyScheduleTemplateName: z
+    .string()
+    .optional()
+    .default("")
+    .describe(
+      "Key (styles) schedule template name, e.g. 'В_Отделка-помещения-01_Стили_Ключевая'. Auto-discovered by ADSK_RU naming when omitted."
+    ),
+  dataScheduleTemplateName: z
+    .string()
+    .optional()
+    .default("")
+    .describe(
+      "Data-filling schedule template name, e.g. 'В_Отделка-помещения-02_Заполнение данных'. Auto-discovered when omitted."
+    ),
+  outputScheduleTemplateNames: z
+    .array(z.string())
+    .optional()
+    .default([])
+    .describe(
+      "Output finish list template names, e.g. ['О_АР_Ведомость отделки помещений_Имя', 'О_АР_Ведомость отделки помещений_Номер']. Auto-discovered when omitted."
+    ),
+  duplicateKeySchedule: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe(
+      "Duplicate the key schedule instead of reusing it. Off by default: a duplicated key schedule defines its own key parameter and loses the link to the data schedule."
+    ),
   includeUnplacedRooms: z.boolean().optional().default(false),
   includeNotEnclosedRooms: z.boolean().optional().default(false),
   missingFinishWarningThreshold: z
@@ -29,7 +66,7 @@ const finishScheduleSchema = z.object({
 export function registerCreateFinishScheduleTool(server: McpServer) {
   server.tool(
     "create_finish_schedule",
-    "Create a room finish ViewSchedule from export_room_finish_data validation and project template. Rows are rooms; columns are floor/wall/ceiling finish types. Warns when more than 30% of rooms lack finish parameters.",
+    "Create a room finish schedule set in Revit. By default reproduces the ADSK_RU template chain: key styles schedule (В_Отделка-помещения-01_Стили_Ключевая) → data-filling schedule (В_Отделка-помещения-02_Заполнение данных) → output finish list(s) (О_АР_Ведомость отделки помещений_Имя/_Номер). The key schedule is reused to keep its key parameter linked; data and output schedules are duplicated with template formatting. Rows are rooms; columns are finish types. Falls back to a single schedule when no chain templates exist. Warns when more than 30% of rooms lack finish parameters.",
     {
       schedule: finishScheduleSchema
         .optional()

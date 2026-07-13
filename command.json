@@ -185,7 +185,7 @@
     },
     {
       "commandName": "create_finish_schedule",
-      "description": "Create a room finish schedule from export_room_finish_data with project template support",
+      "description": "Create a room finish schedule set: reproduces the ADSK_RU chain (key styles → data filling → output list) or a single schedule from a template",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
