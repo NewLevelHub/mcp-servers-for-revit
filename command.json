@@ -242,6 +242,11 @@
       "commandName": "apply_norm_result",
       "description": "Write norm-check results into the model: status parameter, marks, highlight, violation schedule (with preview and overwrite protection)",
       "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "render_tep_table",
+      "description": "Render a TEP table on the 'Общие данные' sheet: layout from a reference schedule, values from export_tep_data, text notes and grid lines",
+      "assemblyPath": "RevitMCPCommandSet.dll"
     }
   ]
 }
