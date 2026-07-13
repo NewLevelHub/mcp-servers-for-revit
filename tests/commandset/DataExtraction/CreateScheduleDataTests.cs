@@ -1,6 +1,7 @@
 using Autodesk.Revit.DB;
 using Nice3point.TUnit.Revit;
 using Nice3point.TUnit.Revit.Executors;
+using RevitMCPCommandSet.Utils;
 using TUnit.Core;
 using TUnit.Core.Executors;
 
@@ -65,6 +66,27 @@ public class CreateScheduleDataTests : RevitApiTest
             .GetElementCount();
 
         await Assert.That(doorCount).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task DoorAccessoryFilter_ExcludesSlopeFamilyNames()
+    {
+        // Mirrors create_door_schedule / validate_schedule filter (REV-41).
+        var names = new[]
+        {
+            "(откос)двери_внутренний",
+            "Дверь 1",
+            "(Откос)Двери_наружный",
+            "ДВ_01"
+        };
+
+        var schedulable = names
+            .Where(name => !OpeningFillClassifier.IsDoorAccessory(name))
+            .ToList();
+
+        await Assert.That(schedulable.Count).IsEqualTo(2);
+        await Assert.That(schedulable.Contains("Дверь 1")).IsTrue();
+        await Assert.That(schedulable.Contains("ДВ_01")).IsTrue();
     }
 
     [Test]

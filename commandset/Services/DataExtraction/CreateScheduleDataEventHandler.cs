@@ -1,6 +1,7 @@
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using RevitMCPCommandSet.Models.DataExtraction;
+using RevitMCPCommandSet.Utils;
 using RevitMCPSDK.API.Interfaces;
 
 namespace RevitMCPCommandSet.Services.DataExtraction
@@ -39,30 +40,49 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                     _ => new List<ScheduleInstanceRow>()
                 };
 
+                var instances = instanceRows
+                    .Select(ToInstanceExport)
+                    .OrderBy(i => i.Level)
+                    .ThenBy(i => i.FamilyName)
+                    .ThenBy(i => i.Type)
+                    .ThenBy(i => i.Id)
+                    .ToList();
+
                 var groups = instanceRows
                     .GroupBy(r => new { r.TypeId, r.Level, r.Size, r.Type, r.FamilyName })
-                    .Select(g => new ScheduleGroupRow
+                    .Select(g =>
                     {
-                        TypeId = g.Key.TypeId,
-                        FamilyName = g.Key.FamilyName,
-                        Type = g.Key.Type,
-                        Size = g.Key.Size,
-                        Level = g.Key.Level,
-                        Count = g.Count(),
-                        Mark = BuildGroupMark(g.Select(x => x.Mark))
+                        var elementIds = g.Select(x => x.ElementId).OrderBy(id => id).ToList();
+                        var unmarkedCount = g.Count(x => string.IsNullOrWhiteSpace(x.Mark));
+                        return new ScheduleGroupRow
+                        {
+                            TypeId = g.Key.TypeId,
+                            FamilyName = g.Key.FamilyName,
+                            Type = g.Key.Type,
+                            Size = g.Key.Size,
+                            Level = g.Key.Level,
+                            Count = g.Count(),
+                            UnmarkedCount = unmarkedCount,
+                            ElementIds = elementIds,
+                            Mark = BuildGroupMark(g.Select(x => x.Mark))
+                        };
                     })
                     .OrderBy(g => g.Level)
                     .ThenBy(g => g.FamilyName)
                     .ThenBy(g => g.Type)
                     .ToList();
 
+                var totalUnmarked = instanceRows.Count(r => string.IsNullOrWhiteSpace(r.Mark));
+
                 ResultInfo = new ScheduleExportResult
                 {
                     Category = _category.ToString().ToLowerInvariant(),
                     TotalCount = instanceRows.Count,
+                    UnmarkedCount = totalUnmarked,
+                    Instances = instances,
                     Groups = groups,
                     Success = true,
-                    Message = $"Successfully exported {instanceRows.Count} {_category.ToString().ToLowerInvariant()} in {groups.Count} groups"
+                    Message = $"Successfully exported {instanceRows.Count} {_category.ToString().ToLowerInvariant()} in {groups.Count} groups ({totalUnmarked} without mark)"
                 };
             }
             catch (Exception ex)
@@ -84,10 +104,10 @@ namespace RevitMCPCommandSet.Services.DataExtraction
         public string GetName() => "Create Schedule Data";
 
         private static List<ScheduleInstanceRow> CollectDoorRows(Document doc) =>
-            CollectFamilyInstanceRows(doc, BuiltInCategory.OST_Doors, GetDoorSize);
+            CollectFamilyInstanceRows(doc, BuiltInCategory.OST_Doors, GetDoorSize, OpeningFillClassifier.IsSchedulableDoor);
 
         private static List<ScheduleInstanceRow> CollectWindowRows(Document doc) =>
-            CollectFamilyInstanceRows(doc, BuiltInCategory.OST_Windows, GetWindowSize);
+            CollectFamilyInstanceRows(doc, BuiltInCategory.OST_Windows, GetWindowSize, OpeningFillClassifier.IsSchedulableWindow);
 
         private static List<ScheduleInstanceRow> CollectFloorRows(Document doc)
         {
@@ -103,7 +123,8 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                 var level = doc.GetElement(floor.LevelId) as Level;
                 rows.Add(new ScheduleInstanceRow
                 {
-                    Mark = GetParameterString(floor, BuiltInParameter.ALL_MODEL_MARK),
+                    ElementId = GetElementIdValue(floor.Id),
+                    Mark = GetElementMark(floor),
                     FamilyName = floorType?.FamilyName ?? "",
                     Type = floorType?.Name ?? "",
                     Size = FormatFloorSize(floor),
@@ -118,20 +139,24 @@ namespace RevitMCPCommandSet.Services.DataExtraction
         private static List<ScheduleInstanceRow> CollectFamilyInstanceRows(
             Document doc,
             BuiltInCategory category,
-            Func<FamilyInstance, string> sizeResolver)
+            Func<FamilyInstance, string> sizeResolver,
+            Func<FamilyInstance, bool> includePredicate)
         {
             var rows = new List<ScheduleInstanceRow>();
             var instances = new FilteredElementCollector(doc)
                 .OfCategory(category)
                 .WhereElementIsNotElementType()
-                .Cast<FamilyInstance>();
+                .OfClass(typeof(FamilyInstance))
+                .Cast<FamilyInstance>()
+                .Where(includePredicate);
 
             foreach (var instance in instances)
             {
                 var symbol = instance.Symbol;
                 rows.Add(new ScheduleInstanceRow
                 {
-                    Mark = GetParameterString(instance, BuiltInParameter.ALL_MODEL_MARK),
+                    ElementId = GetElementIdValue(instance.Id),
+                    Mark = GetElementMark(instance),
                     FamilyName = symbol?.FamilyName ?? "",
                     Type = symbol?.Name ?? "",
                     Size = sizeResolver(instance),
@@ -142,6 +167,18 @@ namespace RevitMCPCommandSet.Services.DataExtraction
 
             return rows;
         }
+
+        private static ScheduleInstanceExport ToInstanceExport(ScheduleInstanceRow row) =>
+            new ScheduleInstanceExport
+            {
+                Id = row.ElementId,
+                Mark = row.Mark,
+                FamilyName = row.FamilyName,
+                Type = row.Type,
+                Size = row.Size,
+                Level = row.Level,
+                TypeId = row.TypeId
+            };
 
         private static string GetDoorSize(FamilyInstance instance)
         {
@@ -209,6 +246,22 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             return element.get_Parameter(parameter)?.AsString() ?? "";
         }
 
+        /// <summary>
+        /// Reads mark when present, but never excludes the element when mark is empty.
+        /// </summary>
+        private static string GetElementMark(Element element)
+        {
+            var candidates = new[]
+            {
+                GetParameterString(element, BuiltInParameter.ALL_MODEL_MARK),
+                GetParameterString(element, BuiltInParameter.DOOR_NUMBER),
+                element.LookupParameter("Марка")?.AsString() ?? "",
+                element.LookupParameter("Mark")?.AsString() ?? ""
+            };
+
+            return candidates.FirstOrDefault(mark => !string.IsNullOrWhiteSpace(mark)) ?? "";
+        }
+
         private static double GetParameterDouble(Element element, BuiltInParameter parameter)
         {
             var param = element.get_Parameter(parameter);
@@ -237,6 +290,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
 
         private sealed class ScheduleInstanceRow
         {
+            public long ElementId { get; set; }
             public string Mark { get; set; } = "";
             public string FamilyName { get; set; } = "";
             public string Type { get; set; } = "";

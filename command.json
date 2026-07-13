@@ -100,7 +100,7 @@
     },
     {
       "commandName": "validate_schedule",
-      "description": "Compare schedule element counts against model elements for Doors, Windows, or Floors",
+      "description": "Compare schedule element counts against model elements for Doors, Windows, or Floors (doors/windows exclude slopes and accessories)",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
@@ -155,12 +155,12 @@
     },
     {
       "commandName": "create_door_schedule",
-      "description": "Export structured door schedule data grouped by family type with mark, size, level, and count",
+      "description": "Export structured door schedule data for door blocks only (excludes slopes/reveals), including without mark, grouped by family type with elementIds, mark, size, level, and count",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_window_schedule",
-      "description": "Export structured window schedule data grouped by family type with mark, size, level, and count",
+      "description": "Export structured window schedule data for window blocks only (excludes slopes/sills), grouped by family type with mark, size, level, and count",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
