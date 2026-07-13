@@ -115,6 +115,7 @@ public class RenderTepTableEventHandler : IExternalEventHandler, IWaitableExtern
         result.Success = true;
         result.Columns = columns;
         result.RowCount = rows.Count;
+        result.Units = tepData.Units;
         result.ExecutionTimeMs = stopwatch.ElapsedMilliseconds;
         result.Warnings = warnings;
         result.Message =
