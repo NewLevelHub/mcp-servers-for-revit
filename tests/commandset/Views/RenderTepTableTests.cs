@@ -62,6 +62,8 @@ public class RenderTepTableTests : RevitApiTest
         await Assert.That(result.SheetName).IsEqualTo("Общие данные");
         await Assert.That(result.Columns.Count).IsEqualTo(4);
         await Assert.That(result.Columns[0].Heading).IsEqualTo("№ п/п");
+        // Columns grow to fit the longest cell (Revit TextNote min width + content).
+        await Assert.That(result.Columns[1].Width).IsGreaterThanOrEqualTo(90.0);
         await Assert.That(result.RowCount).IsGreaterThanOrEqualTo(5);
         await Assert.That(result.BodyTextType).IsNotEmpty();
 
@@ -100,7 +102,7 @@ public class RenderTepTableTests : RevitApiTest
         await Assert.That(result.TemplateScheduleUsed).IsTrue();
         await Assert.That(result.Columns.Count).IsEqualTo(4);
         await Assert.That(result.Columns[1].Heading).IsEqualTo("Наименование");
-        await Assert.That(result.Columns[1].Width).IsEqualTo(80.0).Within(0.5);
+        await Assert.That(result.Columns[1].Width).IsGreaterThanOrEqualTo(80.0);
         await Assert.That(result.Columns[0].Role).IsEqualTo("Index");
         await Assert.That(result.Columns[1].Role).IsEqualTo("Name");
         await Assert.That(result.Columns[2].Role).IsEqualTo("Unit");

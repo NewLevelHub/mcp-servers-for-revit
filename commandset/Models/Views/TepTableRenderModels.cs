@@ -39,19 +39,21 @@ public class TepTableRenderInfo
     public string Title { get; set; } = "Технико-экономические показатели";
 
     /// <summary>
-    ///     Offset of the table's top-left corner from the sheet's left edge, mm
+    ///     Offset of the table's top-left corner from the sheet outline left edge, mm.
+    ///     Default clears a typical title-block border.
     /// </summary>
     [JsonProperty("positionX")]
-    public double PositionX { get; set; } = 20;
+    public double PositionX { get; set; } = 50;
 
     /// <summary>
-    ///     Offset of the table's top-left corner from the sheet's top edge, mm
+    ///     Offset of the table's top-left corner from the sheet outline top edge, mm.
+    ///     Default clears a typical title-block border.
     /// </summary>
     [JsonProperty("positionY")]
-    public double PositionY { get; set; } = 20;
+    public double PositionY { get; set; } = 40;
 
     /// <summary>
-    ///     Row height, mm
+    ///     Minimum row height, mm. Auto-grows to fit the text note type and wrapped cell text.
     /// </summary>
     [JsonProperty("rowHeight")]
     public double RowHeight { get; set; } = 8;

@@ -35,18 +35,24 @@ export function registerRenderTepTableTool(server: McpServer) {
       positionX: z
         .number()
         .optional()
-        .default(20)
-        .describe("Offset of the table's top-left corner from the sheet's left edge, mm."),
+        .default(50)
+        .describe(
+          "Offset of the table's top-left corner from the sheet outline left edge, mm. Default 50 clears a typical title-block border."
+        ),
       positionY: z
         .number()
         .optional()
-        .default(20)
-        .describe("Offset of the table's top-left corner from the sheet's top edge, mm."),
+        .default(40)
+        .describe(
+          "Offset of the table's top-left corner from the sheet outline top edge, mm. Default 40 clears a typical title-block border."
+        ),
       rowHeight: z
         .number()
         .optional()
         .default(8)
-        .describe("Row height in mm. Defaults to 8."),
+        .describe(
+          "Minimum row height in mm. Auto-grows to fit the text note type and wrapped cell text so labels are not clipped."
+        ),
       titleTextTypeName: z
         .string()
         .optional()
@@ -93,8 +99,8 @@ export function registerRenderTepTableTool(server: McpServer) {
         sheetNumber: args.sheetNumber ?? "",
         createSheetIfMissing: args.createSheetIfMissing ?? true,
         title: args.title ?? "Технико-экономические показатели",
-        positionX: args.positionX ?? 20,
-        positionY: args.positionY ?? 20,
+        positionX: args.positionX ?? 50,
+        positionY: args.positionY ?? 40,
         rowHeight: args.rowHeight ?? 8,
         titleTextTypeName: args.titleTextTypeName ?? "",
         headerTextTypeName: args.headerTextTypeName ?? "",

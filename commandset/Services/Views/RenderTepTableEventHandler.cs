@@ -14,7 +14,17 @@ namespace RevitMCPCommandSet.Services.Views;
 public class RenderTepTableEventHandler : IExternalEventHandler, IWaitableExternalEventHandler
 {
     private const double MmPerFoot = 304.8;
-    private const double CellTextInsetMm = 1.5;
+    /// <summary>Padding inside a cell so text does not sit on grid lines.</summary>
+    private const double CellTextInsetMm = 3.5;
+    /// <summary>
+    /// Extra gap between the title band and the table grid (mm).
+    /// Prevents the title TextNote from overlapping the header row.
+    /// </summary>
+    private const double TitleGapMm = 4;
+    /// <summary>Extra width factor so Cyrillic strings do not wrap after measurement.</summary>
+    private const double WidthSafetyFactor = 1.2;
+    /// <summary>Extra mm added on top of measured single-line width.</summary>
+    private const double WidthSafetyMm = 6;
 
     private TepTableRenderInfo _info;
     private readonly ManualResetEvent _resetEvent = new ManualResetEvent(false);
@@ -95,12 +105,35 @@ public class RenderTepTableEventHandler : IExternalEventHandler, IWaitableExtern
             result.HeaderTextType = GetTextTypeName(doc, headerTypeId);
             result.BodyTextType = GetTextTypeName(doc, bodyTypeId);
 
+            FitColumnWidths(
+                doc,
+                sheet,
+                info,
+                columns,
+                rows,
+                titleTypeId,
+                headerTypeId,
+                bodyTypeId,
+                warnings);
+
+            var rowHeightsMm = ComputeRowHeightsMm(
+                doc,
+                sheet,
+                info,
+                columns,
+                rows,
+                titleTypeId,
+                headerTypeId,
+                bodyTypeId,
+                warnings);
+
             DrawTable(
                 doc,
                 sheet,
                 info,
                 columns,
                 rows,
+                rowHeightsMm,
                 titleTypeId,
                 headerTypeId,
                 bodyTypeId,
@@ -201,9 +234,10 @@ public class RenderTepTableEventHandler : IExternalEventHandler, IWaitableExtern
 
         if (columns.Count == 0)
         {
-            columns.Add(new TableColumn { Heading = "№ п/п", WidthMm = 15, Alignment = "Center" });
+            // Floors only — FitColumnWidths grows columns to fit the longest cell text.
+            columns.Add(new TableColumn { Heading = "№ п/п", WidthMm = 18, Alignment = "Center" });
             columns.Add(new TableColumn { Heading = "Наименование", WidthMm = 90, Alignment = "Left" });
-            columns.Add(new TableColumn { Heading = "Ед. изм.", WidthMm = 20, Alignment = "Center" });
+            columns.Add(new TableColumn { Heading = "Ед. изм.", WidthMm = 22, Alignment = "Center" });
             columns.Add(new TableColumn { Heading = "Кол-во", WidthMm = 30, Alignment = "Center" });
         }
 
@@ -307,6 +341,419 @@ public class RenderTepTableEventHandler : IExternalEventHandler, IWaitableExtern
         }
 
         return rows;
+    }
+
+    /// <summary>
+    /// Grow each column so headings and cell values fit on one line (plus cell inset),
+    /// never narrower than Revit's TextNote minimum. Cap the total to the sheet width.
+    /// </summary>
+    private static void FitColumnWidths(
+        Document doc,
+        ViewSheet sheet,
+        TepTableRenderInfo info,
+        List<TepTableColumnInfo> columns,
+        List<TableRow> rows,
+        ElementId titleTypeId,
+        ElementId headerTypeId,
+        ElementId bodyTypeId,
+        List<string> warnings)
+    {
+        if (columns.Count == 0)
+            return;
+
+        var padMm = CellTextInsetMm * 2 + WidthSafetyMm;
+        var headerFloorMm = FeetToMm(TextNote.GetMinimumAllowedWidth(doc, headerTypeId)) + padMm;
+        var bodyFloorMm = FeetToMm(TextNote.GetMinimumAllowedWidth(doc, bodyTypeId)) + padMm;
+        var typeFloorMm = Math.Max(headerFloorMm, bodyFloorMm);
+
+        for (var columnIndex = 0; columnIndex < columns.Count; columnIndex++)
+        {
+            var column = columns[columnIndex];
+            var neededMm = Math.Max(column.Width, typeFloorMm);
+
+            var headingWidth = MeasureSingleLineWidthMm(doc, sheet, headerTypeId, column.Heading);
+            neededMm = Math.Max(neededMm, headingWidth + padMm);
+
+            var dataIndex = 0;
+            foreach (var row in rows)
+            {
+                if (row.IsGroupHeader)
+                    continue;
+
+                dataIndex++;
+                var text = column.Role switch
+                {
+                    nameof(ColumnRole.Index) => dataIndex.ToString(CultureInfo.InvariantCulture),
+                    nameof(ColumnRole.Name) => row.Name,
+                    nameof(ColumnRole.Unit) => row.Unit,
+                    nameof(ColumnRole.Value) => row.Value,
+                    _ => string.Empty
+                };
+
+                if (string.IsNullOrWhiteSpace(text))
+                    continue;
+
+                neededMm = Math.Max(
+                    neededMm,
+                    MeasureSingleLineWidthMm(doc, sheet, bodyTypeId, text) + padMm);
+            }
+
+            column.Width = Math.Round(neededMm, 1);
+        }
+
+        // Keep narrow semantic columns from ballooning when measurement overestimates.
+        foreach (var column in columns)
+        {
+            var cap = column.Role switch
+            {
+                nameof(ColumnRole.Index) => 35.0,
+                nameof(ColumnRole.Unit) => 45.0,
+                nameof(ColumnRole.Value) => 50.0,
+                _ => double.PositiveInfinity
+            };
+            if (column.Width > cap)
+                column.Width = cap;
+        }
+
+        // Group headers and the title span the full table — expand Name (or last) column if needed.
+        var spanTexts = rows
+            .Where(row => row.IsGroupHeader && !string.IsNullOrWhiteSpace(row.Name))
+            .Select(row => row.Name)
+            .ToList();
+        if (!string.IsNullOrWhiteSpace(info.Title))
+            spanTexts.Add(info.Title);
+
+        var spanNeedMm = 0.0;
+        foreach (var text in spanTexts)
+        {
+            var typeId = text == info.Title ? titleTypeId : headerTypeId;
+            spanNeedMm = Math.Max(
+                spanNeedMm,
+                MeasureSingleLineWidthMm(doc, sheet, typeId, text) + padMm);
+        }
+
+        var totalWidth = columns.Sum(column => column.Width);
+        if (spanNeedMm > totalWidth)
+        {
+            var expandTarget = columns.FirstOrDefault(column => column.Role == nameof(ColumnRole.Name))
+                               ?? columns[columns.Count - 1];
+            expandTarget.Width = Math.Round(expandTarget.Width + (spanNeedMm - totalWidth), 1);
+            totalWidth = columns.Sum(column => column.Width);
+        }
+
+        var outline = sheet.Outline;
+        if (outline == null)
+            return;
+
+        var rightMarginMm = Math.Max(info.PositionX, 20);
+        var availableMm = FeetToMm(outline.Max.U - outline.Min.U) - info.PositionX - rightMarginMm;
+        if (availableMm <= 0 || totalWidth <= availableMm)
+            return;
+
+        var excess = totalWidth - availableMm;
+        var shrinkTarget = columns.FirstOrDefault(column => column.Role == nameof(ColumnRole.Name))
+                           ?? columns.OrderByDescending(column => column.Width).First();
+        var minAllowed = typeFloorMm;
+        if (shrinkTarget.Width - excess >= minAllowed)
+        {
+            shrinkTarget.Width = Math.Round(shrinkTarget.Width - excess, 1);
+            return;
+        }
+
+        // Proportional shrink, never below TextNote minimum.
+        var shrinkable = columns.Sum(column => Math.Max(0, column.Width - minAllowed));
+        if (shrinkable <= 0)
+        {
+            warnings.Add(
+                "TEP table is wider than the sheet printable area; text may wrap or clip.");
+            return;
+        }
+
+        var scale = Math.Min(1.0, (shrinkable - Math.Min(excess, shrinkable)) / shrinkable);
+        foreach (var column in columns)
+        {
+            var slack = column.Width - minAllowed;
+            if (slack <= 0)
+                continue;
+            column.Width = Math.Round(minAllowed + slack * scale, 1);
+        }
+
+        warnings.Add(
+            "TEP column widths were reduced to fit the sheet; long names may wrap.");
+    }
+
+    /// <summary>
+    /// Width needed to keep <paramref name="text"/> on a single line for the given text type.
+    /// Prefers glyph estimate; optionally widens if a regenerated on-sheet probe still wraps.
+    /// </summary>
+    private static double MeasureSingleLineWidthMm(
+        Document doc,
+        View view,
+        ElementId textTypeId,
+        string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return 0;
+
+        var normalized = NormalizeText(text);
+        var minW = TextNote.GetMinimumAllowedWidth(doc, textTypeId);
+        var maxW = TextNote.GetMaximumAllowedWidth(doc, textTypeId);
+        var textSize = MmToFeet(GetTextSizeMm(doc, textTypeId));
+        // TextNote bbox is taller than TEXT_SIZE; 2.8× avoids false "wrapped" positives.
+        var singleLineLimit = textSize * 2.8;
+
+        var widthFeet = Math.Min(
+            Math.Max(EstimateTextWidthFeet(doc, textTypeId, normalized) * WidthSafetyFactor, minW),
+            maxW);
+
+        // Grow only while an on-sheet probe still reports multi-line height.
+        for (var step = 0; step < 6; step++)
+        {
+            if (!TextWrapsAtWidth(doc, view, textTypeId, normalized, widthFeet, singleLineLimit))
+                break;
+            var next = Math.Min(widthFeet * 1.2, maxW);
+            if (next <= widthFeet + 1e-9)
+                break;
+            widthFeet = next;
+        }
+
+        return FeetToMm(widthFeet);
+    }
+
+    private static bool TextWrapsAtWidth(
+        Document doc,
+        View view,
+        ElementId textTypeId,
+        string text,
+        double widthFeet,
+        double singleLineHeightLimitFeet)
+    {
+        TextNote probe = null;
+        try
+        {
+            var options = new TextNoteOptions
+            {
+                TypeId = textTypeId,
+                HorizontalAlignment = HorizontalTextAlignment.Left,
+                VerticalAlignment = VerticalTextAlignment.Middle
+            };
+
+            // Must be inside the view outline — off-sheet probes often return a null bbox.
+            var origin = GetProbeOrigin(view);
+            probe = TextNote.Create(
+                doc,
+                view.Id,
+                origin,
+                Math.Max(widthFeet, TextNote.GetMinimumAllowedWidth(doc, textTypeId)),
+                text,
+                options);
+            doc.Regenerate();
+
+            var bbox = probe.get_BoundingBox(view);
+            if (bbox == null)
+                return false;
+
+            var height = Math.Abs(bbox.Max.Y - bbox.Min.Y);
+            return height > singleLineHeightLimitFeet;
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            if (probe != null)
+            {
+                try { doc.Delete(probe.Id); }
+                catch { /* ignore */ }
+            }
+        }
+    }
+
+    private static XYZ GetProbeOrigin(View view)
+    {
+        if (view is ViewSheet sheet && sheet.Outline != null)
+        {
+            var outline = sheet.Outline;
+            return new XYZ(
+                (outline.Min.U + outline.Max.U) / 2.0,
+                (outline.Min.V + outline.Max.V) / 2.0,
+                0);
+        }
+
+        return XYZ.Zero;
+    }
+
+    private static double EstimateTextWidthFeet(Document doc, ElementId textTypeId, string text)
+    {
+        var textType = doc.GetElement(textTypeId) as TextNoteType;
+        var sizeParam = textType?.get_Parameter(BuiltInParameter.TEXT_SIZE);
+        var textSize = sizeParam != null && sizeParam.AsDouble() > 0
+            ? sizeParam.AsDouble()
+            : MmToFeet(3.5);
+        // Cyrillic glyphs are typically wider than Latin; 0.78 is a safe average for Arial.
+        return Math.Max(text.Length, 1) * textSize * 0.78;
+    }
+
+    /// <summary>
+    /// Per-row heights (mm): index 0 = header, then one entry per data/group row.
+    /// Grows with wrapped text when the sheet forced column shrink.
+    /// </summary>
+    private static List<double> ComputeRowHeightsMm(
+        Document doc,
+        ViewSheet sheet,
+        TepTableRenderInfo info,
+        List<TepTableColumnInfo> columns,
+        List<TableRow> rows,
+        ElementId titleTypeId,
+        ElementId headerTypeId,
+        ElementId bodyTypeId,
+        List<string> warnings)
+    {
+        var verticalPadMm = CellTextInsetMm * 2 + GetTextSizeMm(doc, bodyTypeId) * 0.35;
+        var minBodyMm = Math.Max(
+            GetTextSizeMm(doc, headerTypeId),
+            GetTextSizeMm(doc, bodyTypeId)) + verticalPadMm;
+        var requestedFloor = info.RowHeight > 0 ? info.RowHeight : 8;
+        minBodyMm = Math.Max(minBodyMm, requestedFloor);
+
+        var heights = new List<double>();
+
+        // Header row
+        var headerHeight = minBodyMm;
+        for (var columnIndex = 0; columnIndex < columns.Count; columnIndex++)
+        {
+            headerHeight = Math.Max(
+                headerHeight,
+                MeasureTextHeightMm(
+                    doc,
+                    sheet,
+                    headerTypeId,
+                    columns[columnIndex].Heading,
+                    columns[columnIndex].Width) + verticalPadMm);
+        }
+        heights.Add(Math.Round(headerHeight, 1));
+
+        var dataIndex = 0;
+        foreach (var row in rows)
+        {
+            var rowHeight = minBodyMm;
+            if (row.IsGroupHeader)
+            {
+                var spanWidthMm = columns.Sum(column => column.Width);
+                rowHeight = Math.Max(
+                    rowHeight,
+                    MeasureTextHeightMm(doc, sheet, headerTypeId, row.Name, spanWidthMm) + verticalPadMm);
+            }
+            else
+            {
+                dataIndex++;
+                for (var columnIndex = 0; columnIndex < columns.Count; columnIndex++)
+                {
+                    var column = columns[columnIndex];
+                    var text = column.Role switch
+                    {
+                        nameof(ColumnRole.Index) => dataIndex.ToString(CultureInfo.InvariantCulture),
+                        nameof(ColumnRole.Name) => row.Name,
+                        nameof(ColumnRole.Unit) => row.Unit,
+                        nameof(ColumnRole.Value) => row.Value,
+                        _ => string.Empty
+                    };
+
+                    if (string.IsNullOrWhiteSpace(text))
+                        continue;
+
+                    rowHeight = Math.Max(
+                        rowHeight,
+                        MeasureTextHeightMm(doc, sheet, bodyTypeId, text, column.Width) + verticalPadMm);
+                }
+            }
+
+            heights.Add(Math.Round(rowHeight, 1));
+        }
+
+        // Keep info.RowHeight as the typical/max body height for callers that read it back.
+        info.RowHeight = heights.Count > 0 ? heights.Max() : minBodyMm;
+
+        var outline = sheet.Outline;
+        if (outline != null)
+        {
+            var titleBandMm = Math.Max(
+                GetTextSizeMm(doc, titleTypeId) + CellTextInsetMm * 2,
+                heights[0] * 1.15);
+            var tableHeightMm = titleBandMm + TitleGapMm + heights.Sum();
+            var availableMm = FeetToMm(outline.Max.V - outline.Min.V) - info.PositionY - Math.Max(info.PositionY, 20);
+            if (tableHeightMm > availableMm)
+            {
+                warnings.Add(
+                    "TEP table is taller than the sheet printable area at the requested position; " +
+                    "bottom rows may sit on the title-block border.");
+            }
+        }
+
+        return heights;
+    }
+
+    private static double GetTextSizeMm(Document doc, ElementId textTypeId)
+    {
+        var textType = doc.GetElement(textTypeId) as TextNoteType;
+        var sizeParam = textType?.get_Parameter(BuiltInParameter.TEXT_SIZE);
+        if (sizeParam == null || sizeParam.AsDouble() <= 0)
+            return 3.5;
+        return FeetToMm(sizeParam.AsDouble());
+    }
+
+    private static double MeasureTextHeightMm(
+        Document doc,
+        View view,
+        ElementId textTypeId,
+        string text,
+        double cellWidthMm)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return GetTextSizeMm(doc, textTypeId);
+
+        var normalized = NormalizeText(text);
+        TextNote probe = null;
+        try
+        {
+            var inset = CellTextInsetMm * 2;
+            var availableMm = Math.Max(cellWidthMm - inset, CellTextInsetMm);
+            var widthFeet = ClampTextWidth(doc, textTypeId, MmToFeet(availableMm));
+            var options = new TextNoteOptions
+            {
+                TypeId = textTypeId,
+                HorizontalAlignment = HorizontalTextAlignment.Left,
+                VerticalAlignment = VerticalTextAlignment.Middle
+            };
+
+            probe = TextNote.Create(
+                doc,
+                view.Id,
+                GetProbeOrigin(view),
+                widthFeet,
+                normalized,
+                options);
+            doc.Regenerate();
+
+            var bbox = probe.get_BoundingBox(view);
+            if (bbox == null)
+                return GetTextSizeMm(doc, textTypeId);
+
+            return FeetToMm(Math.Abs(bbox.Max.Y - bbox.Min.Y));
+        }
+        catch
+        {
+            return GetTextSizeMm(doc, textTypeId);
+        }
+        finally
+        {
+            if (probe != null)
+            {
+                try { doc.Delete(probe.Id); }
+                catch { /* ignore */ }
+            }
+        }
     }
 
     private static ViewSheet ResolveOrCreateSheet(
@@ -443,6 +890,7 @@ public class RenderTepTableEventHandler : IExternalEventHandler, IWaitableExtern
         TepTableRenderInfo info,
         List<TepTableColumnInfo> columns,
         List<TableRow> rows,
+        List<double> rowHeightsMm,
         ElementId titleTypeId,
         ElementId headerTypeId,
         ElementId bodyTypeId,
@@ -452,15 +900,24 @@ public class RenderTepTableEventHandler : IExternalEventHandler, IWaitableExtern
         var outline = sheet.Outline
             ?? throw new InvalidOperationException($"Sheet '{sheet.SheetNumber}' has no outline.");
 
-        var rowHeight = MmToFeet(info.RowHeight > 0 ? info.RowHeight : 8);
-        var tableWidth = MmToFeet(columns.Sum(column => column.Width));
+        if (rowHeightsMm == null || rowHeightsMm.Count != rows.Count + 1)
+            throw new InvalidOperationException("Row heights must include the header plus every data row.");
 
+        var rowHeights = rowHeightsMm.Select(MmToFeet).ToList();
+        var titleBandMm = Math.Max(
+            GetTextSizeMm(doc, titleTypeId) + CellTextInsetMm * 2,
+            rowHeightsMm[0] * 1.15);
+        var titleBand = MmToFeet(titleBandMm);
+        var titleGap = MmToFeet(TitleGapMm);
+        var tableWidth = MmToFeet(columns.Sum(column => column.Width));
+        var gridHeight = rowHeights.Sum();
+
+        // PositionX/Y are offsets from the sheet outline (title-block outer box).
+        // Defaults leave room for the typical double-line border of the title block.
         var left = outline.Min.U + MmToFeet(info.PositionX);
         var top = outline.Max.V - MmToFeet(info.PositionY);
 
-        // 1 title row + 1 header row + data rows
-        var totalRows = rows.Count + 1;
-        var tableHeight = rowHeight * totalRows + rowHeight; // extra row height for the title
+        var tableHeight = titleBand + titleGap + gridHeight;
 
         if (left + tableWidth > outline.Max.U || top - tableHeight < outline.Min.V)
             warnings.Add("The TEP table does not fully fit within the sheet outline at the requested position.");
@@ -470,7 +927,8 @@ public class RenderTepTableEventHandler : IExternalEventHandler, IWaitableExtern
             columnLefts.Add(columnLefts[columnLefts.Count - 1] + MmToFeet(column.Width));
         var right = columnLefts[columnLefts.Count - 1];
 
-        // Title above the grid
+        // Title sits in its own band fully above the grid (Left, so long titles
+        // do not spill past the left sheet border when centered).
         var titleNote = CreateCellText(
             doc,
             sheet,
@@ -479,34 +937,41 @@ public class RenderTepTableEventHandler : IExternalEventHandler, IWaitableExtern
             left,
             right,
             top,
-            rowHeight,
-            "Center");
+            titleBand,
+            "Left");
         if (titleNote != null)
             result.TextNoteIds.Add(titleNote.Id.GetValue());
 
-        var gridTop = top - rowHeight;
-        var gridBottom = gridTop - rowHeight * totalRows;
+        var gridTop = top - titleBand - titleGap;
+        var gridBottom = gridTop - gridHeight;
 
-        // Horizontal grid lines
-        for (var rowIndex = 0; rowIndex <= totalRows; rowIndex++)
+        // Horizontal grid lines at cumulative row boundaries
+        var yCursor = gridTop;
+        var line = doc.Create.NewDetailCurve(
+            sheet,
+            Line.CreateBound(new XYZ(left, yCursor, 0), new XYZ(right, yCursor, 0)));
+        result.DetailLineIds.Add(line.Id.GetValue());
+        foreach (var height in rowHeights)
         {
-            var y = gridTop - rowHeight * rowIndex;
-            var line = doc.Create.NewDetailCurve(
+            yCursor -= height;
+            line = doc.Create.NewDetailCurve(
                 sheet,
-                Line.CreateBound(new XYZ(left, y, 0), new XYZ(right, y, 0)));
+                Line.CreateBound(new XYZ(left, yCursor, 0), new XYZ(right, yCursor, 0)));
             result.DetailLineIds.Add(line.Id.GetValue());
         }
 
         // Vertical grid lines
         foreach (var x in columnLefts)
         {
-            var line = doc.Create.NewDetailCurve(
+            line = doc.Create.NewDetailCurve(
                 sheet,
                 Line.CreateBound(new XYZ(x, gridBottom, 0), new XYZ(x, gridTop, 0)));
             result.DetailLineIds.Add(line.Id.GetValue());
         }
 
         // Header row
+        var headerTop = gridTop;
+        var headerHeight = rowHeights[0];
         for (var columnIndex = 0; columnIndex < columns.Count; columnIndex++)
         {
             var note = CreateCellText(
@@ -516,8 +981,8 @@ public class RenderTepTableEventHandler : IExternalEventHandler, IWaitableExtern
                 headerTypeId,
                 columnLefts[columnIndex],
                 columnLefts[columnIndex + 1],
-                gridTop,
-                rowHeight,
+                headerTop,
+                headerHeight,
                 "Center");
             if (note != null)
                 result.TextNoteIds.Add(note.Id.GetValue());
@@ -525,10 +990,11 @@ public class RenderTepTableEventHandler : IExternalEventHandler, IWaitableExtern
 
         // Data rows
         var dataIndex = 0;
+        var cellTop = gridTop - headerHeight;
         for (var rowIndex = 0; rowIndex < rows.Count; rowIndex++)
         {
             var row = rows[rowIndex];
-            var cellTop = gridTop - rowHeight * (rowIndex + 1);
+            var rowHeight = rowHeights[rowIndex + 1];
 
             if (row.IsGroupHeader)
             {
@@ -544,6 +1010,7 @@ public class RenderTepTableEventHandler : IExternalEventHandler, IWaitableExtern
                     "Center");
                 if (note != null)
                     result.TextNoteIds.Add(note.Id.GetValue());
+                cellTop -= rowHeight;
                 continue;
             }
 
@@ -576,6 +1043,8 @@ public class RenderTepTableEventHandler : IExternalEventHandler, IWaitableExtern
                 if (note != null)
                     result.TextNoteIds.Add(note.Id.GetValue());
             }
+
+            cellTop -= rowHeight;
         }
     }
 
@@ -621,6 +1090,8 @@ public class RenderTepTableEventHandler : IExternalEventHandler, IWaitableExtern
     {
         var minWidth = TextNote.GetMinimumAllowedWidth(doc, textTypeId);
         var maxWidth = TextNote.GetMaximumAllowedWidth(doc, textTypeId);
+        // Stay inside Revit's allowed range. Narrow cells (15–20 mm) may still
+        // need minWidth; CellTextInsetMm keeps glyphs off the grid lines.
         return Math.Min(Math.Max(requestedWidth, minWidth), maxWidth);
     }
 
@@ -649,4 +1120,6 @@ public class RenderTepTableEventHandler : IExternalEventHandler, IWaitableExtern
     }
 
     private static double MmToFeet(double millimeters) => millimeters / MmPerFoot;
+
+    private static double FeetToMm(double feet) => feet * MmPerFoot;
 }
