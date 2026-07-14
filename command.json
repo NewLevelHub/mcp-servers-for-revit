@@ -85,7 +85,7 @@
     },
     {
       "commandName": "export_room_finish_data",
-      "description": "Export room finish data: wall/floor/ceiling finish parameters, boundary face materials and areas (read-only)",
+      "description": "Export room finish data: wall/floor/ceiling finish parameters (read-only); face materials opt-in, level filter and offset/limit pagination for large models",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
