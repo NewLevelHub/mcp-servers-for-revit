@@ -55,8 +55,29 @@ namespace RevitMCPCommandSet.Models.DataExtraction
 
     public class ExportRoomFinishDataResult
     {
+        /// <summary>
+        ///     Total rooms matching the filters (before offset/limit pagination)
+        /// </summary>
         [JsonProperty("totalRooms")]
         public int TotalRooms { get; set; }
+
+        /// <summary>
+        ///     Rooms returned in this page
+        /// </summary>
+        [JsonProperty("returnedRooms")]
+        public int ReturnedRooms { get; set; }
+
+        [JsonProperty("offset")]
+        public int Offset { get; set; }
+
+        /// <summary>
+        ///     Requested page size; 0 means no limit
+        /// </summary>
+        [JsonProperty("limit")]
+        public int Limit { get; set; }
+
+        [JsonProperty("hasMore")]
+        public bool HasMore { get; set; }
 
         [JsonProperty("roomsWithMissingFinishes")]
         public int RoomsWithMissingFinishes { get; set; }
