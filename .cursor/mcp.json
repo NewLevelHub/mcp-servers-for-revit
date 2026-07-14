@@ -1,11 +1,24 @@
 {
   "mcpServers": {
     "mcp-server-for-revit-local": {
-      "command": "node",
+      "command": "C:/Program Files/nodejs/node.exe",
       "args": [
-        "C:/Users/yessimkhanuly13/Desktop/mcp-servers-for-revit/server/build/index.js"
+        "C:/Mac/Home/Desktop/mcp-servers-for-revit/server/build/index.js"
       ],
-      "cwd": "C:/Users/yessimkhanuly13/Desktop/mcp-servers-for-revit/server"
+      "cwd": "C:/Mac/Home/Desktop/mcp-servers-for-revit/server",
+      "env": {
+        "MCP_TOOL_PROFILE": "default"
+      }
+    },
+    "mcp-server-for-revit-norms": {
+      "command": "C:/Program Files/nodejs/node.exe",
+      "args": [
+        "C:/Mac/Home/Desktop/mcp-servers-for-revit/server/build/index.js"
+      ],
+      "cwd": "C:/Mac/Home/Desktop/mcp-servers-for-revit/server",
+      "env": {
+        "MCP_TOOL_PROFILE": "norms"
+      }
     }
   }
 }

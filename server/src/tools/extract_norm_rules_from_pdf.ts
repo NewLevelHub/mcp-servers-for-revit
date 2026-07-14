@@ -4,36 +4,64 @@ import { isAbsolute, resolve } from "node:path";
 import db from "../database/db.js";
 import { extractRulesFromPdfFile } from "../normatives/extractRulesFromPdf.js";
 import {
+  compactRulesForMcp,
+  getNormLibraryCounts,
+  getNormLibraryStats,
   queryNormRules,
   saveNormRules,
+  type SaveableNormRule,
   withSuggestedTags,
 } from "../normatives/rulesStore.js";
+import { seedNormLibrary } from "../normatives/seedLibrary.js";
 import {
-  normativeApplicabilitySchema,
-  normativeNumericRangeSchema,
+  normativeRuleSchema,
   normativeRuleTypeSchema,
-  normativeSourceRefSchema,
-  normativeUnitSchema,
 } from "../normatives/types.js";
 
-const saveRuleInputSchema = z.object({
-  id: z.string(),
-  type: normativeRuleTypeSchema,
-  object: z.string(),
-  value: z.union([z.number(), z.string(), normativeNumericRangeSchema]),
-  unit: normativeUnitSchema,
-  applicability: normativeApplicabilitySchema.nullable(),
-  source: normativeSourceRefSchema,
-  normalized: normativeNumericRangeSchema.optional(),
-  tags: z.array(z.string()).optional(),
-});
+/**
+ * Flat MCP input for save rules — avoid z.union / nested object schemas that
+ * emit anyOf+$ref without $defs (Cursor drops or mishandles those tools).
+ * Full shape is validated with normativeRuleSchema inside the handler.
+ */
+const looseSaveRuleSchema = z
+  .object({
+    id: z.string(),
+    type: z.string(),
+    object: z.string(),
+    value: z.any(),
+    unit: z.string(),
+    source: z.object({
+      document: z.string(),
+      clause: z.string(),
+      quote: z.string(),
+      page: z.number().optional(),
+    }),
+    tags: z.array(z.string()).optional(),
+  })
+  .passthrough();
+
+function parseSaveableRules(raw: unknown[]): SaveableNormRule[] {
+  return raw.map((item, index) => {
+    const parsed = normativeRuleSchema
+      .extend({ tags: z.array(z.string()).optional() })
+      .safeParse(item);
+    if (!parsed.success) {
+      throw new Error(
+        `rules[${index}] invalid: ${parsed.error.issues
+          .map((i) => i.message)
+          .join("; ")}`
+      );
+    }
+    return parsed.data;
+  });
+}
 
 function resolvePdfPath(inputPath: string): string {
   if (isAbsolute(inputPath)) return inputPath;
   return resolve(process.cwd(), inputPath);
 }
 
-type NormRulesAction = "extract" | "save" | "query";
+type NormRulesAction = "extract" | "save" | "query" | "status" | "seed";
 
 /** Infer mode from parameters — user/agent need not pass action explicitly. */
 function resolveNormRulesAction(args: {
@@ -47,24 +75,23 @@ function resolveNormRulesAction(args: {
   if (args.topic && !args.pdfPath) return "query";
   if (args.pdfPath) return "extract";
   if (args.topic) return "query";
-  return "extract";
+  // No args → library status (customer-friendly default)
+  return "status";
 }
 
 /**
- * Single MCP entry point for norm rules — extract / save / query.
- * Cursor may not expose save_norm_rule and query_norm_rules to the agent;
- * use the action parameter on this tool instead.
+ * Single MCP entry point for norm rules — extract / save / query / status / seed.
  */
 export function registerExtractNormRulesFromPdfTool(server: McpServer) {
   server.tool(
     "extract_norm_rules_from_pdf",
-    "Norm rules library (one tool for all operations). Search saved rules: pass topic only (e.g. topic «основная надпись») — no pdfPath needed. Extract from PDF: pass pdfPath; add saveToLibrary=true to persist. Save rules array: pass rules. The action field is optional — mode is inferred from topic/pdfPath/rules.",
+    "Norm rules library for ГОСТ/СП/СН РК. Preferred customer flow: (1) action=seed once to load all PDFs from normatives/, (2) pass topic only to search (e.g. «ширина коридора») — returns document/clause/quote. Also: pdfPath to extract one file; saveToLibrary=true to persist; action=status for library document counts. Never invent normative values — use returned quotes.",
     {
       action: z
-        .enum(["extract", "save", "query"])
+        .enum(["extract", "save", "query", "status", "seed"])
         .optional()
         .describe(
-          "Optional. Inferred automatically: topic without pdfPath → query; pdfPath → extract; rules → save."
+          "Optional. status=library summary; seed=ingest all normatives/*.pdf; topic without pdfPath→query; pdfPath→extract; rules→save. Empty call → status."
         ),
       pdfPath: z
         .string()
@@ -81,7 +108,7 @@ export function registerExtractNormRulesFromPdfTool(server: McpServer) {
           "Search the saved library by topic, e.g. «основная надпись», «ширина коридора». Use without pdfPath."
         ),
       rules: z
-        .array(saveRuleInputSchema)
+        .array(looseSaveRuleSchema)
         .min(1)
         .optional()
         .describe("Required for action=save — rules from a prior extract call."),
@@ -99,7 +126,7 @@ export function registerExtractNormRulesFromPdfTool(server: McpServer) {
         .int()
         .positive()
         .optional()
-        .describe("Optional max PDF pages to parse (extract only)."),
+        .describe("Optional max PDF pages to parse (extract/seed)."),
       saveToLibrary: z
         .boolean()
         .optional()
@@ -111,18 +138,74 @@ export function registerExtractNormRulesFromPdfTool(server: McpServer) {
       ruleType: normativeRuleTypeSchema
         .optional()
         .describe("Optional filter for action=query."),
-      limit: z.number().int().positive().max(200).optional(),
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .max(30)
+        .optional()
+        .describe(
+          "Max rules to return for query (default 5). Keep small — large payloads slow the agent."
+        ),
       metadata: z
         .object({
           mode: z.enum(["embedded-text", "ocr"]).optional(),
           confidence: z.number().min(0).max(1).optional(),
-          extractedAt: z.string().datetime().optional(),
+          extractedAt: z.string().optional(),
         })
         .optional(),
     },
     async (args) => {
       try {
         const action = resolveNormRulesAction(args);
+
+        if (action === "status") {
+          const library = getNormLibraryStats(db);
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    success: true,
+                    action: "status",
+                    library,
+                    hint:
+                      library.ruleCount === 0
+                        ? "Library empty. Call action=seed to load normatives/*.pdf, or extract one PDF with saveToLibrary=true."
+                        : "Search with topic only, e.g. topic «ширина коридора».",
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+          };
+        }
+
+        if (action === "seed") {
+          const result = await seedNormLibrary(db, {
+            maxPages: args.maxPages ?? 60,
+          });
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    success: true,
+                    action: "seed",
+                    ...result,
+                    nextStep:
+                      "Search by topic only, e.g. topic «ширина коридора» or «основная надпись».",
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+          };
+        }
 
         if (action === "query") {
           if (!args.topic) {
@@ -134,18 +217,23 @@ export function registerExtractNormRulesFromPdfTool(server: McpServer) {
             ruleType: args.ruleType,
             limit: args.limit,
           });
+          const library = getNormLibraryCounts(db);
           const payload: Record<string, unknown> = {
             success: true,
             action: "query",
             count: rules.length,
-            rules,
+            rules: compactRulesForMcp(rules),
+            library,
           };
           if (rules.length === 0) {
             payload.hint =
-              "No saved rules match. Retry with synonyms (ru/kz) or extract a PDF with saveToLibrary=true.";
+              library.ruleCount === 0
+                ? "Library empty. Run action=seed first, then retry the topic."
+                : "No saved rules match. Retry with synonyms (ru/kz) or extract a PDF with saveToLibrary=true.";
           }
           return {
-            content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
+            // Compact JSON (no pretty-print) — less tokens / faster for the agent.
+            content: [{ type: "text", text: JSON.stringify(payload) }],
           };
         }
 
@@ -153,7 +241,8 @@ export function registerExtractNormRulesFromPdfTool(server: McpServer) {
           if (!args.rules?.length) {
             throw new Error("Save requires rules array from a prior extract.");
           }
-          const result = saveNormRules(db, withSuggestedTags(args.rules), {
+          const rules = parseSaveableRules(args.rules);
+          const result = saveNormRules(db, withSuggestedTags(rules), {
             documentVersion: args.documentVersion,
           });
           return {
@@ -171,7 +260,9 @@ export function registerExtractNormRulesFromPdfTool(server: McpServer) {
         }
 
         if (!args.pdfPath) {
-          throw new Error("Extract requires pdfPath to a normative PDF.");
+          throw new Error(
+            "Extract requires pdfPath, or use action=seed / action=status / topic for query."
+          );
         }
 
         const pdfPath = resolvePdfPath(args.pdfPath);
@@ -211,7 +302,7 @@ export function registerExtractNormRulesFromPdfTool(server: McpServer) {
                   saved,
                   nextStep: args.saveToLibrary
                     ? "Search by topic only, e.g. topic «основная надпись»."
-                    : "Re-run with saveToLibrary=true.",
+                    : "Re-run with saveToLibrary=true, or action=seed for all PDFs.",
                   ...result,
                 },
                 null,

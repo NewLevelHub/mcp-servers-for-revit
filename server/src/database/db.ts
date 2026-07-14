@@ -1,24 +1,34 @@
-import Database from 'better-sqlite3';
-import { join } from 'path';
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
-import { ensureNormRulesSchema } from '../normatives/rulesStore.js';
+import Database from "better-sqlite3";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
+import { ensureNormRulesSchema } from "../normatives/rulesStore.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Database path (stored in project root)
-const DB_PATH = join(__dirname, '..', '..', 'revit-data.db');
+/** Database file next to server/ (revit-data.db). */
+const DB_PATH = join(__dirname, "..", "..", "revit-data.db");
 
-// Initialize database connection
-export const db = new Database(DB_PATH);
+function openDatabase(): Database.Database {
+  try {
+    const database = new Database(DB_PATH);
+    database.pragma("foreign_keys = ON");
+    return database;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Failed to open SQLite (better-sqlite3) at ${DB_PATH}. ` +
+        `Cursor often runs MCP with its bundled Node (ABI 127 / Node 22) while ` +
+        `better-sqlite3 may be built for another ABI. Fix: set mcp.json ` +
+        `"command" to your system Node (e.g. C:/Program Files/nodejs/node.exe) ` +
+        `that matches the build, then reload MCP. Underlying error: ${detail}`
+    );
+  }
+}
 
-// Enable foreign keys
-db.pragma('foreign_keys = ON');
+export const db = openDatabase();
 
-// Initialize database schema
 export function initializeDatabase() {
-  // Create projects table
   db.exec(`
     CREATE TABLE IF NOT EXISTS projects (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,7 +45,6 @@ export function initializeDatabase() {
     )
   `);
 
-  // Create rooms table
   db.exec(`
     CREATE TABLE IF NOT EXISTS rooms (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,7 +65,6 @@ export function initializeDatabase() {
     )
   `);
 
-  // Create index for faster queries
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_projects_name ON projects(project_name);
     CREATE INDEX IF NOT EXISTS idx_projects_timestamp ON projects(timestamp);
@@ -64,11 +72,9 @@ export function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_rooms_room_number ON rooms(room_number);
   `);
 
-  // Norm rules library (REV-30)
   ensureNormRulesSchema(db);
 }
 
-// Initialize on module load
 initializeDatabase();
 
 export default db;

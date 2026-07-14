@@ -331,32 +331,63 @@ namespace RevitMCPCommandSet.Services.Normatives
                     $"Parameter '{parameterName}' was not found on element {element.Id.GetValue()}.");
         }
 
+        /// <summary>
+        /// Override Graphics in View → By Element → Projection Lines color.
+        /// For rooms: colors visible Room Tags (name/area), same as UI on a selected марка помещения.
+        /// For other elements: projection/cut line color on the element itself.
+        /// </summary>
         private int HighlightElements(UIApplication app, Document doc, List<ElementId> elementIds)
         {
-            var activeView = app.ActiveUIDocument.ActiveView;
+            var uidoc = app.ActiveUIDocument;
+            var activeView = uidoc.ActiveView;
 
-            var overrides = new OverrideGraphicSettings();
-            var color = new Color(
-                (byte)_highlightColor[0],
-                (byte)_highlightColor[1],
-                (byte)_highlightColor[2]);
-            overrides.SetProjectionLineColor(color);
-            overrides.SetSurfaceForegroundPatternColor(color);
-            overrides.SetCutForegroundPatternColor(color);
+            var roomOrTagIds = new List<ElementId>();
+            var otherIds = new List<ElementId>();
 
-            var solidFillPatternId = GetSolidFillPatternId(doc);
-            if (solidFillPatternId != ElementId.InvalidElementId)
+            foreach (var id in elementIds)
             {
-                overrides.SetSurfaceForegroundPatternId(solidFillPatternId);
-                overrides.SetCutForegroundPatternId(solidFillPatternId);
+                var element = doc.GetElement(id);
+                if (element == null)
+                {
+                    continue;
+                }
+
+                if (element is Autodesk.Revit.DB.Architecture.Room
+                    || element is Autodesk.Revit.DB.Architecture.RoomTag)
+                {
+                    roomOrTagIds.Add(id);
+                }
+                else
+                {
+                    otherIds.Add(id);
+                }
             }
 
             int highlighted = 0;
-            foreach (var id in elementIds)
+            if (roomOrTagIds.Count > 0)
             {
-                activeView.SetElementOverrides(id, overrides);
-                highlighted++;
+                highlighted += ElementGraphicOverrides.HighlightRoomsAndTags(
+                    activeView,
+                    doc,
+                    roomOrTagIds,
+                    _highlightColor);
             }
+
+            if (otherIds.Count > 0)
+            {
+                // Same UI path: Projection Lines color only (no solid room fill).
+                highlighted += ElementGraphicOverrides.ApplyTagColorToView(
+                    activeView,
+                    otherIds,
+                    _highlightColor);
+            }
+
+            if (elementIds.Count > 0)
+            {
+                uidoc.Selection.SetElementIds(elementIds);
+                uidoc.ShowElements(elementIds);
+            }
+
             return highlighted;
         }
 
@@ -466,16 +497,6 @@ namespace RevitMCPCommandSet.Services.Normatives
                 if (!existing.Contains(candidate))
                     return candidate;
             }
-        }
-
-        private static ElementId GetSolidFillPatternId(Document doc)
-        {
-            var solidFill = new FilteredElementCollector(doc)
-                .OfClass(typeof(FillPatternElement))
-                .Cast<FillPatternElement>()
-                .FirstOrDefault(pattern => pattern.GetFillPattern().IsSolidFill);
-
-            return solidFill?.Id ?? ElementId.InvalidElementId;
         }
 
         private static void SuppressWarnings(Transaction transaction)

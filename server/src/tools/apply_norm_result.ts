@@ -5,7 +5,7 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerApplyNormResultTool(server: McpServer) {
   server.tool(
     "apply_norm_result",
-    "Write norm-check results into the Revit model — the single writing point for all check_* tools. Pass violating elements (ids from check_room_depth, check_fire_doors, ai_element_filter, etc.) with the norm source, and choose actions: set_parameter (status text into Comments or a named parameter), set_mark (sequential marks), highlight (color in active view), create_schedule (violation schedule per category). ALWAYS run with preview=true first, show the planned changes to the user, and only after their confirmation re-run with preview=false. Existing parameter values are never overwritten unless overwrite=true. All writes happen in one transaction and roll back on error.",
+    "Write norm-check results into the Revit model — status text, marks, schedules. For paint-only requests («подсвети зелёным») prefer highlight_room_tags instead. Pass elements with the norm source, and choose actions: set_parameter, set_mark, highlight (Override Graphics Projection Lines on Room Tags), create_schedule. ALWAYS run with preview=true first unless the user already confirmed write. Existing parameter values are never overwritten unless overwrite=true.",
     {
       elements: z
         .array(
@@ -73,7 +73,9 @@ export function registerApplyNormResultTool(server: McpServer) {
           b: z.number().int().min(0).max(255),
         })
         .optional()
-        .describe("Highlight color, defaults to red."),
+        .describe(
+          "Override Graphics color for highlight (Projection Lines). Default red {255,0,0}. For compliant rooms use green e.g. {r:0,g:180,b:0}."
+        ),
     },
     async (args) => {
       const params = {

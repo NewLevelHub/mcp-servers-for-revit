@@ -155,7 +155,7 @@ export function formatEvacuationWidthReport(result: CheckEvacuationWidthResult):
 export function registerCheckEvacuationWidthTool(server: McpServer) {
   server.tool(
     "check_evacuation_width",
-    "Check evacuation corridor widths against norms from repo/normatives PDFs (ГОСТ/СП/СН РК) or an explicit minWidthMm. Reads rules automatically when minWidthMm is omitted. Compares with actual room widths from Revit (bounding footprint, mm). Reports violations with element ids; mode 'highlight' colors violating room tag labels red in the active view without filling the room. Checks rooms named or designated as corridors, tambours, lift halls, stairs, etc.",
+    "Check evacuation corridor widths against norms from repo/normatives PDFs (ГОСТ/СП/СН РК) or an explicit minWidthMm. Reads rules automatically when minWidthMm is omitted. Compares with actual room widths from Revit (bounding footprint, mm). Reports violations with element ids. Mode 'highlight' paints Room Tag labels via Override Graphics in View (Projection Lines color) — same as selecting a марка помещения and setting color; does not solid-fill the room. Use highlightTarget='violations' (default, red), 'compliant' (green), or 'both'. Checks rooms named or designated as corridors, tambours, lift halls, stairs, etc.",
     {
       minWidthMm: z
         .number()
@@ -199,13 +199,31 @@ export function registerCheckEvacuationWidthTool(server: McpServer) {
       roomNameFilter: z.string().optional().default(""),
       corridorOnly: z.boolean().optional().default(true),
       includeCompliant: z.boolean().optional().default(false),
+      highlightTarget: z
+        .enum(["violations", "compliant", "both"])
+        .optional()
+        .default("violations")
+        .describe(
+          "Which rooms to paint in mode=highlight: violations (default), compliant, or both. Colors Room Tags via Override Graphics → Projection Lines."
+        ),
       highlightColor: z
         .object({
           r: z.number().int().min(0).max(255),
           g: z.number().int().min(0).max(255),
           b: z.number().int().min(0).max(255),
         })
-        .optional(),
+        .optional()
+        .describe("Color for violations / highlightTarget=violations. Default red."),
+      compliantHighlightColor: z
+        .object({
+          r: z.number().int().min(0).max(255),
+          g: z.number().int().min(0).max(255),
+          b: z.number().int().min(0).max(255),
+        })
+        .optional()
+        .describe(
+          "Color for compliant rooms when highlightTarget is compliant|both. Default green {0,180,0}."
+        ),
     },
     async (args) => {
       try {
@@ -254,7 +272,9 @@ export function registerCheckEvacuationWidthTool(server: McpServer) {
           roomNameFilter: args.roomNameFilter ?? "",
           corridorOnly: args.corridorOnly ?? true,
           includeCompliant: args.includeCompliant ?? false,
+          highlightTarget: args.highlightTarget ?? "violations",
           highlightColor: args.highlightColor,
+          compliantHighlightColor: args.compliantHighlightColor,
         };
 
         const rawResponse = await withRevitConnection(async (revitClient) => {
