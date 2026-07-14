@@ -247,6 +247,21 @@
       "commandName": "render_tep_table",
       "description": "Render a TEP table on the 'Общие данные' sheet: layout from a reference schedule, values from export_tep_data, text notes and grid lines",
       "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "create_detail_view",
+      "description": "Create a detail view for nodes: callout of a parent view around an element/area, or an independent drafting view, with name, scale, and detail level",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "place_detail_component",
+      "description": "Place point-based or line-based 2D detail components on a detail/drafting view by family and type name, with partial success per item",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "create_text_note",
+      "description": "Create a text note on a view with optional wrapping width and a straight leader (node annotations)",
+      "assemblyPath": "RevitMCPCommandSet.dll"
     }
   ]
 }
