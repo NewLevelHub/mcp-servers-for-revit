@@ -5,7 +5,7 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerRenderTepTableTool(server: McpServer) {
   server.tool(
     "render_tep_table",
-    "Render a technical-economic indicators (TEP) table on a sheet (default 'Общие данные'). Column layout, headings, widths, and alignment are replicated from a reference schedule (see get_schedule_definition, e.g. 'О_АР_Квартиры_ТЭП' or 'ADSK_О_С_С'); text sizes come from project text note types (see get_document_styles); values come from export_tep_data (units mm/m²/m³). Draws text notes and detail grid lines directly on the sheet, creating it when missing.",
+    "Render a technical-economic indicators (TEP) table on a sheet (default 'Общие данные'). Column layout, headings, widths, and alignment are replicated from a reference schedule (see get_schedule_definition); spacer columns such as '8мм' are skipped. Text sizes come from project text note types (see get_document_styles); values come from export_tep_data (units mm/m²/m³). Auto-fits positionY/row heights into the printable area above the title-block reserve; Success=false when it still overflows (unless allowOverflow=true).",
     {
       templateScheduleName: z
         .string()
@@ -52,6 +52,20 @@ export function registerRenderTepTableTool(server: McpServer) {
         .default(8)
         .describe(
           "Minimum row height in mm. Auto-grows to fit the text note type and wrapped cell text so labels are not clipped."
+        ),
+      titleBlockReserveBottom: z
+        .number()
+        .optional()
+        .default(55)
+        .describe(
+          "Height of the title block (основная надпись) zone reserved along the sheet bottom, mm. Defaults to 55."
+        ),
+      allowOverflow: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "When false (default), Success=false if the table still overflows after auto-fit. When true, still draws and keeps Success=true."
         ),
       titleTextTypeName: z
         .string()
@@ -102,6 +116,8 @@ export function registerRenderTepTableTool(server: McpServer) {
         positionX: args.positionX ?? 50,
         positionY: args.positionY ?? 40,
         rowHeight: args.rowHeight ?? 8,
+        titleBlockReserveBottom: args.titleBlockReserveBottom ?? 55,
+        allowOverflow: args.allowOverflow ?? false,
         titleTextTypeName: args.titleTextTypeName ?? "",
         headerTextTypeName: args.headerTextTypeName ?? "",
         bodyTextTypeName: args.bodyTextTypeName ?? "",

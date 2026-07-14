@@ -90,6 +90,13 @@ public class AutoLayoutSheetInfo
     /// </summary>
     [JsonProperty("avoidExisting")]
     public bool AvoidExisting { get; set; } = true;
+
+    /// <summary>
+    ///     When a view is already placed on another sheet, duplicate it as a dependent view
+    ///     and place the dependent. Defaults to true so customer sheets with occupied plans work.
+    /// </summary>
+    [JsonProperty("createDependentViewIfNeeded")]
+    public bool CreateDependentViewIfNeeded { get; set; } = true;
 }
 
 /// <summary>
@@ -175,6 +182,18 @@ public class AutoLayoutSheetResult
 
     [JsonProperty("skippedCount")]
     public int SkippedCount { get; set; }
+
+    /// <summary>
+    ///     True when some items placed and some skipped
+    /// </summary>
+    [JsonProperty("partialSuccess")]
+    public bool PartialSuccess { get; set; }
+
+    /// <summary>
+    ///     True when every requested item was placed
+    /// </summary>
+    [JsonProperty("allPlaced")]
+    public bool AllPlaced { get; set; }
 
     [JsonProperty("items")]
     public List<AutoLayoutPlacedItem> Items { get; set; } = new List<AutoLayoutPlacedItem>();

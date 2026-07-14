@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using RevitMCPCommandSet.Models.DataExtraction;
@@ -25,6 +26,13 @@ public class RenderTepTableEventHandler : IExternalEventHandler, IWaitableExtern
     private const double WidthSafetyFactor = 1.2;
     /// <summary>Extra mm added on top of measured single-line width.</summary>
     private const double WidthSafetyMm = 6;
+    /// <summary>Default bottom stamp reserve when callers omit TitleBlockReserveBottom.</summary>
+    private const double DefaultTitleBlockReserveBottomMm = 55;
+    private const double MinTopMarginMm = 5;
+
+    private static readonly Regex SpacerColumnHeading = new Regex(
+        @"^\d+([.,]\d+)?\s*мм$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     private TepTableRenderInfo _info;
     private readonly ManualResetEvent _resetEvent = new ManualResetEvent(false);
@@ -127,6 +135,15 @@ public class RenderTepTableEventHandler : IExternalEventHandler, IWaitableExtern
                 bodyTypeId,
                 warnings);
 
+            var overflow = FitTableToSheet(
+                sheet,
+                info,
+                columns,
+                rowHeightsMm,
+                titleTypeId,
+                doc,
+                warnings);
+
             DrawTable(
                 doc,
                 sheet,
@@ -141,18 +158,21 @@ public class RenderTepTableEventHandler : IExternalEventHandler, IWaitableExtern
                 warnings);
 
             tx.Commit();
+
+            result.Success = info.AllowOverflow || !overflow;
+            result.Message = overflow && !info.AllowOverflow
+                ? $"TEP table rendered on sheet '{result.SheetName}' but does not fit the printable area " +
+                  "(needed height exceeds usable space after title-block reserve)."
+                : $"Rendered TEP table with {rows.Count} rows and {columns.Count} columns on sheet '{result.SheetName}'.";
         }
 
         stopwatch.Stop();
 
-        result.Success = true;
         result.Columns = columns;
         result.RowCount = rows.Count;
         result.Units = tepData.Units;
         result.ExecutionTimeMs = stopwatch.ElapsedMilliseconds;
         result.Warnings = warnings;
-        result.Message =
-            $"Rendered TEP table with {rows.Count} rows and {columns.Count} columns on sheet '{result.SheetName}'.";
         return result;
     }
 
@@ -243,6 +263,15 @@ public class RenderTepTableEventHandler : IExternalEventHandler, IWaitableExtern
 
         ClassifyColumns(columns, warnings);
 
+        if (columns.Count == 0)
+        {
+            warnings.Add("No usable columns remained after filtering; default TEP columns are used.");
+            columns.Add(new TableColumn { Heading = "№ п/п", WidthMm = 18, Alignment = "Center", Role = ColumnRole.Index });
+            columns.Add(new TableColumn { Heading = "Наименование", WidthMm = 90, Alignment = "Left", Role = ColumnRole.Name });
+            columns.Add(new TableColumn { Heading = "Ед. изм.", WidthMm = 22, Alignment = "Center", Role = ColumnRole.Unit });
+            columns.Add(new TableColumn { Heading = "Кол-во", WidthMm = 30, Alignment = "Center", Role = ColumnRole.Value });
+        }
+
         return columns
             .Select(column => new TepTableColumnInfo
             {
@@ -256,6 +285,18 @@ public class RenderTepTableEventHandler : IExternalEventHandler, IWaitableExtern
 
     private static void ClassifyColumns(List<TableColumn> columns, List<string> warnings)
     {
+        // Drop spacer / thickness columns (e.g. "8мм") before role mapping so they
+        // cannot be forced into Name/Value fallbacks.
+        var spacers = columns
+            .Where(IsSpacerColumn)
+            .ToList();
+        if (spacers.Count > 0)
+        {
+            warnings.Add(
+                $"Skipped spacer/template columns without TEP data: {string.Join(", ", spacers.Select(column => $"'{column.Heading}'"))}.");
+            columns.RemoveAll(IsSpacerColumn);
+        }
+
         foreach (var column in columns)
         {
             var heading = (column.Heading ?? string.Empty).ToLowerInvariant();
@@ -286,7 +327,8 @@ public class RenderTepTableEventHandler : IExternalEventHandler, IWaitableExtern
                 candidate.Role = ColumnRole.Value;
         }
 
-        if (columns.All(column => column.Role != ColumnRole.Name) ||
+        if (columns.Count == 0 ||
+            columns.All(column => column.Role != ColumnRole.Name) ||
             columns.All(column => column.Role != ColumnRole.Value))
         {
             warnings.Add(
@@ -297,8 +339,19 @@ public class RenderTepTableEventHandler : IExternalEventHandler, IWaitableExtern
         if (unmapped.Count > 0)
         {
             warnings.Add(
-                $"Columns without TEP mapping remain empty: {string.Join(", ", unmapped.Select(column => $"'{column.Heading}'"))}.");
+                $"Skipped columns without TEP mapping: {string.Join(", ", unmapped.Select(column => $"'{column.Heading}'"))}.");
+            columns.RemoveAll(column => column.Role == ColumnRole.Unknown);
         }
+    }
+
+    private static bool IsSpacerColumn(TableColumn column)
+    {
+        var heading = (column.Heading ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(heading))
+            return true;
+        if (column.WidthMm <= 0)
+            return true;
+        return SpacerColumnHeading.IsMatch(heading);
     }
 
     private static List<TableRow> BuildRows(ExportTepDataResult tepData, TepTableRenderInfo info)
@@ -675,23 +728,92 @@ public class RenderTepTableEventHandler : IExternalEventHandler, IWaitableExtern
         // Keep info.RowHeight as the typical/max body height for callers that read it back.
         info.RowHeight = heights.Count > 0 ? heights.Max() : minBodyMm;
 
+        return heights;
+    }
+
+    /// <summary>
+    /// Auto-fit table into the printable area (outline minus top offset and title-block reserve).
+    /// Returns true when the table still overflows after adjustments.
+    /// </summary>
+    private static bool FitTableToSheet(
+        ViewSheet sheet,
+        TepTableRenderInfo info,
+        List<TepTableColumnInfo> columns,
+        List<double> rowHeightsMm,
+        ElementId titleTypeId,
+        Document doc,
+        List<string> warnings)
+    {
         var outline = sheet.Outline;
-        if (outline != null)
+        if (outline == null || rowHeightsMm == null || rowHeightsMm.Count == 0)
+            return false;
+
+        var stampReserve = info.TitleBlockReserveBottom > 0
+            ? info.TitleBlockReserveBottom
+            : DefaultTitleBlockReserveBottomMm;
+        var sheetHeightMm = FeetToMm(outline.Max.V - outline.Min.V);
+
+        var titleBandMm = Math.Max(
+            GetTextSizeMm(doc, titleTypeId) + CellTextInsetMm * 2,
+            rowHeightsMm[0] * 1.15);
+        var tableHeightMm = titleBandMm + TitleGapMm + rowHeightsMm.Sum();
+        var availableMm = sheetHeightMm - info.PositionY - stampReserve;
+
+        if (tableHeightMm > availableMm && info.PositionY > MinTopMarginMm)
         {
-            var titleBandMm = Math.Max(
-                GetTextSizeMm(doc, titleTypeId) + CellTextInsetMm * 2,
-                heights[0] * 1.15);
-            var tableHeightMm = titleBandMm + TitleGapMm + heights.Sum();
-            var availableMm = FeetToMm(outline.Max.V - outline.Min.V) - info.PositionY - Math.Max(info.PositionY, 20);
-            if (tableHeightMm > availableMm)
+            var previousY = info.PositionY;
+            info.PositionY = Math.Max(
+                MinTopMarginMm,
+                sheetHeightMm - stampReserve - tableHeightMm);
+            if (info.PositionY < previousY - 0.01)
             {
                 warnings.Add(
-                    "TEP table is taller than the sheet printable area at the requested position; " +
-                    "bottom rows may sit on the title-block border.");
+                    $"Reduced positionY from {previousY:0.##} to {info.PositionY:0.##} mm to clear the title-block zone.");
+                availableMm = sheetHeightMm - info.PositionY - stampReserve;
+                tableHeightMm = titleBandMm + TitleGapMm + rowHeightsMm.Sum();
             }
         }
 
-        return heights;
+        if (tableHeightMm > availableMm && rowHeightsMm.Count > 0)
+        {
+            var overheadMm = titleBandMm + TitleGapMm;
+            var rowsBudget = Math.Max(availableMm - overheadMm, rowHeightsMm.Count * 4);
+            var rowsTotal = rowHeightsMm.Sum();
+            if (rowsTotal > rowsBudget && rowsTotal > 0)
+            {
+                var scale = rowsBudget / rowsTotal;
+                var textFloor = Math.Max(GetTextSizeMm(doc, titleTypeId), 4);
+                for (var i = 0; i < rowHeightsMm.Count; i++)
+                    rowHeightsMm[i] = Math.Round(Math.Max(textFloor, rowHeightsMm[i] * scale), 1);
+
+                warnings.Add(
+                    $"Reduced row heights to fit printable height ({availableMm:0.#} mm usable after {stampReserve:0.#} mm stamp reserve).");
+                titleBandMm = Math.Max(
+                    GetTextSizeMm(doc, titleTypeId) + CellTextInsetMm * 2,
+                    rowHeightsMm[0] * 1.15);
+                tableHeightMm = titleBandMm + TitleGapMm + rowHeightsMm.Sum();
+            }
+        }
+
+        if (tableHeightMm > availableMm + 0.5)
+        {
+            warnings.Add(
+                $"TEP table height {tableHeightMm:0.#} mm exceeds usable printable area {availableMm:0.#} mm " +
+                $"(sheet {sheetHeightMm:0.#} mm, positionY {info.PositionY:0.#} mm, stamp reserve {stampReserve:0.#} mm).");
+            return true;
+        }
+
+        var tableWidthMm = columns.Sum(column => column.Width);
+        var sheetWidthMm = FeetToMm(outline.Max.U - outline.Min.U);
+        var availableWidthMm = sheetWidthMm - info.PositionX - Math.Max(info.PositionX, 20);
+        if (tableWidthMm > availableWidthMm + 0.5)
+        {
+            warnings.Add(
+                $"TEP table width {tableWidthMm:0.#} mm exceeds usable printable width {availableWidthMm:0.#} mm.");
+            return true;
+        }
+
+        return false;
     }
 
     private static double GetTextSizeMm(Document doc, ElementId textTypeId)
@@ -919,8 +1041,14 @@ public class RenderTepTableEventHandler : IExternalEventHandler, IWaitableExtern
 
         var tableHeight = titleBand + titleGap + gridHeight;
 
-        if (left + tableWidth > outline.Max.U || top - tableHeight < outline.Min.V)
-            warnings.Add("The TEP table does not fully fit within the sheet outline at the requested position.");
+        var stampReserve = info.TitleBlockReserveBottom > 0
+            ? info.TitleBlockReserveBottom
+            : DefaultTitleBlockReserveBottomMm;
+        var printableBottom = outline.Min.V + MmToFeet(stampReserve);
+        if (left + tableWidth > outline.Max.U || top - tableHeight < printableBottom)
+            warnings.Add(
+                "The TEP table does not fully fit within the printable area at the requested position " +
+                $"(title-block reserve {stampReserve:0.#} mm).");
 
         var columnLefts = new List<double> { left };
         foreach (var column in columns)

@@ -114,6 +114,11 @@ public class AutoLayoutSheetEventHandler : IExternalEventHandler, IWaitableExter
                 MoveToTarget(doc, element, target);
                 element.Item.X = Math.Round(FeetToMm(target.MinX - outline.Min.U), 2);
                 element.Item.Y = Math.Round(FeetToMm(target.MinY - outline.Min.V), 2);
+                if (element.PlacedElement != null)
+                {
+                    element.Item.ElementId = element.PlacedElement.Id.GetValue();
+                    element.Item.ElementUniqueId = element.PlacedElement.UniqueId;
+                }
             }
 
             tx.Commit();
@@ -125,11 +130,38 @@ public class AutoLayoutSheetEventHandler : IExternalEventHandler, IWaitableExter
 
         result.PlacedCount = result.Items.Count(item => item.Placed);
         result.SkippedCount = result.Items.Count - result.PlacedCount;
+        result.AllPlaced = result.SkippedCount == 0 && result.PlacedCount > 0;
+        result.PartialSuccess = result.PlacedCount > 0 && result.SkippedCount > 0;
         result.Warnings = warnings;
         result.ExecutionTimeMs = stopwatch.ElapsedMilliseconds;
-        result.Success = true;
-        result.Message =
-            $"Auto layout placed {result.PlacedCount} of {result.Items.Count} items on sheet '{result.SheetNumber} - {result.SheetName}'.";
+
+        // Soft skips (view not found) keep Success=true for the negative-test contract.
+        // Hard skips (oversized / already on sheet without dependent / pack fail) with
+        // zero placements set Success=false so acceptance does not treat empty sheets as OK.
+        var hardSkip = result.Items.Any(item =>
+            !item.Placed &&
+            !string.IsNullOrEmpty(item.Warning) &&
+            item.Warning.IndexOf("was not found", StringComparison.OrdinalIgnoreCase) < 0);
+
+        result.Success = result.AllPlaced ||
+                         result.PartialSuccess ||
+                         (!hardSkip && result.PlacedCount == 0);
+
+        if (result.PlacedCount == 0 && hardSkip)
+        {
+            result.Success = false;
+            result.Message =
+                $"Auto layout placed 0 of {result.Items.Count} items on sheet '{result.SheetNumber} - {result.SheetName}'. " +
+                $"Usable area {result.UsableWidth:0.##}×{result.UsableHeight:0.##} mm.";
+        }
+        else
+        {
+            result.Message =
+                $"Auto layout placed {result.PlacedCount} of {result.Items.Count} items on sheet '{result.SheetNumber} - {result.SheetName}'.";
+            if (result.PartialSuccess)
+                result.Message += " Partial success: some items were skipped.";
+        }
+
         return result;
     }
 
@@ -291,11 +323,42 @@ public class AutoLayoutSheetEventHandler : IExternalEventHandler, IWaitableExter
 
                     if (!Viewport.CanAddViewToSheet(doc, sheet.Id, view.Id))
                     {
-                        MarkSkipped(
-                            element,
-                            $"View '{view.Name}' cannot be placed on this sheet (already on a sheet or unsupported view type).",
-                            warnings);
-                        continue;
+                        var owningSheet = FindSheetContainingView(doc, view.Id);
+                        var owningLabel = owningSheet != null
+                            ? $"'{owningSheet.SheetNumber} - {owningSheet.Name}'"
+                            : "another sheet";
+
+                        if (info.CreateDependentViewIfNeeded)
+                        {
+                            var dependent = TryCreateDependentView(doc, view, warnings);
+                            if (dependent != null && Viewport.CanAddViewToSheet(doc, sheet.Id, dependent.Id))
+                            {
+                                warnings.Add(
+                                    $"View '{view.Name}' is already on sheet {owningLabel}; " +
+                                    $"created dependent '{dependent.Name}' for placement.");
+                                view = dependent;
+                                element.Item.ViewId = view.Id.GetValue();
+                                element.Item.ViewName = view.Name;
+                            }
+                            else
+                            {
+                                MarkSkipped(
+                                    element,
+                                    $"View '{element.Item.ViewName}' cannot be placed on this sheet " +
+                                    $"(already on sheet {owningLabel} or unsupported view type; dependent view was not created).",
+                                    warnings);
+                                continue;
+                            }
+                        }
+                        else
+                        {
+                            MarkSkipped(
+                                element,
+                                $"View '{view.Name}' cannot be placed on this sheet " +
+                                $"(already on sheet {owningLabel}; set createDependentViewIfNeeded=true to duplicate as dependent).",
+                                warnings);
+                            continue;
+                        }
                     }
 
                     element.PlacedElement = Viewport.Create(doc, sheet.Id, view.Id, tempPoint);
@@ -338,11 +401,37 @@ public class AutoLayoutSheetEventHandler : IExternalEventHandler, IWaitableExter
                     element,
                     $"Element is larger ({element.Item.Width}×{element.Item.Height} mm) than the usable area.");
                 warnings.Add(
-                    $"'{element.Item.ViewName}' is larger than the usable area and was skipped; reduce the view scale or use a bigger sheet.");
+                    $"'{element.Item.ViewName}' is larger ({element.Item.Width:0.##}×{element.Item.Height:0.##} mm) " +
+                    $"than the usable area ({FeetToMm(usable.Width):0.##}×{FeetToMm(usable.Height):0.##} mm) and was skipped; " +
+                    "reduce the view scale, filter the schedule, or use a bigger sheet.");
             }
         }
 
         return pending;
+    }
+
+    private static ViewSheet FindSheetContainingView(Document doc, ElementId viewId)
+    {
+        return new FilteredElementCollector(doc)
+            .OfClass(typeof(Viewport))
+            .Cast<Viewport>()
+            .Where(viewport => viewport.ViewId == viewId)
+            .Select(viewport => doc.GetElement(viewport.OwnerViewId) as ViewSheet)
+            .FirstOrDefault(sheet => sheet != null);
+    }
+
+    private static View TryCreateDependentView(Document doc, View view, List<string> warnings)
+    {
+        try
+        {
+            var dependentId = view.Duplicate(ViewDuplicateOption.AsDependent);
+            return doc.GetElement(dependentId) as View;
+        }
+        catch (Exception ex)
+        {
+            warnings.Add($"Failed to create dependent view for '{view.Name}': {ex.Message}");
+            return null;
+        }
     }
 
     private static List<PendingElement> OrderPending(
@@ -468,7 +557,7 @@ public class AutoLayoutSheetEventHandler : IExternalEventHandler, IWaitableExter
 
         if (itemInfo.ViewId > 0)
         {
-            if (doc.GetElement(ElementIdExtensions.FromLong(itemInfo.ViewId)) is View byId && IsPlaceableView(byId))
+            if (doc.GetElement(RevitMCPCommandSet.Utils.ElementIdExtensions.FromLong(itemInfo.ViewId)) is View byId && IsPlaceableView(byId))
                 return byId;
         }
 
@@ -536,7 +625,7 @@ public class AutoLayoutSheetEventHandler : IExternalEventHandler, IWaitableExter
 
         if (info.SheetId > 0)
         {
-            if (doc.GetElement(ElementIdExtensions.FromLong(info.SheetId)) is ViewSheet byId)
+            if (doc.GetElement(RevitMCPCommandSet.Utils.ElementIdExtensions.FromLong(info.SheetId)) is ViewSheet byId)
                 return byId;
         }
 

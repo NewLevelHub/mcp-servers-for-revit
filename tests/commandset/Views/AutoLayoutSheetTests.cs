@@ -193,6 +193,8 @@ public class AutoLayoutSheetTests : RevitApiTest
         });
 
         await Assert.That(result.Success).IsTrue();
+        await Assert.That(result.PartialSuccess).IsTrue();
+        await Assert.That(result.AllPlaced).IsFalse();
         await Assert.That(result.SkippedCount).IsEqualTo(1);
 
         var skipped = result.Items.First(item => !item.Placed);

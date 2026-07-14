@@ -14,7 +14,7 @@ const layoutItemSchema = z.object({
 export function registerAutoLayoutSheetTool(server: McpServer) {
   server.tool(
     "auto_layout_sheet",
-    "Automatically lay out views and schedules on a Revit sheet without manual coordinates. Measures the actual extents of each element (Viewport.GetBoxOutline / ScheduleSheetInstance bounding box) and packs them in rows with configurable gaps inside the usable area (sheet outline minus margins and the title block zone along the bottom). Avoids overlaps, including elements already placed on the sheet. Items that do not fit are reported and removed. The target sheet is found by id/uniqueId/number/name or created with a project title block.",
+    "Automatically lay out views and schedules on a Revit sheet without manual coordinates. Measures the actual extents of each element (Viewport.GetBoxOutline / ScheduleSheetInstance bounding box) and packs them in rows with configurable gaps inside the usable area (sheet outline minus margins and the title block zone along the bottom). Avoids overlaps, including elements already placed on the sheet. Views already on another sheet are duplicated as dependents by default (createDependentViewIfNeeded). Items that do not fit are reported and removed; Success=false when nothing placeable fits, PartialSuccess when only some items place.",
     {
       items: z
         .array(layoutItemSchema)
@@ -77,6 +77,13 @@ export function registerAutoLayoutSheetTool(server: McpServer) {
         .optional()
         .default(true)
         .describe("Treat elements already placed on the sheet as obstacles. Defaults to true."),
+      createDependentViewIfNeeded: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe(
+          "When a view is already on another sheet, duplicate it as a dependent and place the dependent. Defaults to true."
+        ),
     },
     async (args) => {
       const params = {
@@ -96,6 +103,7 @@ export function registerAutoLayoutSheetTool(server: McpServer) {
         titleBlockReserveBottom: args.titleBlockReserveBottom ?? 55,
         order: args.order ?? "input",
         avoidExisting: args.avoidExisting ?? true,
+        createDependentViewIfNeeded: args.createDependentViewIfNeeded ?? true,
       };
 
       try {
