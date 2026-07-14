@@ -2,6 +2,7 @@ using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Architecture;
 using Nice3point.TUnit.Revit;
 using Nice3point.TUnit.Revit.Executors;
+using RevitMCPCommandSet.Services.AnnotationComponents;
 using TUnit.Core;
 using TUnit.Core.Executors;
 
@@ -85,6 +86,51 @@ public class DimensionRoomWallsTests : RevitApiTest
             .FirstOrDefault(type => type.StyleType == DimensionStyleType.Linear);
 
         await Assert.That(dimensionType).IsNotNull();
+    }
+
+    [Test]
+    public async Task ChainLineCoordinate_InteriorDefault_LiesInsideRoomBounds()
+    {
+        // 10×10 ft room at origin, center (5,5), offset ~1 ft.
+        var widthChainY = DimensionRoomWallsEventHandler.ComputeChainLineCoordinate(
+            forXChain: true, interior: true, 0, 10, 0, 10, 5, 5, offsetFeet: 1.0);
+        var depthChainX = DimensionRoomWallsEventHandler.ComputeChainLineCoordinate(
+            forXChain: false, interior: true, 0, 10, 0, 10, 5, 5, offsetFeet: 1.0);
+
+        await Assert.That(widthChainY).IsGreaterThan(0);
+        await Assert.That(widthChainY).IsLessThan(10);
+        await Assert.That(depthChainX).IsGreaterThan(0);
+        await Assert.That(depthChainX).IsLessThan(10);
+
+        // Even an oversized offset stays clamped inside the room.
+        var clampedY = DimensionRoomWallsEventHandler.ComputeChainLineCoordinate(
+            forXChain: true, interior: true, 0, 10, 0, 10, 5, 5, offsetFeet: 100.0);
+        await Assert.That(clampedY).IsGreaterThan(0);
+        await Assert.That(clampedY).IsLessThan(10);
+    }
+
+    [Test]
+    public async Task ChainLineCoordinate_ExteriorRequested_LiesOutsideRoomBounds()
+    {
+        var widthChainY = DimensionRoomWallsEventHandler.ComputeChainLineCoordinate(
+            forXChain: true, interior: false, 0, 10, 0, 10, 5, 5, offsetFeet: 1.0);
+        var depthChainX = DimensionRoomWallsEventHandler.ComputeChainLineCoordinate(
+            forXChain: false, interior: false, 0, 10, 0, 10, 5, 5, offsetFeet: 1.0);
+
+        await Assert.That(widthChainY < 0 || widthChainY > 10).IsTrue();
+        await Assert.That(depthChainX < 0 || depthChainX > 10).IsTrue();
+    }
+
+    [Test]
+    public async Task IsInteriorPlacement_DefaultsToInteriorUnlessExplicitlyExterior()
+    {
+        await Assert.That(DimensionRoomWallsEventHandler.IsInteriorPlacement(null)).IsTrue();
+        await Assert.That(DimensionRoomWallsEventHandler.IsInteriorPlacement("")).IsTrue();
+        await Assert.That(DimensionRoomWallsEventHandler.IsInteriorPlacement("interior")).IsTrue();
+        await Assert.That(DimensionRoomWallsEventHandler.IsInteriorPlacement("что-то ещё")).IsTrue();
+        await Assert.That(DimensionRoomWallsEventHandler.IsInteriorPlacement("exterior")).IsFalse();
+        await Assert.That(DimensionRoomWallsEventHandler.IsInteriorPlacement(" Exterior ")).IsFalse();
+        await Assert.That(DimensionRoomWallsEventHandler.IsInteriorPlacement("outside")).IsFalse();
     }
 
     private static void CreateEnclosure(Document doc, ElementId levelId, double x, double y, double size)

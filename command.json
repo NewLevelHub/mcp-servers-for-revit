@@ -150,7 +150,7 @@
     },
     {
       "commandName": "dimension_room_walls",
-      "description": "Create chained wall dimensions for a room on the active floor plan",
+      "description": "Create chained wall dimensions for a room: interior width+depth chains by default, exterior only on explicit request",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {

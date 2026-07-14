@@ -14,7 +14,16 @@ public class RoomWallDimensionInfo
     public int RoomId { get; set; }
 
     /// <summary>
-    ///     Offset of the dimension line from room boundary in millimeters.
+    ///     Where to place the dimension chains: "interior" (default) — width and depth
+    ///     chains inside the room; "exterior" — chains outside the boundary, only on
+    ///     explicit request (axes/facade workflows).
+    /// </summary>
+    [JsonProperty("placement")]
+    public string Placement { get; set; } = "interior";
+
+    /// <summary>
+    ///     Offset of the dimension line from room boundary in millimeters
+    ///     (measured inward for interior placement, outward for exterior).
     /// </summary>
     [JsonProperty("offsetMm")]
     public double OffsetMm { get; set; } = 300;
