@@ -244,6 +244,11 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "auto_layout_sheet",
+      "description": "Automatically lay out views and schedules on a sheet: row packing by actual extents, gaps, margins, title block zone, no overlaps",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "render_tep_table",
       "description": "Render a TEP table on the 'Общие данные' sheet: layout from a reference schedule, values from export_tep_data, text notes and grid lines",
       "assemblyPath": "RevitMCPCommandSet.dll"
