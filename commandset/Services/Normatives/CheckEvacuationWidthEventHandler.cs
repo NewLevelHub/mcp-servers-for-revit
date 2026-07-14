@@ -12,13 +12,19 @@ namespace RevitMCPCommandSet.Services.Normatives
         public const string ModeReport = "report";
         public const string ModeHighlight = "highlight";
 
+        public const string HighlightTargetViolations = "violations";
+        public const string HighlightTargetCompliant = "compliant";
+        public const string HighlightTargetBoth = "both";
+
         private double? _minWidthMm;
         private string _mode = ModeReport;
         private string _levelNameFilter = string.Empty;
         private string _roomNameFilter = string.Empty;
         private bool _includeCompliant;
         private bool _corridorOnly = true;
+        private string _highlightTarget = HighlightTargetViolations;
         private int[] _highlightColor = { 255, 0, 0 };
+        private int[] _compliantHighlightColor = { 0, 180, 0 };
 
         public CheckEvacuationWidthResult ResultInfo { get; private set; } = new();
         public bool TaskCompleted { get; private set; }
@@ -31,7 +37,9 @@ namespace RevitMCPCommandSet.Services.Normatives
             string roomNameFilter = "",
             bool includeCompliant = false,
             bool corridorOnly = true,
-            int[] highlightColor = null)
+            int[] highlightColor = null,
+            string highlightTarget = HighlightTargetViolations,
+            int[] compliantHighlightColor = null)
         {
             _minWidthMm = minWidthMm;
             _mode = string.Equals(mode, ModeHighlight, StringComparison.OrdinalIgnoreCase)
@@ -41,12 +49,26 @@ namespace RevitMCPCommandSet.Services.Normatives
             _roomNameFilter = roomNameFilter ?? string.Empty;
             _includeCompliant = includeCompliant;
             _corridorOnly = corridorOnly;
+            _highlightTarget = NormalizeHighlightTarget(highlightTarget);
             if (highlightColor is { Length: 3 })
             {
                 _highlightColor = highlightColor;
             }
+            if (compliantHighlightColor is { Length: 3 })
+            {
+                _compliantHighlightColor = compliantHighlightColor;
+            }
             TaskCompleted = false;
             _resetEvent.Reset();
+        }
+
+        private static string NormalizeHighlightTarget(string target)
+        {
+            if (string.Equals(target, HighlightTargetCompliant, StringComparison.OrdinalIgnoreCase))
+                return HighlightTargetCompliant;
+            if (string.Equals(target, HighlightTargetBoth, StringComparison.OrdinalIgnoreCase))
+                return HighlightTargetBoth;
+            return HighlightTargetViolations;
         }
 
         public bool WaitForCompletion(int timeoutMilliseconds = 10000)
@@ -79,6 +101,7 @@ namespace RevitMCPCommandSet.Services.Normatives
                 var violations = new List<EvacuationWidthCheckItem>();
                 var compliant = new List<EvacuationWidthCheckItem>();
                 var violationElementIds = new List<ElementId>();
+                var compliantElementIds = new List<ElementId>();
                 int checkedCount = 0;
 
                 foreach (var room in rooms)
@@ -128,6 +151,7 @@ namespace RevitMCPCommandSet.Services.Normatives
                     if (isCompliant)
                     {
                         compliant.Add(item);
+                        compliantElementIds.Add(room.Id);
                     }
                     else
                     {
@@ -137,9 +161,13 @@ namespace RevitMCPCommandSet.Services.Normatives
                 }
 
                 int highlightedCount = 0;
-                if (_mode == ModeHighlight && violationElementIds.Count > 0)
+                if (_mode == ModeHighlight)
                 {
-                    highlightedCount = HighlightRooms(app, doc, violationElementIds);
+                    highlightedCount = HighlightByTarget(
+                        app,
+                        doc,
+                        violationElementIds,
+                        compliantElementIds);
                 }
 
                 ResultInfo = new CheckEvacuationWidthResult
@@ -185,22 +213,48 @@ namespace RevitMCPCommandSet.Services.Normatives
             return 0;
         }
 
-        private int HighlightRooms(UIApplication app, Document doc, List<ElementId> elementIds)
+        private int HighlightByTarget(
+            UIApplication app,
+            Document doc,
+            List<ElementId> violationIds,
+            List<ElementId> compliantIds)
         {
             var uidoc = app.ActiveUIDocument;
             var activeView = uidoc.ActiveView;
+            var selectIds = new List<ElementId>();
+            int highlighted = 0;
 
             using var transaction = new Transaction(doc, "Check Evacuation Width Highlight");
             transaction.Start();
 
-            int highlighted = ElementGraphicOverrides.HighlightRoomsAndTags(
-                activeView,
-                doc,
-                elementIds,
-                _highlightColor);
+            bool paintViolations = _highlightTarget is HighlightTargetViolations or HighlightTargetBoth;
+            bool paintCompliant = _highlightTarget is HighlightTargetCompliant or HighlightTargetBoth;
 
-            uidoc.Selection.SetElementIds(elementIds);
-            uidoc.ShowElements(elementIds);
+            if (paintViolations && violationIds.Count > 0)
+            {
+                highlighted += ElementGraphicOverrides.HighlightRoomsAndTags(
+                    activeView,
+                    doc,
+                    violationIds,
+                    _highlightColor);
+                selectIds.AddRange(violationIds);
+            }
+
+            if (paintCompliant && compliantIds.Count > 0)
+            {
+                highlighted += ElementGraphicOverrides.HighlightRoomsAndTags(
+                    activeView,
+                    doc,
+                    compliantIds,
+                    _compliantHighlightColor);
+                selectIds.AddRange(compliantIds);
+            }
+
+            if (selectIds.Count > 0)
+            {
+                uidoc.Selection.SetElementIds(selectIds);
+                uidoc.ShowElements(selectIds);
+            }
 
             transaction.Commit();
             return highlighted;

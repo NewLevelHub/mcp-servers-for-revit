@@ -53,7 +53,100 @@ export interface QueryNormRulesOptions {
   limit?: number;
 }
 
-const DEFAULT_QUERY_LIMIT = 50;
+/**
+ * Default MCP/query limit. High values (50+) return huge quotes and make the
+ * Cursor agent slow to answer — keep small; agent can pass limit when needed.
+ */
+export const DEFAULT_QUERY_LIMIT = 5;
+
+/** Cap quote/applicability length in MCP text payloads (full text stays in DB). */
+export const MAX_QUOTE_CHARS_IN_MCP = 480;
+
+/** Slim rule shape for MCP responses (faster for the agent / less tokens). */
+export interface CompactNormRuleForMcp {
+  id: string;
+  type: NormativeRuleType;
+  object: string;
+  value: NormativeRuleValue;
+  unit: NormativeUnit;
+  applicability?: { raw: string; roomType?: string; buildingType?: string };
+  normalized?: NormativeNumericRange;
+  source: {
+    document: string;
+    clause: string;
+    quote: string;
+    page?: number;
+    quoteTruncated?: boolean;
+  };
+  documentVersion?: string | null;
+}
+
+function truncateText(
+  text: string,
+  maxChars: number
+): { text: string; truncated: boolean } {
+  const trimmed = text.trim();
+  if (trimmed.length <= maxChars) {
+    return { text: trimmed, truncated: false };
+  }
+  return {
+    text: `${trimmed.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`,
+    truncated: true,
+  };
+}
+
+/**
+ * Strip bulky fields and truncate quotes for MCP JSON. DB / in-memory rules
+ * stay full — only the wire payload shrinks.
+ */
+export function compactRulesForMcp(
+  rules: StoredNormRule[],
+  maxQuoteChars: number = MAX_QUOTE_CHARS_IN_MCP
+): CompactNormRuleForMcp[] {
+  return rules.map((rule) => {
+    const quote = truncateText(rule.source.quote, maxQuoteChars);
+    const value =
+      typeof rule.value === "string"
+        ? truncateText(rule.value, maxQuoteChars).text
+        : rule.value;
+
+    const compact: CompactNormRuleForMcp = {
+      id: rule.id,
+      type: rule.type,
+      object: rule.object,
+      value,
+      unit: rule.unit,
+      source: {
+        document: rule.source.document,
+        clause: rule.source.clause,
+        quote: quote.text,
+        ...(rule.source.page != null ? { page: rule.source.page } : {}),
+        ...(quote.truncated ? { quoteTruncated: true } : {}),
+      },
+    };
+
+    if (rule.normalized) {
+      compact.normalized = rule.normalized;
+    }
+    if (rule.documentVersion) {
+      compact.documentVersion = rule.documentVersion;
+    }
+    if (rule.applicability?.raw) {
+      const raw = truncateText(rule.applicability.raw, maxQuoteChars);
+      compact.applicability = {
+        raw: raw.text,
+        ...(rule.applicability.roomType
+          ? { roomType: rule.applicability.roomType }
+          : {}),
+        ...(rule.applicability.buildingType
+          ? { buildingType: rule.applicability.buildingType }
+          : {}),
+      };
+    }
+
+    return compact;
+  });
+}
 
 interface NormRuleRow {
   rule_key: string;
@@ -163,11 +256,21 @@ function topicToTerms(topic: string): string[] {
     .split(/[^a-zа-я0-9.\-]+/)
     .filter(Boolean);
 
-  return words.map((word) => {
+  const stems = words.map((word) => {
     if (word.length > 5) return word.slice(0, -2);
     if (word.length > 3) return word.slice(0, -1);
     return word;
   });
+
+  // Cross-language / synonym expansion so RU topics hit KZ quotes (REV-46).
+  const extras: string[] = [];
+  const joined = stems.join(" ");
+  if (/ширин|width/.test(joined)) extras.push("ені", "еніні");
+  if (/коридор|дәліз/.test(joined)) extras.push("дәліз", "коридор");
+  if (/эвакуац/.test(joined)) extras.push("эвакуац", "эвакуациял");
+  if (/лоджи|балкон/.test(joined)) extras.push("лоджи", "балкон");
+
+  return [...new Set([...stems, ...extras])];
 }
 
 function escapeLikeTerm(term: string): string {
@@ -325,6 +428,221 @@ function rowToStoredRule(row: NormRuleRow): StoredNormRule {
   };
 }
 
+const NUMERIC_RULE_TYPES = new Set<NormativeRuleType>([
+  "min_value",
+  "max_value",
+  "range",
+  "exact_value",
+]);
+
+const DIMENSIONAL_TOPIC_RE =
+  /ширин|высот|глубин|площад|ені|эвакуац|коридор|дәліз|не\s+менее|мин\.?|max|min/i;
+
+const DEFINITION_QUOTE_RE =
+  /световой\s+карман|жарық\s+қалта|называется|это\s*:|определяется\s+как/i;
+
+/** Rich relevance score so definition hits lose to numeric width rules (REV-46). */
+export function scoreRuleAgainstTopic(
+  rule: Pick<
+    StoredNormRule,
+    "object" | "type" | "tags" | "normalized" | "source"
+  >,
+  topic: string
+): number {
+  const terms = topicToTerms(topic);
+  if (terms.length === 0) return 0;
+
+  const topicNorm = normalizeText(topic);
+  const objectNorm = normalizeText(rule.object);
+  const tagsNorm = normalizeText((rule.tags ?? []).join(" "));
+  const quoteNorm = normalizeText(rule.source.quote);
+  const clauseNorm = normalizeText(rule.source.clause);
+  const documentNorm = normalizeText(rule.source.document);
+  const objectTags = `${objectNorm} ${tagsNorm}`.trim();
+  const allText = `${objectTags} ${quoteNorm} ${clauseNorm} ${documentNorm}`;
+
+  let score = 0;
+  for (const term of terms) {
+    if (objectNorm.includes(term)) score += 4;
+    else if (tagsNorm.includes(term)) score += 3;
+    else if (clauseNorm.includes(term)) score += 2;
+    else if (quoteNorm.includes(term)) score += 1;
+    else if (documentNorm.includes(term)) score += 1;
+  }
+
+  if (
+    topicNorm.length > 4 &&
+    (objectTags.includes(topicNorm) ||
+      quoteNorm.includes(topicNorm) ||
+      allText.includes(topicNorm))
+  ) {
+    score += 4;
+  }
+
+  const dimensional = DIMENSIONAL_TOPIC_RE.test(topic);
+  if (dimensional && NUMERIC_RULE_TYPES.has(rule.type)) {
+    score += 5;
+  }
+  if (
+    dimensional &&
+    rule.normalized &&
+    (rule.normalized.min != null ||
+      rule.normalized.max != null ||
+      rule.normalized.exact != null)
+  ) {
+    score += 2;
+  }
+  if (dimensional && DEFINITION_QUOTE_RE.test(rule.source.quote)) {
+    score -= 8;
+  }
+  if (dimensional && (rule.type === "note" || rule.type === "requirement")) {
+    // Prefer quantifiable limits when the user asked for a dimension.
+    score -= 2;
+  }
+
+  // Topic asks for WIDTH → prefer quotes about width, demote height/doors-only.
+  const wantsWidth = /ширин|ені/i.test(topic);
+  const wantsHeight = /высот|биікт/i.test(topic);
+  const quoteHasWidth = /ширин|ені|width/i.test(rule.source.quote);
+  const quoteHasHeight = /высот|биікт|height/i.test(rule.source.quote);
+  const quoteHasEgress =
+    /эвакуац|эвак\.|коридор|дәліз|проход|жол/i.test(rule.source.quote) ||
+    /эвакуац|коридор|дәліз/i.test(rule.object);
+  if (wantsWidth && quoteHasWidth) score += 6;
+  if (wantsWidth && quoteHasHeight && !quoteHasWidth) score -= 5;
+  if (/эвакуац|коридор|дәліз/i.test(topic) && quoteHasEgress) score += 4;
+  if (
+    wantsWidth &&
+    /есік|дверн|дверь|door/i.test(rule.source.quote) &&
+    !quoteHasWidth
+  ) {
+    score -= 4;
+  }
+  if (wantsHeight && quoteHasHeight) score += 4;
+
+  // Prefer a clear single limit over nonsense wide ranges (e.g. 1–20 m).
+  const hasSpan =
+    rule.normalized?.min != null &&
+    rule.normalized?.max != null &&
+    rule.normalized.max - rule.normalized.min > 5000;
+  if (hasSpan) score -= 8;
+
+  // Plausible corridor clear widths are ~0.8–3.5 m (800–3500 mm).
+  const mm =
+    rule.normalized?.min ??
+    rule.normalized?.exact ??
+    rule.normalized?.max ??
+    null;
+  if (wantsWidth && quoteHasEgress && quoteHasWidth && mm != null && mm >= 800 && mm <= 3500) {
+    score += 8;
+  } else if (
+    wantsWidth &&
+    quoteHasEgress &&
+    mm != null &&
+    mm >= 800 &&
+    mm <= 3500
+  ) {
+    score += 3;
+  }
+  if (wantsWidth && mm != null && (mm < 400 || mm > 6000)) {
+    score -= 4;
+  }
+
+  // Strong phrase: width + corridor/egress in the same quote.
+  if (
+    wantsWidth &&
+    quoteHasWidth &&
+    /коридор|дәліз|эвакуац/i.test(rule.source.quote)
+  ) {
+    score += 10;
+  }
+
+  // Topic is corridor → demote doors/foyers tagged as corridor by bad extract.
+  if (
+    /коридор|дәліз|эвакуац/i.test(topic) &&
+    (/^двер|^есік|дверь|door/i.test(rule.object) ||
+      (/есік|дверн|фойе|вестибюл/i.test(rule.source.quote) &&
+        !/коридор|дәліз/i.test(rule.source.quote)))
+  ) {
+    score -= 12;
+  }
+
+  // Prefer RU/KZ corridor wording over junk room-list extracts.
+  if (
+    wantsWidth &&
+    /ширину\s+коридор|ширина\s+коридор|дәліздер\s+үшін\s+кемінде|ені\s+ортақ\s+дәліз/i.test(
+      rule.source.quote
+    )
+  ) {
+    score += 15;
+  }
+
+  return score;
+}
+
+export interface NormLibraryDocumentStat {
+  document: string;
+  ruleCount: number;
+  versions: string[];
+}
+
+export interface NormLibraryStats {
+  ruleCount: number;
+  documentCount: number;
+  documents: NormLibraryDocumentStat[];
+}
+
+/** Counts only — use on query path so every search does not GROUP BY all docs. */
+export function getNormLibraryCounts(db: Database): {
+  ruleCount: number;
+  documentCount: number;
+} {
+  ensureNormRulesSchema(db);
+  const ruleCountRow = db
+    .prepare("SELECT COUNT(*) AS c FROM norm_rules")
+    .get() as { c: number };
+  const documentCountRow = db
+    .prepare("SELECT COUNT(DISTINCT document) AS c FROM norm_rules")
+    .get() as { c: number };
+  return {
+    ruleCount: ruleCountRow.c,
+    documentCount: documentCountRow.c,
+  };
+}
+
+export function getNormLibraryStats(db: Database): NormLibraryStats {
+  ensureNormRulesSchema(db);
+
+  const { ruleCount, documentCount } = getNormLibraryCounts(db);
+  const docs = db
+    .prepare(
+      `SELECT document,
+              COUNT(*) AS rule_count,
+              GROUP_CONCAT(DISTINCT document_version) AS versions
+       FROM norm_rules
+       GROUP BY document
+       ORDER BY rule_count DESC, document`
+    )
+    .all() as Array<{
+    document: string;
+    rule_count: number;
+    versions: string | null;
+  }>;
+
+  return {
+    ruleCount,
+    documentCount,
+    documents: docs.map((row) => ({
+      document: row.document,
+      ruleCount: row.rule_count,
+      versions: (row.versions ?? "")
+        .split(",")
+        .map((v) => v.trim())
+        .filter(Boolean),
+    })),
+  };
+}
+
 export function queryNormRules(
   db: Database,
   options: QueryNormRulesOptions
@@ -334,9 +652,8 @@ export function queryNormRules(
   const terms = topicToTerms(options.topic);
   const params: unknown[] = [];
 
-  // Rules match if ANY topic term is found; more matched terms rank higher.
-  // Requiring ALL terms is too strict: e.g. a rule tagged object="коридор"
-  // with a Kazakh-language quote would never match "ширина коридора".
+  // Candidate filter: ANY topic term in search_text (broad recall).
+  // Final order uses scoreRuleAgainstTopic (precision for customer topics).
   const scoreExpr =
     terms.length > 0
       ? terms
@@ -358,6 +675,8 @@ export function queryNormRules(
   }
   const filterSql = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
   const limit = options.limit ?? DEFAULT_QUERY_LIMIT;
+  // Pull a wider candidate pool, then re-rank in JS.
+  const candidateLimit = Math.max(limit * 8, 120);
 
   const rows = db
     .prepare(
@@ -368,7 +687,21 @@ export function queryNormRules(
        ORDER BY match_score DESC, document, clause
        LIMIT ?`
     )
-    .all(...params, limit) as NormRuleRow[];
+    .all(...params, candidateLimit) as NormRuleRow[];
 
-  return rows.map(rowToStoredRule);
+  return rows
+    .map(rowToStoredRule)
+    .map((rule) => ({
+      rule,
+      score: scoreRuleAgainstTopic(rule, options.topic),
+    }))
+    .filter((item) => item.score > 0)
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        a.rule.source.document.localeCompare(b.rule.source.document) ||
+        a.rule.source.clause.localeCompare(b.rule.source.clause)
+    )
+    .slice(0, limit)
+    .map((item) => item.rule);
 }

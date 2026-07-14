@@ -2,7 +2,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import db from "../database/db.js";
 import { normativeRuleTypeSchema } from "../normatives/types.js";
-import { queryNormRules } from "../normatives/rulesStore.js";
+import {
+  compactRulesForMcp,
+  queryNormRules,
+} from "../normatives/rulesStore.js";
 
 export function registerQueryNormRulesTool(server: McpServer) {
   server.tool(
@@ -22,7 +25,15 @@ export function registerQueryNormRulesTool(server: McpServer) {
       ruleType: normativeRuleTypeSchema
         .optional()
         .describe("Optional rule type filter, e.g. min_value."),
-      limit: z.number().int().positive().max(200).optional(),
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .max(30)
+        .optional()
+        .describe(
+          "Max rules to return (default 5). Keep small — large payloads slow the agent."
+        ),
     },
     async (args) => {
       try {
@@ -36,7 +47,7 @@ export function registerQueryNormRulesTool(server: McpServer) {
         const payload: Record<string, unknown> = {
           success: true,
           count: rules.length,
-          rules,
+          rules: compactRulesForMcp(rules),
         };
         if (rules.length === 0) {
           payload.hint =
@@ -47,7 +58,7 @@ export function registerQueryNormRulesTool(server: McpServer) {
           content: [
             {
               type: "text",
-              text: JSON.stringify(payload, null, 2),
+              text: JSON.stringify(payload),
             },
           ],
         };
@@ -56,9 +67,10 @@ export function registerQueryNormRulesTool(server: McpServer) {
           content: [
             {
               type: "text",
-              text: `query_norm_rules failed: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
+              text: JSON.stringify({
+                success: false,
+                error: error instanceof Error ? error.message : String(error),
+              }),
             },
           ],
           isError: true,

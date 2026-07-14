@@ -58,7 +58,17 @@ namespace RevitMCPCommandSet.Utils
                 .OfCategory(BuiltInCategory.OST_RoomTags)
                 .WhereElementIsNotElementType()
                 .Cast<RoomTag>()
-                .Where(tag => tag.Room != null && tag.Room.Id == roomId)
+                .Where(tag =>
+                {
+                    try
+                    {
+                        return tag.Room != null && tag.Room.Id == roomId;
+                    }
+                    catch
+                    {
+                        return false;
+                    }
+                })
                 .Select(tag => tag.Id);
         }
 
@@ -110,17 +120,29 @@ namespace RevitMCPCommandSet.Utils
 
         /// <summary>
         /// Color room tag labels in the active view (name, area, leaders) without filling the room.
+        /// Equivalent to: select Room Tag → Override Graphics in View → By Element → Projection Lines → Color.
+        /// Accepts Room ids and/or RoomTag ids.
         /// </summary>
         public static int HighlightRoomsAndTags(
             View view,
             Document doc,
-            IEnumerable<ElementId> roomIds,
+            IEnumerable<ElementId> roomOrTagIds,
             int[] rgb)
         {
             var tagIds = new List<ElementId>();
-            foreach (var roomId in roomIds)
+            foreach (var id in roomOrTagIds)
             {
-                tagIds.AddRange(FindRoomTagIds(doc, view, roomId));
+                var element = doc.GetElement(id);
+                if (element is RoomTag)
+                {
+                    tagIds.Add(id);
+                    continue;
+                }
+
+                if (element is Room)
+                {
+                    tagIds.AddRange(FindRoomTagIds(doc, view, id));
+                }
             }
 
             return ApplyTagColorToView(view, tagIds.Distinct(), rgb);

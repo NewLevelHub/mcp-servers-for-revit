@@ -4,6 +4,8 @@ import Database from "better-sqlite3";
 import type { NormativeRule } from "./types.js";
 import {
   buildRuleKey,
+  compactRulesForMcp,
+  getNormLibraryStats,
   queryNormRules,
   saveNormRules,
   withSuggestedTags,
@@ -224,6 +226,88 @@ describe("rulesStore", () => {
     assert.equal(found[0].documentVersion, "97");
   });
 
+  it("ranks numeric corridor width above «световой карман» definition", () => {
+    const width = makeCorridorRule({
+      source: {
+        document: "СП РК 3.02-101",
+        clause: "4.2.21",
+        quote:
+          "Ширина эвакуационных коридоров должна быть не менее 1,2 м.",
+      },
+    });
+    const pocket = makeCorridorRule({
+      id: "rule-pocket",
+      type: "note",
+      object: "световой карман",
+      value: "определение",
+      unit: "none",
+      normalized: undefined,
+      source: {
+        document: "СП РК 3.02-101",
+        clause: "п. 3.13",
+        quote:
+          "Световой карман: помещение, примыкающее к коридору и служащее для его освещения. Роль светового кармана может выполнять лестничная клетка, отделённая от коридора или с дверью шириной не менее 1,2 м.",
+      },
+    });
+    saveNormRules(db, [pocket, width]);
+
+    const ranked = queryNormRules(db, { topic: "ширина эвакуационного коридора" });
+    assert.ok(ranked.length >= 1);
+    assert.equal(ranked[0].object, "коридор");
+    assert.equal(ranked[0].type, "min_value");
+    assert.equal(ranked[0].source.clause, "4.2.21");
+    assert.match(ranked[0].source.quote, /эвакуационн/i);
+  });
+
+  it("ranks balcony min size ahead of unrelated note mentioning балкон", () => {
+    const balcony = makeCorridorRule({
+      id: "rule-balcony",
+      object: "лоджия",
+      value: 1.2,
+      source: {
+        document: "СП РК 3.02-101",
+        clause: "5.4.1",
+        quote: "Глубина лоджии должна быть не менее 1,2 м.",
+      },
+      normalized: { min: 1200 },
+    });
+    const note = makeCorridorRule({
+      id: "rule-note",
+      type: "note",
+      object: "фасад",
+      value: "примечание",
+      unit: "none",
+      normalized: undefined,
+      source: {
+        document: "СП РК 3.02-101",
+        clause: "1.1",
+        quote: "На фасаде допускаются балконы и лоджии по проекту.",
+      },
+    });
+    saveNormRules(db, [note, balcony]);
+    const ranked = queryNormRules(db, { topic: "минимальная глубина лоджии" });
+    assert.equal(ranked[0].object, "лоджия");
+    assert.equal(ranked[0].type, "min_value");
+  });
+
+  it("exposes library document stats", () => {
+    saveNormRules(db, [
+      makeCorridorRule(),
+      makeCorridorRule({
+        object: "дверь",
+        source: {
+          document: "ГОСТ 21.101-97",
+          clause: "5.1",
+          quote: "Высота строки основной надписи не менее 5 мм.",
+        },
+      }),
+    ]);
+    const stats = getNormLibraryStats(db);
+    assert.equal(stats.ruleCount, 2);
+    assert.equal(stats.documentCount, 2);
+    assert.ok(stats.documents.some((d) => d.document === "СП РК 3.02-101"));
+  });
+
   it("migrates a pre-tags norm_rules table", () => {
     db.exec(`
       CREATE TABLE norm_rules (
@@ -255,5 +339,25 @@ describe("rulesStore", () => {
     const rules = queryNormRules(db, { topic: "проход" });
     assert.equal(rules.length, 1);
     assert.deepEqual(rules[0].tags, ["проход"]);
+  });
+
+  it("compacts MCP payload: truncates long quotes and drops bulky fields", () => {
+    const longQuote = "Ширина коридора. ".repeat(80);
+    saveNormRules(db, [
+      makeCorridorRule({
+        source: {
+          document: "СП РК",
+          clause: "п. 1",
+          quote: longQuote,
+        },
+      }),
+    ]);
+    const rules = queryNormRules(db, { topic: "коридор" });
+    const compact = compactRulesForMcp(rules);
+    assert.equal(compact.length, 1);
+    assert.ok(compact[0].source.quote.length < longQuote.length);
+    assert.equal(compact[0].source.quoteTruncated, true);
+    assert.ok(!("tags" in compact[0]));
+    assert.ok(!("createdAt" in compact[0]));
   });
 });

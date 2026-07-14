@@ -39,6 +39,21 @@ namespace RevitMCPCommandSet.Commands.Normatives
                     };
                 }
 
+                string highlightTarget = parameters?["highlightTarget"]?.Value<string>()
+                    ?? CheckEvacuationWidthEventHandler.HighlightTargetViolations;
+
+                int[] compliantHighlightColor = null;
+                var compliantColorToken = parameters?["compliantHighlightColor"];
+                if (compliantColorToken != null && compliantColorToken.Type == JTokenType.Object)
+                {
+                    compliantHighlightColor = new[]
+                    {
+                        compliantColorToken["r"]?.Value<int>() ?? 0,
+                        compliantColorToken["g"]?.Value<int>() ?? 180,
+                        compliantColorToken["b"]?.Value<int>() ?? 0
+                    };
+                }
+
                 _handler.SetParameters(
                     minWidthMm,
                     mode,
@@ -46,7 +61,9 @@ namespace RevitMCPCommandSet.Commands.Normatives
                     roomNameFilter,
                     includeCompliant,
                     corridorOnly,
-                    highlightColor);
+                    highlightColor,
+                    highlightTarget,
+                    compliantHighlightColor);
 
                 if (RaiseAndWaitForCompletion(60000))
                 {

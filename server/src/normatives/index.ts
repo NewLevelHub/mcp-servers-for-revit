@@ -6,4 +6,5 @@ export * from "./fireDoorRules.js";
 export * from "./applyFireDoorRules.js";
 export * from "./evacuationWidthRules.js";
 export * from "./minDimensionsRules.js";
+export * from "./seedLibrary.js";
 

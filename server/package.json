@@ -13,9 +13,10 @@
     "scripts": {
         "clean": "rimraf build",
         "prebuild": "npm run clean",
-    "build": "tsc",
-    "test": "npm run build && node --test \"build/normatives/*.test.js\"",
-    "prepublishOnly": "npm run build"
+        "build": "tsc",
+        "test": "npm run build && node --test \"build/normatives/*.test.js\"",
+        "seed:norms": "npm run build && node build/scripts/seed-norm-library.js",
+        "prepublishOnly": "npm run build"
     },
     "files": [
         "build",

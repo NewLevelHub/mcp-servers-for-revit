@@ -1,8 +1,14 @@
 {
   "mcpServers": {
-    "mcp-server-for-revit": {
-      "command": "cmd",
-      "args": ["/c", "npx", "-y", "mcp-server-for-revit"]
+    "mcp-server-for-revit-local": {
+      "command": "C:/Program Files/nodejs/node.exe",
+      "args": [
+        "C:/Mac/Home/Desktop/mcp-servers-for-revit/server/build/index.js"
+      ],
+      "cwd": "C:/Mac/Home/Desktop/mcp-servers-for-revit/server",
+      "env": {
+        "MCP_TOOL_PROFILE": "default"
+      }
     }
   }
 }
