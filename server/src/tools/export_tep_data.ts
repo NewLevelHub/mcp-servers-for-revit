@@ -5,7 +5,7 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerExportTepDataTool(server: McpServer) {
   server.tool(
     "export_tep_data",
-    "Export structured technical-economic indicators (TEP) from the current Revit project. Returns building footprint area, total area, storey count, per-level areas and volumes, total volume, and rooms grouped by purpose (department). Data only — no table formatting. Units: mm, m², m³.",
+    "Export structured technical-economic indicators (TEP) from the current Revit project. Returns buildingFootprintArea (lowest above-ground level with rooms), total area, storeyCount (above-ground этажность only; excludes basement/technical/roof), basementStoreyCount, technicalStoreyCount, roofStoreyCount, per-level areas/volumes with storeyKind, total volume, and rooms grouped by purpose (department). Data only — no table formatting. Units: mm, m², m³.",
     {
       includeUnplacedRooms: z
         .boolean()

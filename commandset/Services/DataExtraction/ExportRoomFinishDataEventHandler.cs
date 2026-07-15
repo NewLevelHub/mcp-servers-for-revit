@@ -12,6 +12,9 @@ namespace RevitMCPCommandSet.Services.DataExtraction
         private bool _includeUnplacedRooms;
         private bool _includeNotEnclosedRooms;
         private bool _includeMaterials = true;
+        private string _levelName;
+        private int _offset;
+        private int _limit;
 
         public ExportRoomFinishDataResult ResultInfo { get; private set; }
         public bool TaskCompleted { get; private set; }
@@ -20,11 +23,17 @@ namespace RevitMCPCommandSet.Services.DataExtraction
         public void SetParameters(
             bool includeUnplacedRooms = false,
             bool includeNotEnclosedRooms = false,
-            bool includeMaterials = true)
+            bool includeMaterials = true,
+            string levelName = null,
+            int offset = 0,
+            int limit = 0)
         {
             _includeUnplacedRooms = includeUnplacedRooms;
             _includeNotEnclosedRooms = includeNotEnclosedRooms;
             _includeMaterials = includeMaterials;
+            _levelName = levelName;
+            _offset = offset;
+            _limit = limit;
             TaskCompleted = false;
             _resetEvent.Reset();
         }
@@ -37,67 +46,22 @@ namespace RevitMCPCommandSet.Services.DataExtraction
 
         public void Execute(UIApplication app)
         {
-            var stopwatch = Stopwatch.StartNew();
-
             try
             {
                 var doc = app.ActiveUIDocument.Document;
-                var rooms = new List<RoomFinishDataModel>();
-                var globalWarnings = new List<string>();
-                int roomsWithMissingFinishes = 0;
-
-                var roomCollector = new FilteredElementCollector(doc)
-                    .OfCategory(BuiltInCategory.OST_Rooms)
-                    .WhereElementIsNotElementType()
-                    .Cast<Room>();
-
-                SpatialElementGeometryCalculator geometryCalculator = null;
-                var boundaryOptions = new SpatialElementBoundaryOptions
-                {
-                    SpatialElementBoundaryLocation = SpatialElementBoundaryLocation.Finish
-                };
-
-                foreach (Room room in roomCollector)
-                {
-                    if (!_includeUnplacedRooms && room.Area == 0)
-                        continue;
-
-                    if (!_includeNotEnclosedRooms && room.Area == 0)
-                        continue;
-
-                    var roomData = ExtractRoomFinishData(
-                        doc, room, boundaryOptions, ref geometryCalculator, _includeMaterials);
-                    if (roomData.Warnings.Count > 0)
-                        roomsWithMissingFinishes++;
-
-                    rooms.Add(roomData);
-                }
-
-                stopwatch.Stop();
-
-                ResultInfo = new ExportRoomFinishDataResult
-                {
-                    TotalRooms = rooms.Count,
-                    RoomsWithMissingFinishes = roomsWithMissingFinishes,
-                    Rooms = rooms,
-                    Warnings = globalWarnings,
-                    ExecutionTimeMs = stopwatch.ElapsedMilliseconds,
-                    Success = true,
-                    Message = $"Successfully exported finish data for {rooms.Count} rooms in {stopwatch.ElapsedMilliseconds} ms"
-                };
-
-                if (roomsWithMissingFinishes > 0)
-                {
-                    ResultInfo.Warnings.Add(
-                        $"{roomsWithMissingFinishes} room(s) have missing finish parameter(s). See per-room warnings.");
-                }
+                ResultInfo = Compute(
+                    doc,
+                    _includeUnplacedRooms,
+                    _includeNotEnclosedRooms,
+                    _includeMaterials,
+                    _levelName,
+                    _offset,
+                    _limit);
             }
             catch (Exception ex)
             {
-                stopwatch.Stop();
                 ResultInfo = new ExportRoomFinishDataResult
                 {
-                    ExecutionTimeMs = stopwatch.ElapsedMilliseconds,
                     Success = false,
                     Message = $"Error exporting room finish data: {ex.Message}"
                 };
@@ -107,6 +71,109 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                 TaskCompleted = true;
                 _resetEvent.Set();
             }
+        }
+
+        public static ExportRoomFinishDataResult Compute(
+            Document doc,
+            bool includeUnplacedRooms = false,
+            bool includeNotEnclosedRooms = false,
+            bool includeMaterials = true,
+            string levelName = null,
+            int offset = 0,
+            int limit = 0)
+        {
+            var stopwatch = Stopwatch.StartNew();
+            var globalWarnings = new List<string>();
+
+            var matchingRooms = new FilteredElementCollector(doc)
+                .OfCategory(BuiltInCategory.OST_Rooms)
+                .WhereElementIsNotElementType()
+                .Cast<Room>()
+                .Where(room =>
+                    (includeUnplacedRooms || room.Area > 0) &&
+                    (includeNotEnclosedRooms || room.Area > 0))
+                .ToList();
+
+            if (!string.IsNullOrWhiteSpace(levelName))
+            {
+                var trimmedLevel = levelName.Trim();
+                var filtered = matchingRooms
+                    .Where(room => room.Level != null &&
+                                   room.Level.Name.Equals(trimmedLevel, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                if (filtered.Count == 0)
+                    globalWarnings.Add($"Level '{trimmedLevel}' matched no rooms.");
+
+                matchingRooms = filtered;
+            }
+
+            // Deterministic order so offset/limit pagination is stable between calls.
+            matchingRooms = matchingRooms
+                .OrderBy(room => room.Level?.Elevation ?? double.MinValue)
+                .ThenBy(room => room.Number ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var totalRooms = matchingRooms.Count;
+
+            var page = matchingRooms.AsEnumerable();
+            if (offset > 0)
+                page = page.Skip(offset);
+            if (limit > 0)
+                page = page.Take(limit);
+            var pagedRooms = page.ToList();
+
+            var rooms = new List<RoomFinishDataModel>();
+            int roomsWithMissingFinishes = 0;
+
+            SpatialElementGeometryCalculator geometryCalculator = null;
+            var boundaryOptions = new SpatialElementBoundaryOptions
+            {
+                SpatialElementBoundaryLocation = SpatialElementBoundaryLocation.Finish
+            };
+
+            foreach (var room in pagedRooms)
+            {
+                var roomData = ExtractRoomFinishData(
+                    doc, room, boundaryOptions, ref geometryCalculator, includeMaterials);
+                if (roomData.Warnings.Count > 0)
+                    roomsWithMissingFinishes++;
+
+                rooms.Add(roomData);
+            }
+
+            stopwatch.Stop();
+
+            var hasMore = Math.Max(offset, 0) + rooms.Count < totalRooms;
+            var result = new ExportRoomFinishDataResult
+            {
+                TotalRooms = totalRooms,
+                ReturnedRooms = rooms.Count,
+                Offset = Math.Max(offset, 0),
+                Limit = Math.Max(limit, 0),
+                HasMore = hasMore,
+                RoomsWithMissingFinishes = roomsWithMissingFinishes,
+                Rooms = rooms,
+                Warnings = globalWarnings,
+                ExecutionTimeMs = stopwatch.ElapsedMilliseconds,
+                Success = true,
+                Message =
+                    $"Successfully exported finish data for {rooms.Count} of {totalRooms} rooms in {stopwatch.ElapsedMilliseconds} ms"
+            };
+
+            if (roomsWithMissingFinishes > 0)
+            {
+                result.Warnings.Add(
+                    $"{roomsWithMissingFinishes} room(s) have missing finish parameter(s). See per-room warnings.");
+            }
+
+            if (hasMore)
+            {
+                result.Warnings.Add(
+                    $"Returned rooms {result.Offset + 1}–{result.Offset + rooms.Count} of {totalRooms}; repeat with offset={result.Offset + rooms.Count} for the next page.");
+            }
+
+            return result;
         }
 
         private static RoomFinishDataModel ExtractRoomFinishData(

@@ -22,6 +22,12 @@ namespace RevitMCPCommandSet.Models.DataExtraction
         [JsonProperty("elevation")]
         public double Elevation { get; set; }
 
+        /// <summary>
+        /// aboveGround | basement | technical | roof
+        /// </summary>
+        [JsonProperty("storeyKind")]
+        public string StoreyKind { get; set; }
+
         [JsonProperty("area")]
         public double Area { get; set; }
 
@@ -64,8 +70,20 @@ namespace RevitMCPCommandSet.Models.DataExtraction
         [JsonProperty("totalVolume")]
         public double TotalVolume { get; set; }
 
+        /// <summary>
+        /// Above-ground main storey count (TEP этажность). Excludes basement, technical, roof.
+        /// </summary>
         [JsonProperty("storeyCount")]
         public int StoreyCount { get; set; }
+
+        [JsonProperty("basementStoreyCount")]
+        public int BasementStoreyCount { get; set; }
+
+        [JsonProperty("technicalStoreyCount")]
+        public int TechnicalStoreyCount { get; set; }
+
+        [JsonProperty("roofStoreyCount")]
+        public int RoofStoreyCount { get; set; }
 
         [JsonProperty("totalRooms")]
         public int TotalRooms { get; set; }

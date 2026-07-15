@@ -85,7 +85,7 @@
     },
     {
       "commandName": "export_room_finish_data",
-      "description": "Export room finish data: wall/floor/ceiling finish parameters, boundary face materials and areas (read-only)",
+      "description": "Export room finish data: wall/floor/ceiling finish parameters (read-only); face materials opt-in, level filter and offset/limit pagination for large models",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
@@ -100,7 +100,7 @@
     },
     {
       "commandName": "validate_schedule",
-      "description": "Compare schedule element counts against model elements for Doors, Windows, or Floors",
+      "description": "Compare schedule element counts against model elements for Doors, Windows, or Floors (doors/windows exclude slopes and accessories)",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
@@ -150,17 +150,17 @@
     },
     {
       "commandName": "dimension_room_walls",
-      "description": "Create chained wall dimensions for a room on the active floor plan",
+      "description": "Create chained wall dimensions for a room: interior width+depth chains by default, exterior only on explicit request",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_door_schedule",
-      "description": "Export structured door schedule data grouped by family type with mark, size, level, and count",
+      "description": "Export structured door schedule data for door blocks only (excludes slopes/reveals), including without mark, grouped by family type with elementIds, mark, size, level, and count",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_window_schedule",
-      "description": "Export structured window schedule data grouped by family type with mark, size, level, and count",
+      "description": "Export structured window schedule data for window blocks only (excludes slopes/sills), grouped by family type with mark, size, level, and count",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {

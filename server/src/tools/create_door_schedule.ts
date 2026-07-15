@@ -5,11 +5,12 @@ function registerScheduleExportTool(
   server: McpServer,
   toolName: string,
   commandName: string,
-  elementLabel: string
+  elementLabel: string,
+  description: string
 ) {
   server.tool(
     toolName,
-    `Export structured ${elementLabel} schedule data from the current Revit project. Returns rows grouped by family type with mark, type, size, level, and count. Foundation for create_schedule and validate_schedule workflows.`,
+    description,
     {},
     async () => {
       try {
@@ -46,7 +47,8 @@ export function registerCreateDoorScheduleTool(server: McpServer) {
     server,
     "create_door_schedule",
     "create_door_schedule",
-    "door"
+    "door",
+    "Export structured door schedule data for door blocks only (excludes slopes/reveals and similar accessories by family/type name). Returns all instances (including those without mark) plus rows grouped by family type with mark, type, size, level, elementIds, and count. Foundation for create_schedule and validate_schedule workflows."
   );
 }
 
@@ -55,7 +57,8 @@ export function registerCreateWindowScheduleTool(server: McpServer) {
     server,
     "create_window_schedule",
     "create_window_schedule",
-    "window"
+    "window",
+    "Export structured window schedule data for window blocks only (excludes slopes/sills and similar accessories by family/type name). Returns all instances (including those without mark) plus rows grouped by family type with mark, type, size, level, elementIds, and count. Foundation for create_schedule and validate_schedule workflows."
   );
 }
 
@@ -64,6 +67,7 @@ export function registerCreateFloorScheduleTool(server: McpServer) {
     server,
     "create_floor_schedule",
     "create_floor_schedule",
-    "floor"
+    "floor",
+    "Export structured floor schedule data from the current Revit project. Returns all instances (including those without mark) plus rows grouped by family type with mark, type, size, level, elementIds, and count. Foundation for create_schedule and validate_schedule workflows."
   );
 }

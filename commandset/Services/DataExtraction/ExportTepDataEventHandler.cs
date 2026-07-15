@@ -127,13 +127,27 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                 .ThenBy(level => level.LevelName)
                 .ToList();
 
+            foreach (var level in orderedLevels)
+            {
+                level.StoreyKind = StoreyLevelClassifier.Classify(level.LevelName, level.Elevation);
+            }
+
+            var levelsWithRooms = orderedLevels.Where(level => level.RoomCount > 0).ToList();
+            int aboveGroundCount = levelsWithRooms.Count(level => level.StoreyKind == StoreyLevelClassifier.AboveGround);
+            int basementCount = levelsWithRooms.Count(level => level.StoreyKind == StoreyLevelClassifier.Basement);
+            int technicalCount = levelsWithRooms.Count(level => level.StoreyKind == StoreyLevelClassifier.Technical);
+            int roofCount = levelsWithRooms.Count(level => level.StoreyKind == StoreyLevelClassifier.Roof);
+
             return new ExportTepDataResult
             {
                 ProjectName = doc.Title,
                 BuildingFootprintArea = Round(buildingFootprintAreaM2),
                 TotalArea = Round(totalAreaM2),
                 TotalVolume = Round(totalVolumeM3),
-                StoreyCount = orderedLevels.Count(level => level.RoomCount > 0),
+                StoreyCount = aboveGroundCount,
+                BasementStoreyCount = basementCount,
+                TechnicalStoreyCount = technicalCount,
+                RoofStoreyCount = roofCount,
                 TotalRooms = placedRooms.Count,
                 Levels = orderedLevels,
                 RoomsByPurpose = purposeStats.Values
@@ -142,7 +156,8 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                     .ToList(),
                 ExecutionTimeMs = executionTimeMs,
                 Success = true,
-                Message = $"Successfully exported TEP data for {placedRooms.Count} rooms across {orderedLevels.Count} levels"
+                Message = $"Successfully exported TEP data for {placedRooms.Count} rooms across {orderedLevels.Count} levels " +
+                          $"(aboveGround={aboveGroundCount}, basement={basementCount}, technical={technicalCount}, roof={roofCount})"
             };
         }
 
@@ -170,9 +185,22 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             if (roomsWithLevel.Count == 0)
                 return 0;
 
-            double lowestElevation = roomsWithLevel.Min(room => room.Level.Elevation);
+            // Пятно застройки = нижний надземный этаж с rooms (не −1 / цоколь).
+            var aboveGroundRooms = roomsWithLevel
+                .Where(room =>
+                {
+                    double elevationMm = RevitUnitConversion.ToMillimeters(room.Level.Elevation);
+                    return StoreyLevelClassifier.IsAboveGround(room.Level.Name, elevationMm);
+                })
+                .ToList();
 
-            return roomsWithLevel
+            var footprintRooms = aboveGroundRooms.Count > 0
+                ? aboveGroundRooms
+                : roomsWithLevel;
+
+            double lowestElevation = footprintRooms.Min(room => room.Level.Elevation);
+
+            return footprintRooms
                 .Where(room => Math.Abs(room.Level.Elevation - lowestElevation) <= LevelElevationToleranceFeet)
                 .Sum(room => RevitUnitConversion.ToSquareMeters(room.Area));
         }

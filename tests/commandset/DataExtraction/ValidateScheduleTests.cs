@@ -1,6 +1,7 @@
 using Autodesk.Revit.DB;
 using Nice3point.TUnit.Revit;
 using Nice3point.TUnit.Revit.Executors;
+using RevitMCPCommandSet.Utils;
 using TUnit.Core;
 using TUnit.Core.Executors;
 
@@ -126,9 +127,21 @@ public class ValidateScheduleTests : RevitApiTest
         var elements = new FilteredElementCollector(_doc)
             .OfCategory(builtInCategory)
             .WhereElementIsNotElementType()
-            .ToElements();
+            .ToElements()
+            .Where(element => IsSchedulableModelElement(element, builtInCategory))
+            .ToList();
 
         return FilterElementsByLevel(elements, targetLevel);
+    }
+
+    private static bool IsSchedulableModelElement(Element element, BuiltInCategory builtInCategory)
+    {
+        return builtInCategory switch
+        {
+            BuiltInCategory.OST_Doors => OpeningFillClassifier.IsSchedulableDoor(element),
+            BuiltInCategory.OST_Windows => OpeningFillClassifier.IsSchedulableWindow(element),
+            _ => true
+        };
     }
 
     private static HashSet<ElementId> CollectScheduleElementIds(ViewSchedule schedule, Level targetLevel)

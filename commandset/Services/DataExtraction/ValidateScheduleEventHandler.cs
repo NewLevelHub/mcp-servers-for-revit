@@ -180,9 +180,25 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             var elements = new FilteredElementCollector(doc)
                 .OfCategory(builtInCategory)
                 .WhereElementIsNotElementType()
-                .ToElements();
+                .ToElements()
+                .Where(element => IsSchedulableModelElement(element, builtInCategory))
+                .ToList();
 
             return FilterElementsByLevel(doc, elements, targetLevel);
+        }
+
+        /// <summary>
+        /// Applies the same opening-fill filter as create_door_schedule / create_window_schedule
+        /// so validate_schedule does not report slopes as missing doors/windows (REV-41).
+        /// </summary>
+        private static bool IsSchedulableModelElement(Element element, BuiltInCategory builtInCategory)
+        {
+            return builtInCategory switch
+            {
+                BuiltInCategory.OST_Doors => OpeningFillClassifier.IsSchedulableDoor(element),
+                BuiltInCategory.OST_Windows => OpeningFillClassifier.IsSchedulableWindow(element),
+                _ => true
+            };
         }
 
         private HashSet<ElementId> CollectScheduleElementIds(Document doc, ViewSchedule schedule, Level targetLevel)
