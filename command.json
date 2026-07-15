@@ -100,7 +100,12 @@
     },
     {
       "commandName": "validate_schedule",
-      "description": "Compare schedule element counts against model elements for Doors, Windows, or Floors (doors/windows exclude slopes and accessories)",
+      "description": "Compare schedule element counts against model elements for Doors, Windows, Floors, or CurtainWalls (doors/windows exclude slopes; curtain walls count systems, not panels)",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "create_curtain_wall_schedule",
+      "description": "Export structured curtain wall (витражи) schedule data: wall systems by Curtain type with mark, length x height, level, and count — panels and mullions excluded",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
@@ -150,7 +155,7 @@
     },
     {
       "commandName": "dimension_room_walls",
-      "description": "Create chained wall dimensions for a room on the active floor plan",
+      "description": "Create chained wall dimensions for a room: interior width+depth chains by default, exterior only on explicit request",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
@@ -246,6 +251,11 @@
     {
       "commandName": "apply_norm_result",
       "description": "Write norm-check results into the model: status parameter, marks, highlight, violation schedule (with preview and overwrite protection)",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "auto_layout_sheet",
+      "description": "Automatically lay out views and schedules on a sheet: row packing by actual extents, title-block-aware usable area (incl. Form 3), auto-scale oversized viewports, no overlaps",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {

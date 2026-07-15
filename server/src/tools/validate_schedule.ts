@@ -2,21 +2,21 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { withRevitConnection } from "../utils/ConnectionManager.js";
 
-const categorySchema = z.enum(["Doors", "Windows", "Floors"]);
+const categorySchema = z.enum(["Doors", "Windows", "Floors", "CurtainWalls"]);
 
 export function registerValidateScheduleTool(server: McpServer) {
   server.tool(
     "validate_schedule",
-    "Compare a Revit schedule against model elements for Doors, Windows, or Floors. For Doors/Windows, model side excludes slopes/reveals (same filter as create_door_schedule / create_window_schedule) and returns element id diffs. For Floors, compares finish-floor areas (m²) by type against an экспликация/area schedule — prefers schedules named экспликация/ведомость полов and skips key/style schedules; returns modelAreaM2, scheduleAreaM2, areaDiffM2, typeAreas. Optionally filter by schedule name and/or level.",
+    "Compare a Revit schedule against model elements for Doors, Windows, Floors, or CurtainWalls. For Doors/Windows, model side excludes slopes/reveals (same filter as create_door_schedule / create_window_schedule) and returns element id diffs. For Floors, compares finish-floor areas (m²) by type against an экспликация/area schedule — prefers schedules named экспликация/ведомость полов and skips key/style schedules; returns modelAreaM2, scheduleAreaM2, areaDiffM2, typeAreas. CurtainWalls counts curtain wall SYSTEMS (Wall with Curtain type), not panels/mullions, and by default matches 'Спецификация витражей'. Optionally filter by schedule name and/or level.",
     {
       category: categorySchema.describe(
-        "Element category to validate: Doors, Windows, or Floors."
+        "Element category to validate: Doors, Windows, Floors, or CurtainWalls (витражи — curtain wall systems)."
       ),
       scheduleName: z
         .string()
         .optional()
         .describe(
-          "Optional schedule view name. If omitted: Doors/Windows use first category schedule; Floors prefer экспликация/ведомость полов over key/style schedules."
+          "Optional schedule view name. If omitted: Doors/Windows use first category schedule; Floors prefer экспликация/ведомость полов over key/style schedules; CurtainWalls prefer спецификация витражей."
         ),
       levelName: z
         .string()

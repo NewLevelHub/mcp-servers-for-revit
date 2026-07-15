@@ -6,7 +6,8 @@ namespace RevitMCPCommandSet.Models.DataExtraction
     {
         Doors,
         Windows,
-        Floors
+        Floors,
+        CurtainWalls
     }
 
     /// <summary>

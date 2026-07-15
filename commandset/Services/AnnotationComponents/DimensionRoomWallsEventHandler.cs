@@ -65,7 +65,7 @@ public class DimensionRoomWallsEventHandler : IExternalEventHandler, IWaitableEx
                 var xChain = CreateChainDimension(
                     doc,
                     viewPlan,
-                    CollectChainReferences(edges, viewPlan, forXChain: true),
+                    CollectChainReferences(edges, viewPlan, roomCenter, forXChain: true),
                     forXChain: true,
                     bounds,
                     roomCenter,
@@ -76,7 +76,7 @@ public class DimensionRoomWallsEventHandler : IExternalEventHandler, IWaitableEx
                 var yChain = CreateChainDimension(
                     doc,
                     viewPlan,
-                    CollectChainReferences(edges, viewPlan, forXChain: false),
+                    CollectChainReferences(edges, viewPlan, roomCenter, forXChain: false),
                     forXChain: false,
                     bounds,
                     roomCenter,
@@ -223,6 +223,7 @@ public class DimensionRoomWallsEventHandler : IExternalEventHandler, IWaitableEx
     private static List<(double Key, Reference Ref)> CollectChainReferences(
         List<BoundaryEdge> edges,
         View view,
+        XYZ roomCenter,
         bool forXChain)
     {
         var references = new List<(double Key, Reference Ref)>();
@@ -237,22 +238,19 @@ public class DimensionRoomWallsEventHandler : IExternalEventHandler, IWaitableEx
 
             var start = edge.Curve.GetEndPoint(0);
             var end = edge.Curve.GetEndPoint(1);
+            // Key = wall position along measure axis (midpoint); reference = inner (room-side) face.
+            var key = forXChain
+                ? (start.X + end.X) / 2.0
+                : (start.Y + end.Y) / 2.0;
 
-            var startRef = DimensionAnnotationHelper.GetBestWallReference(
+            var wallRef = DimensionAnnotationHelper.GetBestWallReference(
                 edge.Wall,
                 view,
                 measureDirection,
-                start);
-            var endRef = DimensionAnnotationHelper.GetBestWallReference(
-                edge.Wall,
-                view,
-                measureDirection,
-                end);
+                roomCenter);
 
-            if (startRef != null)
-                TryAddReference(references, forXChain ? start.X : start.Y, startRef);
-            if (endRef != null)
-                TryAddReference(references, forXChain ? end.X : end.Y, endRef);
+            if (wallRef != null)
+                TryAddReference(references, key, wallRef);
         }
 
         return references;
@@ -286,25 +284,30 @@ public class DimensionRoomWallsEventHandler : IExternalEventHandler, IWaitableEx
 
         var z = view.GenLevel?.Elevation ?? 0.0;
         var extension = Math.Max(bounds.MaxX - bounds.MinX, bounds.MaxY - bounds.MinY) * 0.1 + 1.0;
+        var interior = IsInteriorPlacement(_info.Placement);
+        var coordinate = ComputeChainLineCoordinate(
+            forXChain,
+            interior,
+            bounds.MinX,
+            bounds.MaxX,
+            bounds.MinY,
+            bounds.MaxY,
+            roomCenter.X,
+            roomCenter.Y,
+            offsetFeet);
         Line line;
 
         if (forXChain)
         {
-            var y = roomCenter.Y >= (bounds.MinY + bounds.MaxY) / 2.0
-                ? bounds.MinY - offsetFeet
-                : bounds.MaxY + offsetFeet;
             line = Line.CreateBound(
-                new XYZ(bounds.MinX - extension, y, z),
-                new XYZ(bounds.MaxX + extension, y, z));
+                new XYZ(bounds.MinX - extension, coordinate, z),
+                new XYZ(bounds.MaxX + extension, coordinate, z));
         }
         else
         {
-            var x = roomCenter.X >= (bounds.MinX + bounds.MaxX) / 2.0
-                ? bounds.MinX - offsetFeet
-                : bounds.MaxX + offsetFeet;
             line = Line.CreateBound(
-                new XYZ(x, bounds.MinY - extension, z),
-                new XYZ(x, bounds.MaxY + extension, z));
+                new XYZ(coordinate, bounds.MinY - extension, z),
+                new XYZ(coordinate, bounds.MaxY + extension, z));
         }
 
         var dimension = doc.Create.NewDimension(view, line, referenceArray);
@@ -314,5 +317,57 @@ public class DimensionRoomWallsEventHandler : IExternalEventHandler, IWaitableEx
             _info.DimensionType,
             _info.DimensionStyleId);
         return dimension;
+    }
+
+    /// <summary>
+    ///     Interior is the default; exterior chains are created only when explicitly
+    ///     requested via placement.
+    /// </summary>
+    public static bool IsInteriorPlacement(string placement)
+    {
+        var normalized = placement?.Trim().ToLowerInvariant();
+        return normalized != "exterior" && normalized != "outside" && normalized != "external";
+    }
+
+    /// <summary>
+    ///     Coordinate of the dimension line: Y for the X (width) chain, X for the Y (depth)
+    ///     chain. Interior places the width chain offset inward from the bottom wall and the
+    ///     depth chain inward from the right wall (both clamped inside the room extents);
+    ///     exterior places each chain outside the boundary on the side away from the room
+    ///     center.
+    /// </summary>
+    public static double ComputeChainLineCoordinate(
+        bool forXChain,
+        bool interior,
+        double minX,
+        double maxX,
+        double minY,
+        double maxY,
+        double centerX,
+        double centerY,
+        double offsetFeet)
+    {
+        if (interior)
+        {
+            if (forXChain)
+            {
+                var inset = Math.Min(offsetFeet, (maxY - minY) * 0.35);
+                return minY + inset;
+            }
+
+            var insetX = Math.Min(offsetFeet, (maxX - minX) * 0.35);
+            return maxX - insetX;
+        }
+
+        if (forXChain)
+        {
+            return centerY >= (minY + maxY) / 2.0
+                ? minY - offsetFeet
+                : maxY + offsetFeet;
+        }
+
+        return centerX >= (minX + maxX) / 2.0
+            ? minX - offsetFeet
+            : maxX + offsetFeet;
     }
 }
