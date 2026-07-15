@@ -52,7 +52,8 @@ MCP **не создаёт** новый проект. Сообщи пользов
 
 ## ТЭП и ведомости
 
-Данные — через `export_tep_data`, `export_room_data`, `get_material_quantities`, `analyze_model_statistics`.  
+Данные — через `export_tep_data`, `export_room_data`, `get_material_quantities`, `analyze_model_statistics`.
+Экспликация полов (м²) — `create_floor_schedule` (только отделка `(полы)*`, без плит). 
 Оформление — **только шаблоны проекта**. Нет шаблона → сказать пользователю, не подменять кодом.
 
 ## Нормативы (ГОСТ / СП / СН РК)
@@ -79,7 +80,9 @@ MCP **не создаёт** новый проект. Сообщи пользов
 | Удаление / видимость | `delete_element`, `operate_element` |
 | Маркировка | `tag_all_rooms`, `tag_all_walls` |
 | Данные для ведомостей / ТЭП | `export_tep_data`, `export_room_data`, `get_material_quantities` |
-| Спецификации дверей/окон/полов | `create_door_schedule`, `create_window_schedule`, `create_floor_schedule` |
+| Спецификации дверей/окон | `create_door_schedule`, `create_window_schedule` |
+| Экспликация полов (м², только `(полы)*`) | `create_floor_schedule` — без плит/утеплителей; `validate_schedule` Floors — сверка площадей |
+| Лист экспликации полов | `create_floor_explication` — колонки из recipe; группы этажей по (полы)* (типовые = тот же тип + контур); названия динамические |
 | Нормативы: извлечь / сохранить / найти / seed / статус | MCP: `extract_norm_rules_from_pdf` (topic = поиск; pdfPath = извлечение; `action=seed` = все PDF из `normatives/`; `action=status` = сколько правил; saveToLibrary) |
 | Нормоконтроль: ширина эвак. коридора | `extract_norm_rules_from_pdf` (topic) → `check_evacuation_width` |
 | **Покраска марок помещений (быстро)** | **`highlight_room_tags`** — один вызов. `elementIds` (Room/марка) или `roomNames` + `colorPreset: "green"\|"red"`. Это Override Graphics → Проекционные линии (как в UI). Не используй `apply_norm_result` только ради покраски. |

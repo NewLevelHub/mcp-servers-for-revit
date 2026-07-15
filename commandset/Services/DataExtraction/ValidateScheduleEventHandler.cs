@@ -9,13 +9,15 @@ namespace RevitMCPCommandSet.Services.DataExtraction
 {
     public class ValidateScheduleEventHandler : IExternalEventHandler, IWaitableExternalEventHandler
     {
+        private const double FloorAreaToleranceM2 = 1.0;
+
         private sealed class CategoryConfig
         {
             public BuiltInCategory BuiltInCategory { get; set; }
 
             /// <summary>
-            ///     Curtain wall systems live in OST_Walls but are validated as their own
-            ///     pseudo-category (витражи в РД — не окна и не все стены).
+            /// Curtain wall systems live in OST_Walls but are validated as their own
+            /// pseudo-category (витражи в РД — не окна и не все стены).
             /// </summary>
             public bool CurtainWallsOnly { get; set; }
         }
@@ -77,7 +79,6 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                         $"Unsupported category '{_category}'. Supported values: Doors, Windows, Floors, CurtainWalls.");
                 }
 
-                var builtInCategory = categoryConfig.BuiltInCategory;
                 var targetLevel = ResolveLevel(doc);
                 var schedule = FindSchedule(doc, categoryConfig, _scheduleName);
                 if (schedule == null)
@@ -88,32 +89,14 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                     throw new InvalidOperationException(scheduleHint);
                 }
 
-                var modelIds = CollectModelElementIds(doc, categoryConfig, targetLevel);
-                var scheduleIds = CollectScheduleElementIds(doc, schedule, categoryConfig, targetLevel);
-
-                var missingIds = modelIds
-                    .Except(scheduleIds)
-                    .Select(GetElementIdValue)
-                    .OrderBy(id => id)
-                    .ToList();
-
-                var modelCount = modelIds.Count;
-                var scheduleCount = scheduleIds.Count;
-
-                ResultInfo = new ValidateScheduleResult
+                if (categoryConfig.BuiltInCategory == BuiltInCategory.OST_Floors && !categoryConfig.CurtainWallsOnly)
                 {
-                    Category = _category,
-                    ScheduleName = schedule.Name,
-                    LevelName = targetLevel?.Name,
-                    ModelCount = modelCount,
-                    ScheduleCount = scheduleCount,
-                    Diff = modelCount - scheduleCount,
-                    MissingIds = missingIds,
-                    Success = true,
-                    Message = missingIds.Count == 0
-                        ? $"Schedule '{schedule.Name}' matches the model for {_category} ({modelCount} elements)."
-                        : $"Schedule '{schedule.Name}' is missing {missingIds.Count} of {modelCount} model elements for {_category}."
-                };
+                    ResultInfo = ValidateFloorAreas(doc, schedule, targetLevel);
+                }
+                else
+                {
+                    ResultInfo = ValidateElementIds(doc, categoryConfig, schedule, targetLevel);
+                }
             }
             catch (Exception ex)
             {
@@ -136,6 +119,125 @@ namespace RevitMCPCommandSet.Services.DataExtraction
         public string GetName()
         {
             return "Validate Schedule";
+        }
+
+        private ValidateScheduleResult ValidateElementIds(
+            Document doc,
+            CategoryConfig categoryConfig,
+            ViewSchedule schedule,
+            Level targetLevel)
+        {
+            var modelIds = CollectModelElementIds(doc, categoryConfig, targetLevel);
+            var scheduleIds = CollectScheduleElementIds(doc, schedule, categoryConfig, targetLevel);
+
+            var missingIds = modelIds
+                .Except(scheduleIds)
+                .Select(GetElementIdValue)
+                .OrderBy(id => id)
+                .ToList();
+
+            var modelCount = modelIds.Count;
+            var scheduleCount = scheduleIds.Count;
+
+            return new ValidateScheduleResult
+            {
+                Category = _category,
+                ScheduleName = schedule.Name,
+                LevelName = targetLevel?.Name,
+                Mode = "elements",
+                ModelCount = modelCount,
+                ScheduleCount = scheduleCount,
+                Diff = modelCount - scheduleCount,
+                MissingIds = missingIds,
+                Success = true,
+                Message = missingIds.Count == 0
+                    ? $"Schedule '{schedule.Name}' matches the model for {_category} ({modelCount} elements)."
+                    : $"Schedule '{schedule.Name}' is missing {missingIds.Count} of {modelCount} model elements for {_category}."
+            };
+        }
+
+        /// <summary>
+        /// Floor экспликация: compare finish-floor areas (m²) by type, not counts vs key schedule (REV-49).
+        /// </summary>
+        private ValidateScheduleResult ValidateFloorAreas(Document doc, ViewSchedule schedule, Level targetLevel)
+        {
+            var modelFloors = CollectFloorFinishElements(doc, targetLevel, scheduleId: null);
+            var scheduleFloors = CollectFloorFinishElements(doc, targetLevel, schedule.Id);
+
+            var modelByType = AggregateAreasByType(doc, modelFloors);
+            var scheduleByType = AggregateAreasByType(doc, scheduleFloors);
+
+            var allTypes = modelByType.Keys
+                .Union(scheduleByType.Keys)
+                .OrderBy(t => t, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var typeRows = new List<ValidateScheduleTypeAreaRow>();
+            foreach (var typeName in allTypes)
+            {
+                modelByType.TryGetValue(typeName, out var typeModelArea);
+                scheduleByType.TryGetValue(typeName, out var typeScheduleArea);
+                typeRows.Add(new ValidateScheduleTypeAreaRow
+                {
+                    Type = typeName,
+                    ModelAreaM2 = Math.Round(typeModelArea, 2),
+                    ScheduleAreaM2 = Math.Round(typeScheduleArea, 2),
+                    DiffM2 = Math.Round(typeModelArea - typeScheduleArea, 2)
+                });
+            }
+
+            var modelArea = Math.Round(modelByType.Values.Sum(), 2);
+            var scheduleArea = Math.Round(scheduleByType.Values.Sum(), 2);
+            var areaDiff = Math.Round(modelArea - scheduleArea, 2);
+            var mismatchedTypes = typeRows.Count(r => Math.Abs(r.DiffM2) > FloorAreaToleranceM2);
+
+            var modelIds = modelFloors.Select(f => f.Id).ToHashSet();
+            var scheduleIds = scheduleFloors.Select(f => f.Id).ToHashSet();
+            var missingIds = modelIds
+                .Except(scheduleIds)
+                .Select(GetElementIdValue)
+                .OrderBy(id => id)
+                .ToList();
+
+            var areasMatch = Math.Abs(areaDiff) <= FloorAreaToleranceM2 && mismatchedTypes == 0;
+            string message;
+            if (scheduleFloors.Count == 0 && IsKeyOrStyleScheduleName(schedule.Name))
+            {
+                message =
+                    $"Schedule '{schedule.Name}' looks like a key/style schedule, not экспликация полов. " +
+                    $"Model finish floors: {modelFloors.Count} ({modelArea:0.##} m²). " +
+                    "Pass scheduleName of the floor экспликация / area schedule to compare areas.";
+            }
+            else if (areasMatch)
+            {
+                message =
+                    $"Floor экспликация '{schedule.Name}' matches model finish areas " +
+                    $"({modelArea:0.##} m², {modelFloors.Count} floors, tolerance ±{FloorAreaToleranceM2:0.#} m²).";
+            }
+            else
+            {
+                message =
+                    $"Floor экспликация '{schedule.Name}' area mismatch: model {modelArea:0.##} m² vs schedule {scheduleArea:0.##} m² " +
+                    $"(diff {areaDiff:0.##} m², {mismatchedTypes} type(s) beyond ±{FloorAreaToleranceM2:0.#} m²).";
+            }
+
+            return new ValidateScheduleResult
+            {
+                Category = _category,
+                ScheduleName = schedule.Name,
+                LevelName = targetLevel?.Name,
+                Mode = "floor_areas",
+                ModelCount = modelFloors.Count,
+                ScheduleCount = scheduleFloors.Count,
+                Diff = modelFloors.Count - scheduleFloors.Count,
+                MissingIds = missingIds,
+                ModelAreaM2 = modelArea,
+                ScheduleAreaM2 = scheduleArea,
+                AreaDiffM2 = areaDiff,
+                TypeAreas = typeRows,
+                Success = true,
+                Message = message
+            };
         }
 
         private Level ResolveLevel(Document doc)
@@ -202,7 +304,42 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                     return curtainSchedule;
             }
 
+            if (categoryConfig.BuiltInCategory == BuiltInCategory.OST_Floors)
+            {
+                var explication = categorySchedules.FirstOrDefault(s => NameLooksLikeFloorExplication(s.Name));
+                if (explication != null)
+                    return explication;
+
+                var nonKey = categorySchedules.FirstOrDefault(s => !IsKeyOrStyleScheduleName(s.Name));
+                if (nonKey != null)
+                    return nonKey;
+            }
+
             return categorySchedules.FirstOrDefault();
+        }
+
+        private static bool NameLooksLikeFloorExplication(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return false;
+
+            var n = name.ToLowerInvariant();
+            return n.Contains("экспликац")
+                   || n.Contains("explicat")
+                   || (n.Contains("ведомост") && n.Contains("пол"))
+                   || (n.Contains("спецификац") && n.Contains("пол") && !IsKeyOrStyleScheduleName(n));
+        }
+
+        private static bool IsKeyOrStyleScheduleName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return false;
+
+            var n = name.ToLowerInvariant();
+            return n.Contains("ключев")
+                   || n.Contains("стил")
+                   || n.Contains("key schedule")
+                   || n.Contains("keynote");
         }
 
         private HashSet<ElementId> CollectModelElementIds(Document doc, CategoryConfig categoryConfig, Level targetLevel)
@@ -217,10 +354,56 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             return FilterElementsByLevel(doc, elements, targetLevel);
         }
 
+        private static List<Floor> CollectFloorFinishElements(Document doc, Level targetLevel, ElementId scheduleId)
+        {
+            IList<Element> elements = scheduleId == null
+                ? new FilteredElementCollector(doc)
+                    .OfCategory(BuiltInCategory.OST_Floors)
+                    .WhereElementIsNotElementType()
+                    .ToElements()
+                : new FilteredElementCollector(doc, scheduleId)
+                    .WhereElementIsNotElementType()
+                    .ToElements();
+
+            var floors = elements
+                .OfType<Floor>()
+                .Where(FloorFinishClassifier.IsFloorFinish)
+                .Cast<Element>()
+                .ToList();
+
+            var filteredIds = FilterElementsByLevel(doc, floors, targetLevel);
+            return filteredIds
+                .Select(id => doc.GetElement(id) as Floor)
+                .Where(f => f != null)
+                .ToList();
+        }
+
+        private static Dictionary<string, double> AggregateAreasByType(Document doc, IEnumerable<Floor> floors)
+        {
+            var result = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+            foreach (var floor in floors)
+            {
+                var floorType = doc.GetElement(floor.GetTypeId()) as FloorType;
+                var typeName = floorType?.Name ?? floor.Name ?? "(unnamed)";
+                var area = GetFloorAreaM2(floor);
+                if (result.ContainsKey(typeName))
+                    result[typeName] += area;
+                else
+                    result[typeName] = area;
+            }
+
+            return result;
+        }
+
+        private static double GetFloorAreaM2(Floor floor)
+        {
+            double areaInternal = floor.get_Parameter(BuiltInParameter.HOST_AREA_COMPUTED)?.AsDouble() ?? 0;
+            return areaInternal > 0 ? RevitUnitConversion.ToSquareMeters(areaInternal) : 0;
+        }
+
         /// <summary>
-        /// Applies the same filters as the export commands: opening-fill filter for
-        /// doors/windows (REV-41) and the curtain wall system filter for витражи —
-        /// only Wall elements with WallKind.Curtain count, never panels or mullions.
+        /// Applies the same filters as the export commands: opening-fill for doors/windows (REV-41),
+        /// finish floors only (REV-49), and curtain wall systems for витражи (REV-53).
         /// </summary>
         private static bool IsSchedulableModelElement(Element element, CategoryConfig categoryConfig)
         {
@@ -231,6 +414,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             {
                 BuiltInCategory.OST_Doors => OpeningFillClassifier.IsSchedulableDoor(element),
                 BuiltInCategory.OST_Windows => OpeningFillClassifier.IsSchedulableWindow(element),
+                BuiltInCategory.OST_Floors => element is Floor floor && FloorFinishClassifier.IsFloorFinish(floor),
                 _ => true
             };
         }

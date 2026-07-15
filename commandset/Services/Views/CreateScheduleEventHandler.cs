@@ -150,9 +150,7 @@ public class CreateScheduleEventHandler : IExternalEventHandler, IWaitableExtern
         {
             try
             {
-                if (fieldInfo.IsHidden)
-                    continue;
-
+                // Hidden fields are still added so filters can target them (REV-49).
                 var schedulableField = FindSchedulableField(doc, definition, fieldInfo);
                 if (schedulableField == null)
                 {
@@ -167,7 +165,9 @@ public class CreateScheduleEventHandler : IExternalEventHandler, IWaitableExtern
                 if (fieldInfo.Width > 0)
                     field.GridColumnWidth = fieldInfo.Width / 304.8;
 
+                field.IsHidden = fieldInfo.IsHidden;
                 ApplyHorizontalAlignment(field, fieldInfo.HorizontalAlignment);
+                ApplyFieldTotals(field, fieldInfo, warnings);
             }
             catch (Exception ex)
             {
@@ -194,7 +194,16 @@ public class CreateScheduleEventHandler : IExternalEventHandler, IWaitableExtern
                 }
 
                 var filterType = ParseFilterType(filterInfo.FilterType);
-                definition.AddFilter(new ScheduleFilter(fieldId, filterType, filterInfo.FilterValue ?? string.Empty));
+                if (filterInfo.FilterElementId.HasValue && filterInfo.FilterElementId.Value > 0)
+                {
+                    var elementId = Utils.ElementIdExtensions.FromLong(filterInfo.FilterElementId.Value);
+                    definition.AddFilter(new ScheduleFilter(fieldId, filterType, elementId));
+                }
+                else
+                {
+                    definition.AddFilter(
+                        new ScheduleFilter(fieldId, filterType, filterInfo.FilterValue ?? string.Empty));
+                }
             }
             catch (Exception ex)
             {
@@ -375,6 +384,8 @@ public class CreateScheduleEventHandler : IExternalEventHandler, IWaitableExtern
                 definition.ShowHeaders = info.ShowHeaders.Value;
             if (info.ShowGridLines.HasValue)
                 definition.ShowGridLines = info.ShowGridLines.Value;
+            if (info.IsItemized.HasValue)
+                definition.IsItemized = info.IsItemized.Value;
         }
         catch (Exception ex)
         {
@@ -425,18 +436,65 @@ public class CreateScheduleEventHandler : IExternalEventHandler, IWaitableExtern
             if (fieldInfo.ParameterId > 0 &&
                 GetElementIdValue(schedulableField.ParameterId) == fieldInfo.ParameterId)
                 return schedulableField;
+        }
 
-            var fieldType = ParseFieldType(fieldInfo.FieldType);
-            if (schedulableField.FieldType != fieldType)
+        if (string.IsNullOrWhiteSpace(fieldInfo.ParameterName))
+            return null;
+
+        var preferredType = ParseFieldType(fieldInfo.FieldType);
+
+        // Prefer left-to-right aliases (org shared param, then portable Type Mark, …).
+        foreach (var alias in fieldInfo.ParameterName.Split('|'))
+        {
+            var trimmed = alias.Trim();
+            if (trimmed.Length == 0)
                 continue;
 
-            var name = schedulableField.GetName(doc);
-            if (!string.IsNullOrWhiteSpace(fieldInfo.ParameterName) &&
-                name.Equals(fieldInfo.ParameterName, StringComparison.OrdinalIgnoreCase))
-                return schedulableField;
+            SchedulableField preferredMatch = null;
+            SchedulableField anyMatch = null;
+
+            foreach (var schedulableField in schedulableFields)
+            {
+                var name = schedulableField.GetName(doc);
+                if (string.IsNullOrWhiteSpace(name) ||
+                    !name.Equals(trimmed, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (schedulableField.FieldType == preferredType)
+                    preferredMatch = schedulableField;
+                else if (anyMatch == null &&
+                         (schedulableField.FieldType == ScheduleFieldType.Instance ||
+                          schedulableField.FieldType == ScheduleFieldType.ElementType))
+                    anyMatch = schedulableField;
+            }
+
+            if (preferredMatch != null)
+                return preferredMatch;
+            if (anyMatch != null)
+                return anyMatch;
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// ParameterName may list aliases separated by '|'; first match wins
+    /// (e.g. org shared param before portable Type Comments).
+    /// </summary>
+    private static bool ParameterNameMatches(string actualName, string requested)
+    {
+        if (string.IsNullOrWhiteSpace(actualName) || string.IsNullOrWhiteSpace(requested))
+            return false;
+
+        foreach (var alias in requested.Split('|'))
+        {
+            var trimmed = alias.Trim();
+            if (trimmed.Length > 0 &&
+                actualName.Equals(trimmed, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 
     private static ScheduleFieldId ResolveScheduleFieldId(
@@ -451,14 +509,23 @@ public class CreateScheduleEventHandler : IExternalEventHandler, IWaitableExtern
         for (var i = 0; i < definition.GetFieldCount(); i++)
         {
             var field = definition.GetField(definition.GetFieldId(i));
-            if (field.GetName().Equals(fieldName, StringComparison.OrdinalIgnoreCase))
+            if (ParameterNameMatches(field.GetName(), fieldName))
                 return definition.GetFieldId(i);
         }
 
+        // Prefer Type match for type-parameter aliases, then Instance.
         var schedulableField = FindSchedulableField(
             doc,
             definition,
-            new ScheduleFieldInfo { ParameterName = fieldName, FieldType = "Instance" });
+            new ScheduleFieldInfo { ParameterName = fieldName, FieldType = "Type" });
+        if (schedulableField == null)
+        {
+            schedulableField = FindSchedulableField(
+                doc,
+                definition,
+                new ScheduleFieldInfo { ParameterName = fieldName, FieldType = "Instance" });
+        }
+
         if (schedulableField == null)
             return null;
 
@@ -524,6 +591,34 @@ public class CreateScheduleEventHandler : IExternalEventHandler, IWaitableExtern
             default:
                 field.HorizontalAlignment = ScheduleHorizontalAlignment.Left;
                 break;
+        }
+    }
+
+    /// <summary>
+    /// When schedule is not itemized, Area (etc.) must use Totals or Revit shows «&lt;варианты&gt;».
+    /// </summary>
+    private static void ApplyFieldTotals(
+        ScheduleField field,
+        ScheduleFieldInfo fieldInfo,
+        List<string> warnings)
+    {
+        if (fieldInfo.HasTotals != true)
+            return;
+
+        try
+        {
+            if (!field.CanTotal())
+            {
+                warnings.Add(
+                    $"Field '{fieldInfo.ParameterName}' does not support totals; left as standard display.");
+                return;
+            }
+
+            field.DisplayType = ScheduleFieldDisplayType.Totals;
+        }
+        catch (Exception ex)
+        {
+            warnings.Add($"Failed to enable totals for '{fieldInfo.ParameterName}': {ex.Message}");
         }
     }
 
