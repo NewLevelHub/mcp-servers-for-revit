@@ -5,19 +5,28 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerDimensionRoomWallsTool(server: McpServer) {
   server.tool(
     "dimension_room_walls",
-    "Create chained wall dimensions for a room on the active floor plan. Uses room boundary walls, project DimensionType (by name or ID), and offset in millimeters.",
+    "Create chained wall dimensions (width + depth) for a room on the active floor plan. By default the chains are placed INSIDE the room (placement 'interior') — this is the standard for room dimensions. Use placement 'exterior' ONLY when the user explicitly asks for outside chains (axes/facade workflows). Uses room boundary walls, project DimensionType (by name or ID), and offset in millimeters.",
     {
       roomId: z
         .number()
         .int()
         .positive()
         .describe("Element ID of the room to dimension"),
+      placement: z
+        .enum(["interior", "exterior"])
+        .optional()
+        .default("interior")
+        .describe(
+          "interior (default) — width and depth chains inside the room; exterior — chains outside the boundary, only on explicit request."
+        ),
       offsetMm: z
         .number()
         .positive()
         .optional()
         .default(300)
-        .describe("Offset of dimension lines from the room boundary in mm"),
+        .describe(
+          "Offset of dimension lines from the room boundary in mm (inward for interior, outward for exterior)"
+        ),
       dimensionType: z
         .string()
         .optional()
@@ -39,6 +48,7 @@ export function registerDimensionRoomWallsTool(server: McpServer) {
     async (args, extra) => {
       const params = {
         roomId: args.roomId,
+        placement: args.placement ?? "interior",
         offsetMm: args.offsetMm,
         dimensionType: args.dimensionType,
         dimensionStyleId: args.dimensionStyleId,
