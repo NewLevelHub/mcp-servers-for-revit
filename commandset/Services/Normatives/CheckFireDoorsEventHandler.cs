@@ -9,10 +9,33 @@ namespace RevitMCPCommandSet.Services.Normatives
 {
     /// <summary>
     /// Collects door facts from the active Revit model.
+    /// Mark detection uses instance/type parameters AND door-schedule «Примечание» (REV-47).
     /// Normative rules are read from repo/normatives PDFs on the MCP server (REV-29).
     /// </summary>
     public class CheckFireDoorsEventHandler : IExternalEventHandler, IWaitableExternalEventHandler
     {
+        private static readonly string[] FireRatingParameterNames =
+        {
+            "ADSK_Предел огнестойкости экземпляра",
+            "ADSK_Предел огнестойкости",
+            "Fire Rating",
+            "Противопожарность",
+            "Огнестойкость",
+            "EI",
+            "Предел огнестойкости",
+        };
+
+        private static readonly string[] NoteParameterNames =
+        {
+            "BI_примечание",
+            "ADSK_Примечание",
+            "Примечание",
+            "Type Comments",
+            "Комментарии к типоразмеру",
+            "Comments",
+            "Комментарии",
+        };
+
         private string _levelNameFilter = string.Empty;
 
         public CheckFireDoorsResult ResultInfo { get; private set; } = new();
@@ -37,10 +60,19 @@ namespace RevitMCPCommandSet.Services.Normatives
             try
             {
                 var doc = app.ActiveUIDocument.Document;
+                var warnings = new List<string>();
+                var scheduleRows = FireDoorScheduleNoteReader.ReadDoorScheduleNotes(doc);
+                if (scheduleRows.Count == 0)
+                {
+                    warnings.Add(
+                        "Спека с колонкой «Примечание» для дверей не найдена — ПД проверяются только по параметрам модели.");
+                }
+
                 var doorInstances = new FilteredElementCollector(doc)
                     .OfCategory(BuiltInCategory.OST_Doors)
                     .WhereElementIsNotElementType()
                     .OfType<FamilyInstance>()
+                    .Where(OpeningFillClassifier.IsSchedulableDoor)
                     .ToList();
 
                 var items = new List<DoorFireFacts>();
@@ -56,31 +88,68 @@ namespace RevitMCPCommandSet.Services.Normatives
 
                     var fromRoom = door.FromRoom?.Name ?? string.Empty;
                     var toRoom = door.ToRoom?.Name ?? string.Empty;
-                    var fireRating = ReadFireRating(door);
+                    var familyName = door.Symbol?.Family?.Name ?? string.Empty;
+                    var typeName = door.Symbol?.Name ?? string.Empty;
+
+                    var parameterRating = ReadParameterFireRating(door);
+                    var fromParameter = IsMarkedFromParameters(door, parameterRating);
+
+                    var typeNote = ReadNoteParameters(door);
+                    if (FireDoorScheduleNoteReader.IsPlaceholderNote(typeNote))
+                        typeNote = string.Empty;
+
+                    var scheduleNote = FireDoorScheduleNoteReader.FindNoteForDoor(
+                        scheduleRows,
+                        familyName,
+                        typeName);
+                    if (string.IsNullOrWhiteSpace(scheduleNote))
+                        scheduleNote = typeNote;
+                    else if (FireDoorScheduleNoteReader.IsPlaceholderNote(scheduleNote))
+                        scheduleNote = FireDoorScheduleNoteReader.LooksLikeFireDoorText(typeNote)
+                            ? typeNote
+                            : string.Empty;
+
+                    var fromScheduleNote = FireDoorScheduleNoteReader.LooksLikeFireDoorText(scheduleNote);
+                    var isMarked = fromParameter || fromScheduleNote;
+                    var markSource = FireDoorScheduleNoteReader.ClassifyMarkSource(
+                        fromParameter,
+                        fromScheduleNote);
+
+                    var currentRating = !string.IsNullOrWhiteSpace(parameterRating)
+                        ? parameterRating
+                        : fromScheduleNote
+                            ? ExtractFireRatingSnippet(scheduleNote)
+                            : string.Empty;
 
                     items.Add(new DoorFireFacts
                     {
                         Id = door.Id.GetValue(),
                         UniqueId = door.UniqueId,
                         Mark = door.get_Parameter(BuiltInParameter.ALL_MODEL_MARK)?.AsString() ?? string.Empty,
-                        Family = door.Symbol?.Family?.Name ?? string.Empty,
-                        Type = door.Symbol?.Name ?? string.Empty,
+                        Family = familyName,
+                        Type = typeName,
                         Level = levelName,
                         FromRoom = fromRoom,
                         ToRoom = toRoom,
                         OpeningWidthMm = GetDoorWidthMm(door),
                         IsOnEgressPath = IsOnEgressPath(fromRoom, toRoom, door),
-                        IsMarkedAsFireDoor = IsMarkedAsFireDoor(door, fireRating),
-                        CurrentFireRating = fireRating
+                        IsMarkedAsFireDoor = isMarked,
+                        MarkSource = markSource,
+                        CurrentFireRating = currentRating,
+                        ScheduleNote = scheduleNote ?? string.Empty,
                     });
                 }
 
                 ResultInfo = new CheckFireDoorsResult
                 {
                     Success = true,
-                    Message = $"Collected fire-door facts for {items.Count} doors.",
+                    Message = $"Collected fire-door facts for {items.Count} doors"
+                        + (scheduleRows.Count > 0
+                            ? $" (schedule notes: {scheduleRows.Count} rows)."
+                            : "."),
                     TotalDoors = items.Count,
-                    Doors = items
+                    Doors = items,
+                    Warnings = warnings,
                 };
             }
             catch (Exception ex)
@@ -100,7 +169,7 @@ namespace RevitMCPCommandSet.Services.Normatives
 
         public string GetName() => "Check Fire Doors";
 
-        internal static bool IsOnEgressPath(string fromRoom, string toRoom, FamilyInstance? door)
+        internal static bool IsOnEgressPath(string fromRoom, string toRoom, FamilyInstance door)
         {
             if (ContainsEgressKeyword(fromRoom) || ContainsEgressKeyword(toRoom))
                 return true;
@@ -190,58 +259,51 @@ namespace RevitMCPCommandSet.Services.Normatives
                 || normalized.Contains("living");
         }
 
-        internal static string ReadFireRating(FamilyInstance door)
+        /// <summary>
+        /// Reads dedicated fire-rating / EI parameters only (not Yes/No, not notes).
+        /// </summary>
+        internal static string ReadParameterFireRating(FamilyInstance door)
         {
-            var candidates = new[]
+            foreach (var name in FireRatingParameterNames)
             {
-                "ADSK_Предел огнестойкости экземпляра",
-                "ADSK_Предел огнестойкости",
-                "Fire Rating",
-                "Противопожарность",
-                "Противопожарная",
-                "Огнестойкость",
-                "EI",
-                "Предел огнестойкости",
-                "BI_примечание",
-                "ADSK_Примечание"
-            };
-
-            foreach (var name in candidates)
-            {
-                var parameter = door.LookupParameter(name)
-                    ?? door.Symbol?.LookupParameter(name);
-                if (parameter == null || !parameter.HasValue)
-                    continue;
-
-                var display = parameter.AsValueString();
-                if (!string.IsNullOrWhiteSpace(display))
-                    return display;
-
-                if (parameter.StorageType == StorageType.String)
-                {
-                    var raw = parameter.AsString();
-                    if (!string.IsNullOrWhiteSpace(raw))
-                        return raw;
-                }
+                var value = ReadParameterText(door, name);
+                if (!string.IsNullOrWhiteSpace(value) && LooksLikeRatingValue(value))
+                    return value;
             }
 
             var familyName = door.Symbol?.Family?.Name ?? string.Empty;
             var typeName = door.Symbol?.Name ?? string.Empty;
             var combined = $"{familyName} {typeName}".ToLowerInvariant();
-            if (combined.Contains("противопожар") || combined.Contains("ei") || combined.Contains("fire"))
+            if (combined.Contains("противопожар")
+                || System.Text.RegularExpressions.Regex.IsMatch(combined, @"\bei[\s\-]*\d+")
+                || combined.Contains("fire"))
+            {
                 return typeName;
+            }
 
             return string.Empty;
         }
 
+        /// <summary>Legacy alias used by tests / callers expecting combined rating text.</summary>
+        internal static string ReadFireRating(FamilyInstance door)
+        {
+            var rating = ReadParameterFireRating(door);
+            if (!string.IsNullOrWhiteSpace(rating))
+                return rating;
+
+            return ReadNoteParameters(door);
+        }
+
         internal static bool IsMarkedAsFireDoor(FamilyInstance door, string fireRating)
         {
-            if (!string.IsNullOrWhiteSpace(fireRating))
-            {
-                var normalized = fireRating.ToLowerInvariant();
-                if (normalized.Contains("ei") || normalized.Contains("противопожар") || normalized.Contains("fire"))
-                    return true;
-            }
+            return IsMarkedFromParameters(door, fireRating)
+                   || FireDoorScheduleNoteReader.LooksLikeFireDoorText(ReadNoteParameters(door));
+        }
+
+        internal static bool IsMarkedFromParameters(FamilyInstance door, string fireRating)
+        {
+            if (FireDoorScheduleNoteReader.LooksLikeFireDoorText(fireRating))
+                return true;
 
             var yesNoParameter = door.LookupParameter("Противопожарная")
                 ?? door.Symbol?.LookupParameter("Противопожарная");
@@ -256,6 +318,89 @@ namespace RevitMCPCommandSet.Services.Normatives
             }
 
             return false;
+        }
+
+        internal static string ReadNoteParameters(FamilyInstance door)
+        {
+            foreach (var name in NoteParameterNames)
+            {
+                var value = ReadParameterText(door, name);
+                if (!string.IsNullOrWhiteSpace(value))
+                    return value;
+            }
+
+            var typeComments = door.Symbol?.get_Parameter(BuiltInParameter.ALL_MODEL_TYPE_COMMENTS)
+                ?.AsString();
+            if (!string.IsNullOrWhiteSpace(typeComments))
+                return typeComments!;
+
+            var instanceComments = door.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)
+                ?.AsString();
+            if (!string.IsNullOrWhiteSpace(instanceComments))
+                return instanceComments!;
+
+            return string.Empty;
+        }
+
+        private static string ReadParameterText(FamilyInstance door, string name)
+        {
+            var parameter = door.LookupParameter(name) ?? door.Symbol?.LookupParameter(name);
+            if (parameter == null || !parameter.HasValue)
+                return string.Empty;
+
+            // Skip Yes/No falsely treated as rating text
+            if (parameter.StorageType == StorageType.Integer
+                && (name.Contains("Противопож", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("Противопожарная", StringComparison.OrdinalIgnoreCase)))
+            {
+                return string.Empty;
+            }
+
+            var display = parameter.AsValueString();
+            if (!string.IsNullOrWhiteSpace(display))
+                return display!;
+
+            if (parameter.StorageType == StorageType.String)
+            {
+                var raw = parameter.AsString();
+                if (!string.IsNullOrWhiteSpace(raw))
+                    return raw!;
+            }
+
+            return string.Empty;
+        }
+
+        private static bool LooksLikeRatingValue(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return false;
+
+            var normalized = value.ToLowerInvariant().Trim();
+            if (normalized is "нет" or "no" or "0" or "-" or "—")
+                return false;
+
+            return FireDoorScheduleNoteReader.LooksLikeFireDoorText(value)
+                   || System.Text.RegularExpressions.Regex.IsMatch(normalized, @"\bei\b");
+        }
+
+        internal static string ExtractFireRatingSnippet(string note)
+        {
+            if (string.IsNullOrWhiteSpace(note))
+                return string.Empty;
+
+            var match = System.Text.RegularExpressions.Regex.Match(
+                note,
+                @"EI[\s\-]*\d+",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (match.Success)
+                return System.Text.RegularExpressions.Regex
+                    .Replace(match.Value, @"[\s\-]+", string.Empty)
+                    .ToUpperInvariant();
+
+            if (note.IndexOf("противопожар", StringComparison.OrdinalIgnoreCase) >= 0)
+                return "противопожарная";
+
+            return note.Length <= 80 ? note : note.Substring(0, 80);
         }
 
         private static double? GetDoorWidthMm(FamilyInstance door)

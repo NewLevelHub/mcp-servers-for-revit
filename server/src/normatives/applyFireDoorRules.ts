@@ -1,5 +1,7 @@
 import type { FireDoorNormRule, FireDoorScenario } from "./fireDoorRules.js";
 
+export type FireDoorMarkSource = "none" | "parameter" | "schedule_note" | "both";
+
 export interface DoorFireFacts {
   id: number;
   uniqueId: string;
@@ -12,7 +14,11 @@ export interface DoorFireFacts {
   openingWidthMm?: number | null;
   isOnEgressPath: boolean;
   isMarkedAsFireDoor: boolean;
+  /** Where ПД mark was found: parameter | schedule_note | both | none */
+  markSource: FireDoorMarkSource;
   currentFireRating: string;
+  /** Note text from door schedule «Примечание» (REV-47). */
+  scheduleNote: string;
 }
 
 export interface FireDoorCheckItem extends DoorFireFacts {
@@ -163,9 +169,13 @@ export function applyFireDoorRules(
     const scenarios = detectDoorScenarios(door);
     const matchedRule = pickRuleForScenarios(scenarios, rules);
     const requiresFireDoor = matchedRule !== null && scenarios.length > 0;
+    const markSource = door.markSource ?? "none";
+    const scheduleNote = door.scheduleNote ?? "";
 
     return {
       ...door,
+      markSource,
+      scheduleNote,
       requiresFireDoor,
       ruleId: matchedRule?.id ?? "",
       reason: matchedRule?.reason ?? "",

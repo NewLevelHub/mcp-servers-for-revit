@@ -7,6 +7,11 @@ import {
   loadFireDoorRulesFromNormatives,
 } from "../normatives/fireDoorRules.js";
 
+const markSourceSchema = z
+  .enum(["none", "parameter", "schedule_note", "both"])
+  .optional()
+  .default("none");
+
 const doorFireFactsSchema = z.object({
   id: z.number(),
   uniqueId: z.string(),
@@ -19,7 +24,9 @@ const doorFireFactsSchema = z.object({
   openingWidthMm: z.number().nullable().optional(),
   isOnEgressPath: z.boolean(),
   isMarkedAsFireDoor: z.boolean(),
+  markSource: markSourceSchema,
   currentFireRating: z.string(),
+  scheduleNote: z.string().optional().default(""),
 });
 
 const rawCheckResultSchema = z.object({
@@ -27,6 +34,7 @@ const rawCheckResultSchema = z.object({
   message: z.string(),
   totalDoors: z.number(),
   doors: z.array(doorFireFactsSchema),
+  warnings: z.array(z.string()).optional().default([]),
 });
 
 const normativeSourceSchema = z.object({
@@ -112,6 +120,22 @@ export function formatFireDoorReport(result: CheckFireDoorsResult): string {
     if (door.currentFireRating) {
       lines.push(`  - Текущая маркировка: ${door.currentFireRating}`);
     }
+    if (door.markSource && door.markSource !== "none") {
+      const sourceLabel =
+        door.markSource === "parameter"
+          ? "parameter (свойства двери)"
+          : door.markSource === "schedule_note"
+            ? "schedule_note (примечание спеки)"
+            : "both (свойства + спека)";
+      lines.push(`  - Источник ПД: ${sourceLabel}`);
+    }
+    if (door.scheduleNote) {
+      const snippet =
+        door.scheduleNote.length > 120
+          ? `${door.scheduleNote.slice(0, 120)}…`
+          : door.scheduleNote;
+      lines.push(`  - Примечание спеки: «${snippet}»`);
+    }
     lines.push(``);
   }
 
@@ -177,7 +201,7 @@ async function writeFireDoorMarks(
 export function registerCheckFireDoorsTool(server: McpServer) {
   server.tool(
     "check_fire_doors",
-    "Pilot normative check: reads fire-door rules from repo/normatives PDFs (ГОСТ/СП/СН РК), compares with Revit doors, returns report or writes marks via set_element_parameter.",
+    "Pilot normative check: reads fire-door rules from repo/normatives PDFs (ГОСТ/СП/СН РК), compares with Revit doors (parameters + door-schedule «Примечание», REV-47), returns report or writes marks via set_element_parameter. Report markSource: parameter | schedule_note | both.",
     {
       mode: z
         .enum(["report", "write"])
@@ -245,6 +269,10 @@ export function registerCheckFireDoorsTool(server: McpServer) {
         const pdfFiles =
           args.normativePdfFiles ??
           (args.scanAllNormativePdfs ? ["*"] : [...DEFAULT_FIRE_DOOR_PDF_FILES]);
+        const mergedWarnings = [
+          ...(warnings ?? []),
+          ...(raw.warnings ?? []),
+        ];
 
         const result: CheckFireDoorsResult = {
           success: true,
@@ -257,7 +285,7 @@ export function registerCheckFireDoorsTool(server: McpServer) {
           normativesDir,
           normativePdfFiles: pdfFiles,
           appliedRuleCount: rules.length,
-          warnings,
+          warnings: mergedWarnings,
         };
 
         let writeResults:
