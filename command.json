@@ -100,7 +100,12 @@
     },
     {
       "commandName": "validate_schedule",
-      "description": "Compare schedule element counts against model elements for Doors, Windows, or Floors (doors/windows exclude slopes and accessories)",
+      "description": "Compare schedule element counts against model elements for Doors, Windows, Floors, or CurtainWalls (doors/windows exclude slopes; curtain walls count systems, not panels)",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "create_curtain_wall_schedule",
+      "description": "Export structured curtain wall (витражи) schedule data: wall systems by Curtain type with mark, length x height, level, and count — panels and mullions excluded",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {

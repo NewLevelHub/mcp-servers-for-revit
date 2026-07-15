@@ -2,15 +2,15 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { withRevitConnection } from "../utils/ConnectionManager.js";
 
-const categorySchema = z.enum(["Doors", "Windows", "Floors"]);
+const categorySchema = z.enum(["Doors", "Windows", "Floors", "CurtainWalls"]);
 
 export function registerValidateScheduleTool(server: McpServer) {
   server.tool(
     "validate_schedule",
-    "Compare a Revit schedule against model elements for Doors, Windows, or Floors. For Doors/Windows, model side excludes slopes/reveals and similar accessories (same filter as create_door_schedule / create_window_schedule). Returns modelCount, scheduleCount, diff, and missingIds for elements present in the model but absent from the schedule. Optionally filter by schedule name and/or level.",
+    "Compare a Revit schedule against model elements for Doors, Windows, Floors, or CurtainWalls. For Doors/Windows, model side excludes slopes/reveals and similar accessories (same filter as create_door_schedule / create_window_schedule). CurtainWalls counts curtain wall SYSTEMS (Wall elements with a Curtain type, e.g. '(витражи)*'), not panels/mullions, and by default matches against the dedicated curtain wall schedule ('Спецификация витражей') rather than generic wall schedules. Returns modelCount, scheduleCount, diff, and missingIds for elements present in the model but absent from the schedule. Optionally filter by schedule name and/or level.",
     {
       category: categorySchema.describe(
-        "Element category to validate: Doors, Windows, or Floors."
+        "Element category to validate: Doors, Windows, Floors, or CurtainWalls (витражи — curtain wall systems)."
       ),
       scheduleName: z
         .string()
