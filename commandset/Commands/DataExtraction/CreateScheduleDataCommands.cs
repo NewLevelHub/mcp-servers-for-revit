@@ -63,4 +63,37 @@ namespace RevitMCPCommandSet.Commands.DataExtraction
 
         public CreateFloorScheduleCommand(UIApplication uiApp) : base(uiApp) { }
     }
+
+    public class CreateCurtainWallScheduleCommand : ExternalEventCommandBase
+    {
+        private CreateScheduleDataEventHandler _handler => (CreateScheduleDataEventHandler)Handler;
+
+        public override string CommandName => "create_curtain_wall_schedule";
+
+        public CreateCurtainWallScheduleCommand(UIApplication uiApp)
+            : base(new CreateScheduleDataEventHandler(), uiApp)
+        {
+        }
+
+        public override object Execute(JObject parameters, string requestId)
+        {
+            try
+            {
+                string typeNameFilter = parameters?["typeNameFilter"]?.Value<string>();
+
+                _handler.SetParameters(ScheduleElementCategory.CurtainWalls, typeNameFilter);
+
+                if (RaiseAndWaitForCompletion(120000))
+                {
+                    return _handler.ResultInfo;
+                }
+
+                throw new TimeoutException("Export curtain wall schedule timed out");
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Failed to export curtain wall schedule: {ex.Message}");
+            }
+        }
+    }
 }

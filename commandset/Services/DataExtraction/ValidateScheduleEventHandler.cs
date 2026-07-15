@@ -9,15 +9,29 @@ namespace RevitMCPCommandSet.Services.DataExtraction
 {
     public class ValidateScheduleEventHandler : IExternalEventHandler, IWaitableExternalEventHandler
     {
-        private static readonly Dictionary<string, BuiltInCategory> CategoryMap =
-            new Dictionary<string, BuiltInCategory>(StringComparer.OrdinalIgnoreCase)
+        private sealed class CategoryConfig
+        {
+            public BuiltInCategory BuiltInCategory { get; set; }
+
+            /// <summary>
+            ///     Curtain wall systems live in OST_Walls but are validated as their own
+            ///     pseudo-category (витражи в РД — не окна и не все стены).
+            /// </summary>
+            public bool CurtainWallsOnly { get; set; }
+        }
+
+        private static readonly Dictionary<string, CategoryConfig> CategoryMap =
+            new Dictionary<string, CategoryConfig>(StringComparer.OrdinalIgnoreCase)
             {
-                { "Doors", BuiltInCategory.OST_Doors },
-                { "Windows", BuiltInCategory.OST_Windows },
-                { "Floors", BuiltInCategory.OST_Floors },
-                { "OST_Doors", BuiltInCategory.OST_Doors },
-                { "OST_Windows", BuiltInCategory.OST_Windows },
-                { "OST_Floors", BuiltInCategory.OST_Floors },
+                { "Doors", new CategoryConfig { BuiltInCategory = BuiltInCategory.OST_Doors } },
+                { "Windows", new CategoryConfig { BuiltInCategory = BuiltInCategory.OST_Windows } },
+                { "Floors", new CategoryConfig { BuiltInCategory = BuiltInCategory.OST_Floors } },
+                { "OST_Doors", new CategoryConfig { BuiltInCategory = BuiltInCategory.OST_Doors } },
+                { "OST_Windows", new CategoryConfig { BuiltInCategory = BuiltInCategory.OST_Windows } },
+                { "OST_Floors", new CategoryConfig { BuiltInCategory = BuiltInCategory.OST_Floors } },
+                { "CurtainWalls", new CategoryConfig { BuiltInCategory = BuiltInCategory.OST_Walls, CurtainWallsOnly = true } },
+                { "CurtainWall", new CategoryConfig { BuiltInCategory = BuiltInCategory.OST_Walls, CurtainWallsOnly = true } },
+                { "Витражи", new CategoryConfig { BuiltInCategory = BuiltInCategory.OST_Walls, CurtainWallsOnly = true } },
             };
 
         private string _category;
@@ -53,17 +67,19 @@ namespace RevitMCPCommandSet.Services.DataExtraction
 
                 if (string.IsNullOrWhiteSpace(_category))
                 {
-                    throw new ArgumentException("Category is required. Supported values: Doors, Windows, Floors.");
+                    throw new ArgumentException(
+                        "Category is required. Supported values: Doors, Windows, Floors, CurtainWalls.");
                 }
 
-                if (!CategoryMap.TryGetValue(_category.Trim(), out var builtInCategory))
+                if (!CategoryMap.TryGetValue(_category.Trim(), out var categoryConfig))
                 {
                     throw new ArgumentException(
-                        $"Unsupported category '{_category}'. Supported values: Doors, Windows, Floors.");
+                        $"Unsupported category '{_category}'. Supported values: Doors, Windows, Floors, CurtainWalls.");
                 }
 
+                var builtInCategory = categoryConfig.BuiltInCategory;
                 var targetLevel = ResolveLevel(doc);
-                var schedule = FindSchedule(doc, builtInCategory, _scheduleName);
+                var schedule = FindSchedule(doc, categoryConfig, _scheduleName);
                 if (schedule == null)
                 {
                     var scheduleHint = string.IsNullOrWhiteSpace(_scheduleName)
@@ -72,8 +88,8 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                     throw new InvalidOperationException(scheduleHint);
                 }
 
-                var modelIds = CollectModelElementIds(doc, builtInCategory, targetLevel);
-                var scheduleIds = CollectScheduleElementIds(doc, schedule, targetLevel);
+                var modelIds = CollectModelElementIds(doc, categoryConfig, targetLevel);
+                var scheduleIds = CollectScheduleElementIds(doc, schedule, categoryConfig, targetLevel);
 
                 var missingIds = modelIds
                     .Except(scheduleIds)
@@ -157,7 +173,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             return null;
         }
 
-        private static ViewSchedule FindSchedule(Document doc, BuiltInCategory builtInCategory, string scheduleName)
+        private static ViewSchedule FindSchedule(Document doc, CategoryConfig categoryConfig, string scheduleName)
         {
             var schedules = new FilteredElementCollector(doc)
                 .OfClass(typeof(ViewSchedule))
@@ -171,29 +187,47 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                     schedule.Name.Equals(scheduleName.Trim(), StringComparison.OrdinalIgnoreCase));
             }
 
-            var category = Category.GetCategory(doc, builtInCategory);
-            return schedules.FirstOrDefault(schedule => schedule.Definition.CategoryId == category.Id);
+            var category = Category.GetCategory(doc, categoryConfig.BuiltInCategory);
+            var categorySchedules = schedules
+                .Where(schedule => schedule.Definition.CategoryId == category.Id)
+                .ToList();
+
+            if (categoryConfig.CurtainWallsOnly)
+            {
+                // Curtain wall specs are Walls-category schedules; prefer the dedicated
+                // 'Спецификация витражей' over generic wall schedules.
+                var curtainSchedule = categorySchedules.FirstOrDefault(schedule =>
+                    schedule.Name.IndexOf("витраж", StringComparison.OrdinalIgnoreCase) >= 0);
+                if (curtainSchedule != null)
+                    return curtainSchedule;
+            }
+
+            return categorySchedules.FirstOrDefault();
         }
 
-        private HashSet<ElementId> CollectModelElementIds(Document doc, BuiltInCategory builtInCategory, Level targetLevel)
+        private HashSet<ElementId> CollectModelElementIds(Document doc, CategoryConfig categoryConfig, Level targetLevel)
         {
             var elements = new FilteredElementCollector(doc)
-                .OfCategory(builtInCategory)
+                .OfCategory(categoryConfig.BuiltInCategory)
                 .WhereElementIsNotElementType()
                 .ToElements()
-                .Where(element => IsSchedulableModelElement(element, builtInCategory))
+                .Where(element => IsSchedulableModelElement(element, categoryConfig))
                 .ToList();
 
             return FilterElementsByLevel(doc, elements, targetLevel);
         }
 
         /// <summary>
-        /// Applies the same opening-fill filter as create_door_schedule / create_window_schedule
-        /// so validate_schedule does not report slopes as missing doors/windows (REV-41).
+        /// Applies the same filters as the export commands: opening-fill filter for
+        /// doors/windows (REV-41) and the curtain wall system filter for витражи —
+        /// only Wall elements with WallKind.Curtain count, never panels or mullions.
         /// </summary>
-        private static bool IsSchedulableModelElement(Element element, BuiltInCategory builtInCategory)
+        private static bool IsSchedulableModelElement(Element element, CategoryConfig categoryConfig)
         {
-            return builtInCategory switch
+            if (categoryConfig.CurtainWallsOnly)
+                return CurtainWallClassifier.IsCurtainWall(element);
+
+            return categoryConfig.BuiltInCategory switch
             {
                 BuiltInCategory.OST_Doors => OpeningFillClassifier.IsSchedulableDoor(element),
                 BuiltInCategory.OST_Windows => OpeningFillClassifier.IsSchedulableWindow(element),
@@ -201,11 +235,17 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             };
         }
 
-        private HashSet<ElementId> CollectScheduleElementIds(Document doc, ViewSchedule schedule, Level targetLevel)
+        private HashSet<ElementId> CollectScheduleElementIds(
+            Document doc,
+            ViewSchedule schedule,
+            CategoryConfig categoryConfig,
+            Level targetLevel)
         {
             var elements = new FilteredElementCollector(doc, schedule.Id)
                 .WhereElementIsNotElementType()
-                .ToElements();
+                .ToElements()
+                .Where(element => !categoryConfig.CurtainWallsOnly || CurtainWallClassifier.IsCurtainWall(element))
+                .ToList();
 
             return FilterElementsByLevel(doc, elements, targetLevel);
         }

@@ -9,14 +9,16 @@ namespace RevitMCPCommandSet.Services.DataExtraction
     public class CreateScheduleDataEventHandler : IExternalEventHandler, IWaitableExternalEventHandler
     {
         private ScheduleElementCategory _category;
+        private string _typeNameFilter;
 
         public ScheduleExportResult ResultInfo { get; private set; } = new ScheduleExportResult();
         public bool TaskCompleted { get; private set; }
         private readonly ManualResetEvent _resetEvent = new ManualResetEvent(false);
 
-        public void SetParameters(ScheduleElementCategory category)
+        public void SetParameters(ScheduleElementCategory category, string typeNameFilter = null)
         {
             _category = category;
+            _typeNameFilter = typeNameFilter;
             TaskCompleted = false;
             _resetEvent.Reset();
         }
@@ -37,6 +39,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                     ScheduleElementCategory.Doors => CollectDoorRows(doc),
                     ScheduleElementCategory.Windows => CollectWindowRows(doc),
                     ScheduleElementCategory.Floors => CollectFloorRows(doc),
+                    ScheduleElementCategory.CurtainWalls => CollectCurtainWallRows(doc, _typeNameFilter),
                     _ => new List<ScheduleInstanceRow>()
                 };
 
@@ -134,6 +137,55 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             }
 
             return rows;
+        }
+
+        /// <summary>
+        /// Curtain wall systems (витражи): one row per Wall element with WallKind.Curtain —
+        /// panels and mullions are never counted. Optional type-name filter narrows to
+        /// naming conventions such as '(витражи)*'.
+        /// </summary>
+        private static List<ScheduleInstanceRow> CollectCurtainWallRows(Document doc, string typeNameFilter)
+        {
+            var rows = new List<ScheduleInstanceRow>();
+            var curtainWalls = new FilteredElementCollector(doc)
+                .OfCategory(BuiltInCategory.OST_Walls)
+                .WhereElementIsNotElementType()
+                .OfClass(typeof(Wall))
+                .Cast<Wall>()
+                .Where(CurtainWallClassifier.IsCurtainWall)
+                .Where(wall => CurtainWallClassifier.MatchesTypeFilter(wall, typeNameFilter));
+
+            foreach (var wall in curtainWalls)
+            {
+                var wallType = wall.WallType;
+                var level = doc.GetElement(wall.LevelId) as Level;
+                rows.Add(new ScheduleInstanceRow
+                {
+                    ElementId = GetElementIdValue(wall.Id),
+                    Mark = GetElementMark(wall),
+                    FamilyName = wallType?.FamilyName ?? "",
+                    Type = wallType?.Name ?? "",
+                    Size = FormatCurtainWallSize(wall),
+                    Level = level?.Name ?? "No Level",
+                    TypeId = GetElementIdValue(wall.GetTypeId())
+                });
+            }
+
+            return rows;
+        }
+
+        private static string FormatCurtainWallSize(Wall wall)
+        {
+            double lengthFeet = (wall.Location as LocationCurve)?.Curve?.Length ?? 0;
+            double heightFeet = GetParameterDouble(wall, BuiltInParameter.WALL_USER_HEIGHT_PARAM);
+            if (heightFeet <= 0)
+            {
+                var bbox = wall.get_BoundingBox(null);
+                if (bbox != null)
+                    heightFeet = bbox.Max.Z - bbox.Min.Z;
+            }
+
+            return FormatWidthHeightMm(lengthFeet, heightFeet, wall.WallType?.Name);
         }
 
         private static List<ScheduleInstanceRow> CollectFamilyInstanceRows(
