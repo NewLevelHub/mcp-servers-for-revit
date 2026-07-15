@@ -59,6 +59,19 @@ public class TepTableRenderInfo
     public double RowHeight { get; set; } = 8;
 
     /// <summary>
+    ///     Height of the title block (основная надпись) zone reserved along the sheet bottom, mm.
+    /// </summary>
+    [JsonProperty("titleBlockReserveBottom")]
+    public double TitleBlockReserveBottom { get; set; } = 55;
+
+    /// <summary>
+    ///     When true, draw even if the table still overflows after auto-fit; Success stays false.
+    ///     When false (default), overflow sets Success=false after auto-fit attempts.
+    /// </summary>
+    [JsonProperty("allowOverflow")]
+    public bool AllowOverflow { get; set; }
+
+    /// <summary>
     ///     TextNoteType name for the title row (see get_document_styles)
     /// </summary>
     [JsonProperty("titleTextTypeName")]

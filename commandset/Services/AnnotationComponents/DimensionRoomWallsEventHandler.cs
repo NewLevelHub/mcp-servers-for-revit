@@ -65,7 +65,7 @@ public class DimensionRoomWallsEventHandler : IExternalEventHandler, IWaitableEx
                 var xChain = CreateChainDimension(
                     doc,
                     viewPlan,
-                    CollectChainReferences(edges, viewPlan, forXChain: true),
+                    CollectChainReferences(edges, viewPlan, roomCenter, forXChain: true),
                     forXChain: true,
                     bounds,
                     roomCenter,
@@ -76,7 +76,7 @@ public class DimensionRoomWallsEventHandler : IExternalEventHandler, IWaitableEx
                 var yChain = CreateChainDimension(
                     doc,
                     viewPlan,
-                    CollectChainReferences(edges, viewPlan, forXChain: false),
+                    CollectChainReferences(edges, viewPlan, roomCenter, forXChain: false),
                     forXChain: false,
                     bounds,
                     roomCenter,
@@ -223,6 +223,7 @@ public class DimensionRoomWallsEventHandler : IExternalEventHandler, IWaitableEx
     private static List<(double Key, Reference Ref)> CollectChainReferences(
         List<BoundaryEdge> edges,
         View view,
+        XYZ roomCenter,
         bool forXChain)
     {
         var references = new List<(double Key, Reference Ref)>();
@@ -237,22 +238,19 @@ public class DimensionRoomWallsEventHandler : IExternalEventHandler, IWaitableEx
 
             var start = edge.Curve.GetEndPoint(0);
             var end = edge.Curve.GetEndPoint(1);
+            // Key = wall position along measure axis (midpoint); reference = inner (room-side) face.
+            var key = forXChain
+                ? (start.X + end.X) / 2.0
+                : (start.Y + end.Y) / 2.0;
 
-            var startRef = DimensionAnnotationHelper.GetBestWallReference(
+            var wallRef = DimensionAnnotationHelper.GetBestWallReference(
                 edge.Wall,
                 view,
                 measureDirection,
-                start);
-            var endRef = DimensionAnnotationHelper.GetBestWallReference(
-                edge.Wall,
-                view,
-                measureDirection,
-                end);
+                roomCenter);
 
-            if (startRef != null)
-                TryAddReference(references, forXChain ? start.X : start.Y, startRef);
-            if (endRef != null)
-                TryAddReference(references, forXChain ? end.X : end.Y, endRef);
+            if (wallRef != null)
+                TryAddReference(references, key, wallRef);
         }
 
         return references;

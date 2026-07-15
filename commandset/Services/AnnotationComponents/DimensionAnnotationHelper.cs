@@ -1,5 +1,4 @@
 using Autodesk.Revit.DB;
-using Autodesk.Revit.DB;
 using RevitMCPCommandSet.Models.Common;
 
 namespace RevitMCPCommandSet.Services.AnnotationComponents;
@@ -146,10 +145,155 @@ public static class DimensionAnnotationHelper
         return refs.Count > 0 ? refs[0] : null;
     }
 
-    public static Reference GetBestWallReference(Wall wall, View view, XYZ measureDirection, XYZ _)
+    /// <summary>
+    ///     Prefer the wall face on the room side (inner finish face): among vertical planar
+    ///     faces aligned with <paramref name="measureDirection"/>, pick the one closest to
+    ///     <paramref name="preferNearPoint"/> (typically the room center). This keeps clear
+    ///     room dimensions from starting outside or through the wall thickness.
+    /// </summary>
+    public static Reference GetBestWallReference(
+        Wall wall,
+        View view,
+        XYZ measureDirection,
+        XYZ preferNearPoint)
     {
+        var roomSide = FindRoomSideWallFace(wall, view, measureDirection, preferNearPoint);
+        if (roomSide != null)
+            return roomSide;
+
         var refs = GetReferences(wall, view, measureDirection);
         return refs.Count > 0 ? refs[0] : null;
+    }
+
+    public static Reference FindRoomSideWallFace(
+        Wall wall,
+        View view,
+        XYZ measureDirection,
+        XYZ preferNearPoint)
+    {
+        if (wall == null || preferNearPoint == null)
+            return null;
+
+        Reference bestRef = null;
+        var bestDistance = double.MaxValue;
+        var bestAlignment = -1.0;
+
+        foreach (var reference in EnumerateWallSideFaceReferences(wall))
+        {
+            if (wall.GetGeometryObjectFromReference(reference) is not PlanarFace planarFace)
+                continue;
+
+            var normal = planarFace.FaceNormal;
+            if (Math.Abs(normal.Z) > 0.9)
+                continue;
+
+            var alignment = measureDirection == null
+                ? 1.0
+                : Math.Abs(normal.DotProduct(measureDirection));
+            if (alignment < 0.85)
+                continue;
+
+            var facePoint = planarFace.Origin;
+            var distance = preferNearPoint.DistanceTo(
+                new XYZ(facePoint.X, facePoint.Y, preferNearPoint.Z));
+
+            // Prefer better alignment, then closer to the room interior.
+            if (alignment > bestAlignment + 1e-6
+                || (Math.Abs(alignment - bestAlignment) <= 1e-6 && distance < bestDistance))
+            {
+                bestAlignment = alignment;
+                bestDistance = distance;
+                bestRef = reference;
+            }
+        }
+
+        if (bestRef != null)
+            return bestRef;
+
+        // Fall back to view geometry when side-face API yielded nothing usable.
+        return FindRoomSideFaceFromGeometry(wall, view, measureDirection, preferNearPoint);
+    }
+
+    private static IEnumerable<Reference> EnumerateWallSideFaceReferences(Wall wall)
+    {
+        foreach (var layer in new[] { ShellLayerType.Interior, ShellLayerType.Exterior })
+        {
+            IList<Reference> faces;
+            try
+            {
+                faces = HostObjectUtils.GetSideFaces(wall, layer);
+            }
+            catch
+            {
+                continue;
+            }
+
+            if (faces == null)
+                continue;
+
+            foreach (var face in faces)
+            {
+                if (face != null)
+                    yield return face;
+            }
+        }
+    }
+
+    private static Reference FindRoomSideFaceFromGeometry(
+        Wall wall,
+        View view,
+        XYZ measureDirection,
+        XYZ preferNearPoint)
+    {
+        var options = new Options
+        {
+            View = view,
+            ComputeReferences = true
+        };
+
+        var geometry = wall.get_Geometry(options);
+        if (geometry == null)
+            return null;
+
+        Reference bestRef = null;
+        var bestDistance = double.MaxValue;
+        var bestAlignment = -1.0;
+
+        foreach (var obj in geometry)
+        {
+            if (obj is not Solid solid || solid.Faces.Size <= 0)
+                continue;
+
+            foreach (Face face in solid.Faces)
+            {
+                if (face is not PlanarFace planarFace || face.Reference == null)
+                    continue;
+
+                var normal = planarFace.FaceNormal;
+                if (Math.Abs(normal.Z) > 0.9)
+                    continue;
+
+                var alignment = measureDirection == null
+                    ? 1.0
+                    : Math.Abs(normal.DotProduct(measureDirection));
+                if (alignment < 0.85)
+                    continue;
+
+                var facePoint = planarFace.Origin;
+                var distance = preferNearPoint.DistanceTo(
+                    new XYZ(facePoint.X, facePoint.Y, preferNearPoint.Z));
+
+                if (alignment > bestAlignment + 1e-6
+                    || (Math.Abs(alignment - bestAlignment) <= 1e-6 && distance < bestDistance))
+                {
+                    bestAlignment = alignment;
+                    bestDistance = distance;
+                    bestRef = face.Reference;
+                }
+            }
+        }
+
+        return bestRef;
     }
 
     public static List<Reference> GetReferences(Element element, View view, XYZ dimensionDirection = null)
