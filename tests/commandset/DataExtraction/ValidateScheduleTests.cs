@@ -140,6 +140,7 @@ public class ValidateScheduleTests : RevitApiTest
         {
             BuiltInCategory.OST_Doors => OpeningFillClassifier.IsSchedulableDoor(element),
             BuiltInCategory.OST_Windows => OpeningFillClassifier.IsSchedulableWindow(element),
+            BuiltInCategory.OST_Floors => element is Floor floor && FloorFinishClassifier.IsFloorFinish(floor),
             _ => true
         };
     }

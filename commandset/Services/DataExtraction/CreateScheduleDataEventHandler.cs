@@ -48,41 +48,29 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                     .ThenBy(i => i.Id)
                     .ToList();
 
-                var groups = instanceRows
-                    .GroupBy(r => new { r.TypeId, r.Level, r.Size, r.Type, r.FamilyName })
-                    .Select(g =>
-                    {
-                        var elementIds = g.Select(x => x.ElementId).OrderBy(id => id).ToList();
-                        var unmarkedCount = g.Count(x => string.IsNullOrWhiteSpace(x.Mark));
-                        return new ScheduleGroupRow
-                        {
-                            TypeId = g.Key.TypeId,
-                            FamilyName = g.Key.FamilyName,
-                            Type = g.Key.Type,
-                            Size = g.Key.Size,
-                            Level = g.Key.Level,
-                            Count = g.Count(),
-                            UnmarkedCount = unmarkedCount,
-                            ElementIds = elementIds,
-                            Mark = BuildGroupMark(g.Select(x => x.Mark))
-                        };
-                    })
-                    .OrderBy(g => g.Level)
-                    .ThenBy(g => g.FamilyName)
-                    .ThenBy(g => g.Type)
-                    .ToList();
+                var groups = _category == ScheduleElementCategory.Floors
+                    ? BuildFloorGroups(instanceRows)
+                    : BuildDefaultGroups(instanceRows);
 
                 var totalUnmarked = instanceRows.Count(r => string.IsNullOrWhiteSpace(r.Mark));
+                double? totalAreaM2 = _category == ScheduleElementCategory.Floors
+                    ? Math.Round(instanceRows.Sum(r => r.AreaM2 ?? 0), 2)
+                    : (double?)null;
+
+                var message = _category == ScheduleElementCategory.Floors
+                    ? $"Successfully exported floor finish экспликация: {instanceRows.Count} floors, {totalAreaM2:0.##} m² in {groups.Count} type/level groups ({totalUnmarked} without mark)"
+                    : $"Successfully exported {instanceRows.Count} {_category.ToString().ToLowerInvariant()} in {groups.Count} groups ({totalUnmarked} without mark)";
 
                 ResultInfo = new ScheduleExportResult
                 {
                     Category = _category.ToString().ToLowerInvariant(),
                     TotalCount = instanceRows.Count,
                     UnmarkedCount = totalUnmarked,
+                    TotalAreaM2 = totalAreaM2,
                     Instances = instances,
                     Groups = groups,
                     Success = true,
-                    Message = $"Successfully exported {instanceRows.Count} {_category.ToString().ToLowerInvariant()} in {groups.Count} groups ({totalUnmarked} without mark)"
+                    Message = message
                 };
             }
             catch (Exception ex)
@@ -109,6 +97,9 @@ namespace RevitMCPCommandSet.Services.DataExtraction
         private static List<ScheduleInstanceRow> CollectWindowRows(Document doc) =>
             CollectFamilyInstanceRows(doc, BuiltInCategory.OST_Windows, GetWindowSize, OpeningFillClassifier.IsSchedulableWindow);
 
+        /// <summary>
+        /// Floor finish экспликация only: excludes slabs / ceiling insulation / facade (REV-49).
+        /// </summary>
         private static List<ScheduleInstanceRow> CollectFloorRows(Document doc)
         {
             var rows = new List<ScheduleInstanceRow>();
@@ -120,16 +111,24 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             foreach (var floor in floors)
             {
                 var floorType = doc.GetElement(floor.GetTypeId()) as FloorType;
+                var typeName = floorType?.Name ?? "";
+                var familyName = floorType?.FamilyName ?? "";
+                if (!FloorFinishClassifier.IsFloorFinish(typeName, familyName))
+                    continue;
+
                 var level = doc.GetElement(floor.LevelId) as Level;
+                var areaM2 = GetFloorAreaM2(floor);
                 rows.Add(new ScheduleInstanceRow
                 {
                     ElementId = GetElementIdValue(floor.Id),
                     Mark = GetElementMark(floor),
-                    FamilyName = floorType?.FamilyName ?? "",
-                    Type = floorType?.Name ?? "",
-                    Size = FormatFloorSize(floor),
+                    FamilyName = familyName,
+                    Type = typeName,
+                    Size = areaM2 > 0 ? $"{Math.Round(areaM2, 2)} m²" : "",
+                    AreaM2 = Math.Round(areaM2, 2),
                     Level = level?.Name ?? "No Level",
-                    TypeId = GetElementIdValue(floor.GetTypeId())
+                    TypeId = GetElementIdValue(floor.GetTypeId()),
+                    Layers = BuildFloorLayers(doc, floorType)
                 });
             }
 
@@ -168,6 +167,66 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             return rows;
         }
 
+        private static List<ScheduleGroupRow> BuildDefaultGroups(List<ScheduleInstanceRow> instanceRows)
+        {
+            return instanceRows
+                .GroupBy(r => new { r.TypeId, r.Level, r.Size, r.Type, r.FamilyName })
+                .Select(g =>
+                {
+                    var elementIds = g.Select(x => x.ElementId).OrderBy(id => id).ToList();
+                    var unmarkedCount = g.Count(x => string.IsNullOrWhiteSpace(x.Mark));
+                    return new ScheduleGroupRow
+                    {
+                        TypeId = g.Key.TypeId,
+                        FamilyName = g.Key.FamilyName,
+                        Type = g.Key.Type,
+                        Size = g.Key.Size,
+                        Level = g.Key.Level,
+                        Count = g.Count(),
+                        UnmarkedCount = unmarkedCount,
+                        ElementIds = elementIds,
+                        Mark = BuildGroupMark(g.Select(x => x.Mark))
+                    };
+                })
+                .OrderBy(g => g.Level)
+                .ThenBy(g => g.FamilyName)
+                .ThenBy(g => g.Type)
+                .ToList();
+        }
+
+        /// <summary>
+        /// Group floor finishes by type + level and sum areas (экспликация), not by per-instance size.
+        /// </summary>
+        private static List<ScheduleGroupRow> BuildFloorGroups(List<ScheduleInstanceRow> instanceRows)
+        {
+            return instanceRows
+                .GroupBy(r => new { r.TypeId, r.Level, r.Type, r.FamilyName })
+                .Select(g =>
+                {
+                    var areaM2 = Math.Round(g.Sum(x => x.AreaM2 ?? 0), 2);
+                    var elementIds = g.Select(x => x.ElementId).OrderBy(id => id).ToList();
+                    var unmarkedCount = g.Count(x => string.IsNullOrWhiteSpace(x.Mark));
+                    var layers = g.Select(x => x.Layers).FirstOrDefault(l => l != null && l.Count > 0);
+                    return new ScheduleGroupRow
+                    {
+                        TypeId = g.Key.TypeId,
+                        FamilyName = g.Key.FamilyName,
+                        Type = g.Key.Type,
+                        Size = areaM2 > 0 ? $"{areaM2} m²" : "",
+                        AreaM2 = areaM2,
+                        Level = g.Key.Level,
+                        Count = g.Count(),
+                        UnmarkedCount = unmarkedCount,
+                        ElementIds = elementIds,
+                        Mark = BuildGroupMark(g.Select(x => x.Mark)),
+                        Layers = layers
+                    };
+                })
+                .OrderBy(g => g.Level)
+                .ThenBy(g => g.Type)
+                .ToList();
+        }
+
         private static ScheduleInstanceExport ToInstanceExport(ScheduleInstanceRow row) =>
             new ScheduleInstanceExport
             {
@@ -177,7 +236,9 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                 Type = row.Type,
                 Size = row.Size,
                 Level = row.Level,
-                TypeId = row.TypeId
+                TypeId = row.TypeId,
+                AreaM2 = row.AreaM2,
+                Layers = row.Layers
             };
 
         private static string GetDoorSize(FamilyInstance instance)
@@ -208,16 +269,38 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             return fallback ?? "";
         }
 
-        private static string FormatFloorSize(Floor floor)
+        private static double GetFloorAreaM2(Floor floor)
         {
-            double areaSqFt = floor.get_Parameter(BuiltInParameter.HOST_AREA_COMPUTED)?.AsDouble() ?? 0;
-            if (areaSqFt > 0)
+            double areaInternal = floor.get_Parameter(BuiltInParameter.HOST_AREA_COMPUTED)?.AsDouble() ?? 0;
+            return areaInternal > 0 ? RevitUnitConversion.ToSquareMeters(areaInternal) : 0;
+        }
+
+        private static List<FloorLayerExport> BuildFloorLayers(Document doc, FloorType floorType)
+        {
+            var structure = floorType?.GetCompoundStructure();
+            if (structure == null)
+                return null;
+
+            var layers = new List<FloorLayerExport>();
+            for (int i = 0; i < structure.LayerCount; i++)
             {
-                double areaM2 = areaSqFt * 0.09290304;
-                return $"{Math.Round(areaM2, 2)} m²";
+                var layer = structure.GetLayers()[i];
+                var materialName = "";
+                if (layer.MaterialId != null && layer.MaterialId != ElementId.InvalidElementId)
+                {
+                    var material = doc.GetElement(layer.MaterialId) as Material;
+                    materialName = material?.Name ?? "";
+                }
+
+                layers.Add(new FloorLayerExport
+                {
+                    Function = layer.Function.ToString(),
+                    Material = materialName,
+                    ThicknessMm = Math.Round(RevitUnitConversion.ToMillimeters(layer.Width), 1)
+                });
             }
 
-            return "";
+            return layers.Count > 0 ? layers : null;
         }
 
         private static string GetInstanceLevelName(Document doc, FamilyInstance instance)
@@ -295,8 +378,10 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             public string FamilyName { get; set; } = "";
             public string Type { get; set; } = "";
             public string Size { get; set; } = "";
+            public double? AreaM2 { get; set; }
             public string Level { get; set; } = "";
             public long TypeId { get; set; }
+            public List<FloorLayerExport> Layers { get; set; }
         }
     }
 }

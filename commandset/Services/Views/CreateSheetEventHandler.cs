@@ -109,17 +109,31 @@ public class CreateSheetEventHandler : IExternalEventHandler, IWaitableExternalE
                 $"Title block '{info.TitleBlockFamilyName}' / '{info.TitleBlockTypeName}' was not found.");
         }
 
-        var fallback = new FilteredElementCollector(doc)
+        var symbols = new FilteredElementCollector(doc)
             .OfCategory(BuiltInCategory.OST_TitleBlocks)
             .OfClass(typeof(FamilySymbol))
             .Cast<FamilySymbol>()
-            .FirstOrDefault();
+            .ToList();
 
-        if (fallback == null)
+        if (symbols.Count == 0)
             throw new InvalidOperationException("No title block types are loaded in the project.");
 
-        warnings.Add($"Using default title block '{fallback.FamilyName} - {fallback.Name}'.");
-        return EnsureTitleBlockActive(doc, fallback);
+        // Prefer основная надпись (working sheets), never ADSK_Титул / cover sheets.
+        var preferred = symbols.FirstOrDefault(s =>
+            s.FamilyName.IndexOf("ОсновнаяНадпись", StringComparison.OrdinalIgnoreCase) >= 0
+            || s.FamilyName.IndexOf("основная надпись", StringComparison.OrdinalIgnoreCase) >= 0);
+
+        if (preferred == null)
+        {
+            preferred = symbols.FirstOrDefault(s =>
+                s.FamilyName.IndexOf("Титул", StringComparison.OrdinalIgnoreCase) < 0
+                && s.FamilyName.IndexOf("Начальный", StringComparison.OrdinalIgnoreCase) < 0);
+        }
+
+        preferred ??= symbols.First();
+
+        warnings.Add($"Using default title block '{preferred.FamilyName} - {preferred.Name}'.");
+        return EnsureTitleBlockActive(doc, preferred);
     }
 
     private static FamilySymbol FindTitleBlockByName(

@@ -7,7 +7,7 @@ const categorySchema = z.enum(["Doors", "Windows", "Floors"]);
 export function registerValidateScheduleTool(server: McpServer) {
   server.tool(
     "validate_schedule",
-    "Compare a Revit schedule against model elements for Doors, Windows, or Floors. For Doors/Windows, model side excludes slopes/reveals and similar accessories (same filter as create_door_schedule / create_window_schedule). Returns modelCount, scheduleCount, diff, and missingIds for elements present in the model but absent from the schedule. Optionally filter by schedule name and/or level.",
+    "Compare a Revit schedule against model elements for Doors, Windows, or Floors. For Doors/Windows, model side excludes slopes/reveals (same filter as create_door_schedule / create_window_schedule) and returns element id diffs. For Floors, compares finish-floor areas (m²) by type against an экспликация/area schedule — prefers schedules named экспликация/ведомость полов and skips key/style schedules; returns modelAreaM2, scheduleAreaM2, areaDiffM2, typeAreas. Optionally filter by schedule name and/or level.",
     {
       category: categorySchema.describe(
         "Element category to validate: Doors, Windows, or Floors."
@@ -16,7 +16,7 @@ export function registerValidateScheduleTool(server: McpServer) {
         .string()
         .optional()
         .describe(
-          "Optional schedule view name. If omitted, the first schedule for the category is used."
+          "Optional schedule view name. If omitted: Doors/Windows use first category schedule; Floors prefer экспликация/ведомость полов over key/style schedules."
         ),
       levelName: z
         .string()

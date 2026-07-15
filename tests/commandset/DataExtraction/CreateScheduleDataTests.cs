@@ -52,9 +52,18 @@ public class CreateScheduleDataTests : RevitApiTest
         int expected = new FilteredElementCollector(_doc)
             .OfCategory(BuiltInCategory.OST_Floors)
             .WhereElementIsNotElementType()
-            .GetElementCount();
+            .Cast<Floor>()
+            .Count(FloorFinishClassifier.IsFloorFinish);
 
         await Assert.That(expected).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task FloorFinishFilter_ExcludesSlabAndInsulationTypeNames()
+    {
+        await Assert.That(FloorFinishClassifier.IsFloorFinish("(полы)квартира_8_t=80")).IsTrue();
+        await Assert.That(FloorFinishClassifier.IsFloorFinish("(плита_перекрытия)железобетон_t=200")).IsFalse();
+        await Assert.That(FloorFinishClassifier.IsFloorFinish("(потолок_утеплитель)лоджия")).IsFalse();
     }
 
     [Test]

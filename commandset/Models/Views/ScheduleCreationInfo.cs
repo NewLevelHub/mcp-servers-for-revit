@@ -1,4 +1,4 @@
-﻿// 
+// 
 //                       RevitAPI-Solutions
 // Copyright (c) Duong Tran Quang (DTDucas) (baymax.contact@gmail.com)
 // 
@@ -95,6 +95,12 @@ public class ScheduleCreationInfo
     /// </summary>
     [JsonProperty("showOutlines")]
     public bool? ShowOutlines { get; set; } = true;
+
+    /// <summary>
+    ///     When false, identical type rows collapse and Area is summed (экспликация style).
+    /// </summary>
+    [JsonProperty("isItemized")]
+    public bool? IsItemized { get; set; }
 
     /// <summary>
     ///     Fields to include in the schedule
@@ -221,6 +227,12 @@ public class ScheduleFieldInfo
     /// </summary>
     [JsonProperty("useThousandSeparator")]
     public bool? UseThousandSeparator { get; set; }
+
+    /// <summary>
+    ///     When true (and schedule IsItemized=false), show summed totals instead of «&lt;варианты&gt;».
+    /// </summary>
+    [JsonProperty("hasTotals")]
+    public bool? HasTotals { get; set; }
 }
 
 /// <summary>
@@ -251,6 +263,12 @@ public class ScheduleFilterInfo
     /// </summary>
     [JsonProperty("filterValue")]
     public string FilterValue { get; set; } = string.Empty;
+
+    /// <summary>
+    ///     Optional ElementId filter value (e.g. Level). When set, used instead of filterValue.
+    /// </summary>
+    [JsonProperty("filterElementId")]
+    public long? FilterElementId { get; set; }
 }
 
 /// <summary>

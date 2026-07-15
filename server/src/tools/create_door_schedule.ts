@@ -68,6 +68,6 @@ export function registerCreateFloorScheduleTool(server: McpServer) {
     "create_floor_schedule",
     "create_floor_schedule",
     "floor",
-    "Export structured floor schedule data from the current Revit project. Returns all instances (including those without mark) plus rows grouped by family type with mark, type, size, level, elementIds, and count. Foundation for create_schedule and validate_schedule workflows."
+    "Export floor finish экспликация from the model: finish floors only (e.g. types (полы)*), excluding structural slabs, ceiling insulation, and facade floor-like types. Returns instances and groups by type/level with areaM2 (m²), optional compound layers, totalAreaM2, and count. Use this for floor area reports — not for counting all OST_Floors."
   );
 }
