@@ -7,10 +7,10 @@ import {
 
 const sampleResult: CheckFireDoorsResult = {
   success: true,
-  message: "Checked 3 doors; 2 require fire rating, 1 non-compliant.",
+  message: "Checked 4 doors; 3 require fire rating, 1 non-compliant.",
   mode: "report",
-  totalDoors: 3,
-  requiredFireDoors: 2,
+  totalDoors: 4,
+  requiredFireDoors: 3,
   nonCompliantCount: 1,
   doors: [
     {
@@ -35,6 +35,8 @@ const sampleResult: CheckFireDoorsResult = {
       },
       isMarkedAsFireDoor: false,
       currentFireRating: "",
+      markSource: "none",
+      scheduleNote: "",
       compliant: false,
     },
     {
@@ -59,6 +61,8 @@ const sampleResult: CheckFireDoorsResult = {
       },
       isMarkedAsFireDoor: true,
       currentFireRating: "EI30",
+      markSource: "parameter",
+      scheduleNote: "",
       compliant: true,
     },
     {
@@ -78,6 +82,34 @@ const sampleResult: CheckFireDoorsResult = {
       source: { document: "", clause: "", quote: "" },
       isMarkedAsFireDoor: false,
       currentFireRating: "",
+      markSource: "none",
+      scheduleNote: "",
+      compliant: true,
+    },
+    {
+      id: 3109,
+      uniqueId: "uid-3109",
+      mark: "3109",
+      family: "АС_Дверь_Двупольная_Стальная1",
+      type: "(дверь)ДОмп_Л_2100-1200",
+      level: "1 этаж",
+      fromRoom: "Лифтовый холл",
+      toRoom: "ПУИ",
+      openingWidthMm: 1200,
+      isOnEgressPath: true,
+      requiresFireDoor: true,
+      ruleId: "egress-route",
+      reason: "Дверь на пути эвакуации",
+      source: {
+        document: "СП РК 3.02-101-2012",
+        clause: "п. 4.2.22",
+        quote: "Двери эвакуационных выходов должны быть противопожарными.",
+      },
+      isMarkedAsFireDoor: true,
+      currentFireRating: "EI30",
+      markSource: "schedule_note",
+      scheduleNote:
+        "Дверь остекленная, металлическая, противопожарная EI 30, с порогом.",
       compliant: true,
     },
   ],
@@ -93,6 +125,13 @@ describe("formatFireDoorReport", () => {
     assert.match(report, /D-01/);
     assert.match(report, /НЕ соответствует/);
     assert.match(report, /Требуют проставления признака/);
+  });
+
+  it("reports schedule_note as ПД source", () => {
+    const report = formatFireDoorReport(sampleResult);
+    assert.match(report, /3109/);
+    assert.match(report, /schedule_note \(примечание спеки\)/);
+    assert.match(report, /противопожарная EI 30/);
   });
 
   it("reports zero required doors when none match rules", () => {

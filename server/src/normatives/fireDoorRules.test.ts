@@ -67,7 +67,9 @@ describe("applyFireDoorRules", () => {
           toRoom: "Квартира 1",
           isOnEgressPath: true,
           isMarkedAsFireDoor: false,
+          markSource: "none",
           currentFireRating: "",
+          scheduleNote: "",
         },
       ],
       rules
@@ -91,9 +93,45 @@ describe("applyFireDoorRules", () => {
       toRoom: "Коридор",
       isOnEgressPath: true,
       isMarkedAsFireDoor: false,
+      markSource: "none",
       currentFireRating: "",
+      scheduleNote: "",
     });
 
     assert.ok(scenarios.includes("stair-to-corridor"));
+  });
+
+  it("treats schedule_note mark as compliant when fire door required", () => {
+    const rules = extractFireDoorRulesFromText(
+      "5.3.4 Двери в ограждениях противопожарных преград, отделяющих пожарные отсеки, должны быть противопожарными.",
+      "СН РК 3.02-09-2019",
+      "СН РК_3.02-09-2019.pdf"
+    );
+
+    const result = applyFireDoorRules(
+      [
+        {
+          id: 3109,
+          uniqueId: "u3109",
+          mark: "3109",
+          family: "АС_Дверь_Двупольная_Стальная1",
+          type: "(дверь)ДОмп_Л_2100-1200",
+          level: "1",
+          fromRoom: "Лифтовый холл",
+          toRoom: "ПУИ",
+          isOnEgressPath: true,
+          isMarkedAsFireDoor: true,
+          markSource: "schedule_note",
+          currentFireRating: "EI30",
+          scheduleNote:
+            "Дверь остекленная, металлическая, противопожарная EI 30, с порогом.",
+        },
+      ],
+      rules
+    );
+
+    assert.equal(result.requiredFireDoors, 1);
+    assert.equal(result.doors[0].compliant, true);
+    assert.equal(result.doors[0].markSource, "schedule_note");
   });
 });

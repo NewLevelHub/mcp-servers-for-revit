@@ -14,7 +14,7 @@ alwaysApply: true
 
 1. **Проверить контекст:** `get_current_view_info` и при необходимости `analyze_model_statistics`.
 2. **Выбрать инструмент** из таблицы ниже — **прочитать схему tool** в MCP перед вызовом.
-3. **Вызвать только MCP-tools** серверов `mcp-server-for-revit` / `mcp-server-for-revit-local` и `mcp-server-for-revit-norms` (ГОСТ/СП: `extract_norm_rules_from_pdf`, `query_norm_rules`, `save_norm_rule`).
+3. **Вызвать только MCP-tools** сервера `mcp-server-for-revit` / `mcp-server-for-revit-local` (включая нормы ГОСТ/СП: `extract_norm_rules_from_pdf`, `query_norm_rules`, `save_norm_rule`).
 4. **Запрещено без явного согласия пользователя:** `send_code_to_revit`, правки файлов репозитория, новые `.py`/`.cs`/`.dyn` в проекте.
 5. **В конце ответа** — таблица «Использованные MCP-функции» (имя tool + зачем).
 
@@ -85,7 +85,7 @@ MCP **не создаёт** новый проект. Сообщи пользов
 | **Покраска марок помещений (быстро)** | **`highlight_room_tags`** — один вызов. `elementIds` (Room/марка) или `roomNames` + `colorPreset: "green"\|"red"`. Это Override Graphics → Проекционные линии (как в UI). Не используй `apply_norm_result` только ради покраски. |
 | Подсветка при нормоконтроле | `check_evacuation_width` (`mode=highlight`, `highlightTarget`: violations/compliant/both) — или после check передай ids в `highlight_room_tags` |
 | Нормоконтроль: глубина помещений | `extract_norm_rules_from_pdf` (topic) → `check_room_depth` |
-| Нормоконтроль: противопожарные двери | `check_fire_doors` |
+| Нормоконтроль: противопожарные двери | `check_fire_doors` (параметры модели + колонка «Примечание» в спеке заполнения проёмов; в отчёте `markSource`: parameter / schedule_note / both) |
 | Нормоконтроль: мин. размеры лоджии/балкона/простенка | `extract_norm_rules_from_pdf` (topic) → `check_min_dimensions` |
 
 ## Создание здания (порядок вызовов)
