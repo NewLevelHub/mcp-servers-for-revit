@@ -201,6 +201,37 @@ public class AutoLayoutSheetTests : RevitApiTest
         await Assert.That(skipped.Warning).Contains("was not found");
     }
 
+    [Test]
+    public async Task ResolveTitleBlockReserves_Form3OnRight_AddsRightAndBottomReserve()
+    {
+        // Outline 0..1.378 ft (~420 mm) by 0..0.974 ft (~297 mm) — A3 landscape-ish.
+        const double maxU = 420.0 / 304.8;
+        const double maxV = 297.0 / 304.8;
+        // Stamp occupies bottom-right ~185×55 mm in sheet coords.
+        var stampMinX = maxU - 185.0 / 304.8;
+        var stampMaxY = 55.0 / 304.8;
+
+        AutoLayoutSheetEventHandler.ResolveTitleBlockReserves(
+            0, 0, maxU, maxV,
+            new[] { (stampMinX, 0.0, maxU, stampMaxY) },
+            titleBlockReserveBottomMm: 40,
+            out var reserveBottomMm,
+            out var reserveRightMm);
+
+        await Assert.That(reserveBottomMm).IsGreaterThanOrEqualTo(54.0);
+        await Assert.That(reserveRightMm).IsGreaterThanOrEqualTo(184.0);
+    }
+
+    [Test]
+    public async Task EnumerateFitScales_StartsAboveCurrentAndRespectsMax()
+    {
+        var scales = AutoLayoutSheetEventHandler.EnumerateFitScales(50, 200).ToList();
+        await Assert.That(scales.All(s => s > 50 && s <= 200)).IsTrue();
+        await Assert.That(scales).Contains(100);
+        await Assert.That(scales).Contains(200);
+        await Assert.That(scales.Contains(500)).IsFalse();
+    }
+
     private static bool Overlaps(AutoLayoutPlacedItem a, AutoLayoutPlacedItem b)
     {
         return a.X < b.X + b.Width &&

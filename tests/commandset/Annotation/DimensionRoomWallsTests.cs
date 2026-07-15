@@ -133,6 +133,85 @@ public class DimensionRoomWallsTests : RevitApiTest
         await Assert.That(DimensionRoomWallsEventHandler.IsInteriorPlacement("outside")).IsFalse();
     }
 
+    [Test]
+    [TestExecutor<RevitThreadExecutor>]
+    public async Task GetBestWallReference_PrefersFaceCloserToRoomCenter()
+    {
+        await Assert.That(_room).IsNotNull();
+        await Assert.That(_floorPlan).IsNotNull();
+
+        var options = new SpatialElementBoundaryOptions
+        {
+            SpatialElementBoundaryLocation = SpatialElementBoundaryLocation.Finish
+        };
+        var loops = _room.GetBoundarySegments(options);
+        var wall = loops
+            .SelectMany(loop => loop.Cast<BoundarySegment>())
+            .Select(segment => _doc.GetElement(segment.ElementId) as Wall)
+            .FirstOrDefault(candidate => candidate != null);
+
+        await Assert.That(wall).IsNotNull();
+
+        var roomCenter = ((_room.Location as LocationPoint)?.Point)
+            ?? new XYZ(5.0, 5.0, 0);
+        var reference = DimensionAnnotationHelper.GetBestWallReference(
+            wall,
+            _floorPlan,
+            XYZ.BasisX,
+            roomCenter);
+
+        await Assert.That(reference).IsNotNull();
+        var face = wall.GetGeometryObjectFromReference(reference) as PlanarFace;
+        await Assert.That(face).IsNotNull();
+
+        // Room-side face must be closer to the room center than the opposite side face.
+        var opposite = EnumerateOppositeCandidate(wall, face, XYZ.BasisX);
+        if (opposite != null)
+        {
+            var chosenDist = roomCenter.DistanceTo(
+                new XYZ(face.Origin.X, face.Origin.Y, roomCenter.Z));
+            var oppositeDist = roomCenter.DistanceTo(
+                new XYZ(opposite.Origin.X, opposite.Origin.Y, roomCenter.Z));
+            await Assert.That(chosenDist).IsLessThanOrEqualTo(oppositeDist + 1e-6);
+        }
+    }
+
+    private static PlanarFace EnumerateOppositeCandidate(Wall wall, PlanarFace chosen, XYZ measureDirection)
+    {
+        foreach (var layer in new[] { ShellLayerType.Interior, ShellLayerType.Exterior })
+        {
+            IList<Reference> faces;
+            try
+            {
+                faces = HostObjectUtils.GetSideFaces(wall, layer);
+            }
+            catch
+            {
+                continue;
+            }
+
+            if (faces == null)
+                continue;
+
+            foreach (var reference in faces)
+            {
+                if (wall.GetGeometryObjectFromReference(reference) is not PlanarFace planar)
+                    continue;
+                if (Math.Abs(planar.FaceNormal.Z) > 0.9)
+                    continue;
+                if (Math.Abs(planar.FaceNormal.DotProduct(measureDirection)) < 0.85)
+                    continue;
+                if (ReferenceEquals(planar, chosen)
+                    || (planar.Origin.IsAlmostEqualTo(chosen.Origin)
+                        && planar.FaceNormal.IsAlmostEqualTo(chosen.FaceNormal)))
+                    continue;
+                return planar;
+            }
+        }
+
+        return null;
+    }
+
     private static void CreateEnclosure(Document doc, ElementId levelId, double x, double y, double size)
     {
         var p1 = new XYZ(x, y, 0);

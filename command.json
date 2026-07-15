@@ -245,7 +245,7 @@
     },
     {
       "commandName": "auto_layout_sheet",
-      "description": "Automatically lay out views and schedules on a sheet: row packing by actual extents, gaps, margins, title block zone, no overlaps",
+      "description": "Automatically lay out views and schedules on a sheet: row packing by actual extents, title-block-aware usable area (incl. Form 3), auto-scale oversized viewports, no overlaps",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {

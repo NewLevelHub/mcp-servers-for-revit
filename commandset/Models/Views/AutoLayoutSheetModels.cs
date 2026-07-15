@@ -97,6 +97,21 @@ public class AutoLayoutSheetInfo
     /// </summary>
     [JsonProperty("createDependentViewIfNeeded")]
     public bool CreateDependentViewIfNeeded { get; set; } = true;
+
+    /// <summary>
+    ///     When a viewport is larger than the usable area, increase the view scale (1:N → denser
+    ///     drawing) until it fits. Defaults to true. Schedules cannot be scaled; they are skipped
+    ///     when still too large after the usable area is resolved from the title block.
+    /// </summary>
+    [JsonProperty("autoFitScale")]
+    public bool AutoFitScale { get; set; } = true;
+
+    /// <summary>
+    ///     Maximum scale denominator when auto-fitting (e.g. 500 means do not go past 1:500).
+    ///     Defaults to 500.
+    /// </summary>
+    [JsonProperty("maxViewScale")]
+    public int MaxViewScale { get; set; } = 500;
 }
 
 /// <summary>
@@ -140,6 +155,12 @@ public class AutoLayoutPlacedItem
 
     [JsonProperty("warning")]
     public string Warning { get; set; } = string.Empty;
+
+    /// <summary>
+    ///     View scale denominator after placement (1:N). 0 for schedules / unknown.
+    /// </summary>
+    [JsonProperty("appliedScale")]
+    public int AppliedScale { get; set; }
 }
 
 /// <summary>

@@ -77,11 +77,11 @@ public class AutoLayoutSheetEventHandler : IExternalEventHandler, IWaitableExter
             var outline = sheet.Outline
                 ?? throw new InvalidOperationException($"Sheet '{sheet.SheetNumber}' has no outline.");
 
-            var usable = new RectFt(
-                outline.Min.U + MmToFeet(info.MarginLeft),
-                outline.Min.V + MmToFeet(info.MarginBottom + info.TitleBlockReserveBottom),
-                outline.Max.U - MmToFeet(info.MarginRight),
-                outline.Max.V - MmToFeet(info.MarginTop));
+            var allTitleBlocks = CollectTitleBlockOutlines(doc, sheet);
+            // Prefer the drawn title-block frame as paper — sheet.Outline can extend past the A3.
+            var paper = ResolvePaperRect(outline, allTitleBlocks, warnings);
+            var stampObstacles = FilterCornerTitleBlocks(paper, allTitleBlocks);
+            var usable = ComputeUsableArea(paper, info, stampObstacles, warnings);
 
             if (usable.Width <= 0 || usable.Height <= 0)
                 throw new InvalidOperationException(
@@ -93,6 +93,7 @@ public class AutoLayoutSheetEventHandler : IExternalEventHandler, IWaitableExter
             var obstacles = info.AvoidExisting
                 ? CollectExistingOutlines(doc, sheet)
                 : new List<RectFt>();
+            obstacles.AddRange(stampObstacles);
 
             var pending = CreateAndMeasure(doc, sheet, usable, info, warnings);
 
@@ -112,8 +113,8 @@ public class AutoLayoutSheetEventHandler : IExternalEventHandler, IWaitableExter
                 }
 
                 MoveToTarget(doc, element, target);
-                element.Item.X = Math.Round(FeetToMm(target.MinX - outline.Min.U), 2);
-                element.Item.Y = Math.Round(FeetToMm(target.MinY - outline.Min.V), 2);
+                element.Item.X = Math.Round(FeetToMm(target.MinX - paper.MinX), 2);
+                element.Item.Y = Math.Round(FeetToMm(target.MinY - paper.MinY), 2);
                 if (element.PlacedElement != null)
                 {
                     element.Item.ElementId = element.PlacedElement.Id.GetValue();
@@ -393,21 +394,380 @@ public class AutoLayoutSheetEventHandler : IExternalEventHandler, IWaitableExter
             element.Item.Width = Math.Round(FeetToMm(measured.Width), 2);
             element.Item.Height = Math.Round(FeetToMm(measured.Height), 2);
 
-            if (measured.Width > usable.Width + GeometryTolerance ||
-                measured.Height > usable.Height + GeometryTolerance)
+            if (FitsUsable(measured, usable))
             {
-                SkipElement(
-                    doc,
-                    element,
-                    $"Element is larger ({element.Item.Width}×{element.Item.Height} mm) than the usable area.");
-                warnings.Add(
-                    $"'{element.Item.ViewName}' is larger ({element.Item.Width:0.##}×{element.Item.Height:0.##} mm) " +
-                    $"than the usable area ({FeetToMm(usable.Width):0.##}×{FeetToMm(usable.Height):0.##} mm) and was skipped; " +
-                    "reduce the view scale, filter the schedule, or use a bigger sheet.");
+                if (element.PlacedElement is Viewport vp &&
+                    doc.GetElement(vp.ViewId) is View fittedView)
+                {
+                    element.Item.AppliedScale = fittedView.Scale;
+                }
+
+                continue;
             }
+
+            if (!element.IsSchedule &&
+                info.AutoFitScale &&
+                element.PlacedElement is Viewport viewport &&
+                TryFitViewportByScaling(doc, sheet, viewport, usable, element, info, warnings))
+            {
+                continue;
+            }
+
+            SkipElement(
+                doc,
+                element,
+                $"Element is larger ({element.Item.Width}×{element.Item.Height} mm) than the usable area.");
+            warnings.Add(
+                $"'{element.Item.ViewName}' is larger ({element.Item.Width:0.##}×{element.Item.Height:0.##} mm) " +
+                $"than the usable area ({FeetToMm(usable.Width):0.##}×{FeetToMm(usable.Height):0.##} mm) and was skipped; " +
+                (element.IsSchedule
+                    ? "filter / split the schedule, remove columns, or use a bigger sheet (schedules cannot be scaled)."
+                    : "autoFitScale could not shrink the viewport enough; raise maxViewScale or use a bigger sheet."));
         }
 
         return pending;
+    }
+
+    private static bool FitsUsable(RectFt measured, RectFt usable)
+    {
+        return measured.Width <= usable.Width + GeometryTolerance &&
+               measured.Height <= usable.Height + GeometryTolerance;
+    }
+
+    /// <summary>
+    ///     Increase view.Scale (draw smaller) until the viewport box fits the usable rectangle.
+    ///     Dependent views that refuse a scale change are duplicated as independent copies.
+    /// </summary>
+    private static bool TryFitViewportByScaling(
+        Document doc,
+        ViewSheet sheet,
+        Viewport viewport,
+        RectFt usable,
+        PendingElement element,
+        AutoLayoutSheetInfo info,
+        List<string> warnings)
+    {
+        var view = doc.GetElement(viewport.ViewId) as View;
+        if (view == null)
+            return false;
+
+        var originalScale = view.Scale;
+        if (originalScale <= 0)
+            return false;
+
+        var maxScale = info.MaxViewScale > 0 ? info.MaxViewScale : 500;
+        if (maxScale < originalScale)
+            maxScale = originalScale;
+
+        view = EnsureScaleableView(doc, sheet, viewport, view, element, warnings);
+        if (view == null)
+            return false;
+
+        originalScale = view.Scale;
+        var tried = new HashSet<int> { originalScale };
+
+        foreach (var scale in EnumerateFitScales(originalScale, maxScale))
+        {
+            if (!tried.Add(scale))
+                continue;
+
+            try
+            {
+                view.Scale = scale;
+            }
+            catch (Exception ex)
+            {
+                warnings.Add($"Cannot set scale 1:{scale} on '{view.Name}': {ex.Message}");
+                continue;
+            }
+
+            doc.Regenerate();
+            var measured = MeasureOnSheet(element.PlacedElement, sheet);
+            if (measured == null || measured.Width <= 0 || measured.Height <= 0)
+                continue;
+
+            element.MeasuredRect = measured;
+            element.WidthFt = measured.Width;
+            element.HeightFt = measured.Height;
+            element.Item.Width = Math.Round(FeetToMm(measured.Width), 2);
+            element.Item.Height = Math.Round(FeetToMm(measured.Height), 2);
+
+            if (!FitsUsable(measured, usable))
+                continue;
+
+            element.Item.AppliedScale = scale;
+            if (scale != originalScale)
+            {
+                warnings.Add(
+                    $"Reduced scale of '{view.Name}' from 1:{originalScale} to 1:{scale} to fit the usable area.");
+            }
+
+            return true;
+        }
+
+        try
+        {
+            view.Scale = originalScale;
+            doc.Regenerate();
+        }
+        catch
+        {
+            // Keep last attempted scale if restore fails.
+        }
+
+        return false;
+    }
+
+    private static View EnsureScaleableView(
+        Document doc,
+        ViewSheet sheet,
+        Viewport viewport,
+        View view,
+        PendingElement element,
+        List<string> warnings)
+    {
+        // Dependent views often share scale with the primary; if Scale cannot change, use an independent duplicate.
+        try
+        {
+            var probe = Math.Min(view.Scale * 2, Math.Max(view.Scale + 1, 2));
+            var before = view.Scale;
+            view.Scale = probe;
+            doc.Regenerate();
+            if (view.Scale == probe)
+            {
+                view.Scale = before;
+                doc.Regenerate();
+                return view;
+            }
+
+            view.Scale = before;
+            doc.Regenerate();
+        }
+        catch
+        {
+            // Fall through to duplicate.
+        }
+
+        try
+        {
+            var copyId = view.Duplicate(ViewDuplicateOption.Duplicate);
+            var copy = doc.GetElement(copyId) as View;
+            if (copy == null || !Viewport.CanAddViewToSheet(doc, sheet.Id, copy.Id))
+                return view;
+
+            var center = viewport.GetBoxCenter();
+            doc.Delete(viewport.Id);
+            element.PlacedElement = Viewport.Create(doc, sheet.Id, copy.Id, center);
+            element.Item.ViewId = copy.Id.GetValue();
+            element.Item.ViewName = copy.Name;
+            warnings.Add(
+                $"View '{view.Name}' could not change scale as dependent; placed independent copy '{copy.Name}'.");
+            doc.Regenerate();
+            return copy;
+        }
+        catch (Exception ex)
+        {
+            warnings.Add($"Failed to create scaleable copy of '{view.Name}': {ex.Message}");
+            return view;
+        }
+    }
+
+    /// <summary>
+    ///     Candidate scale denominators: standard set above current, plus progressive multiples.
+    /// </summary>
+    public static IEnumerable<int> EnumerateFitScales(int currentScale, int maxScale)
+    {
+        var standards = new[] { 1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000 };
+        foreach (var scale in standards)
+        {
+            if (scale > currentScale && scale <= maxScale)
+                yield return scale;
+        }
+
+        for (var factor = 2; factor <= 20; factor++)
+        {
+            var scale = currentScale * factor;
+            if (scale > maxScale)
+                break;
+            if (scale > currentScale)
+                yield return scale;
+        }
+    }
+
+    /// <summary>
+    ///     Computes bottom/right title-block reserves (mm) from sheet outline and title-block
+    ///     rectangles in sheet coordinates (feet). Bottom uses at least
+    ///     <paramref name="titleBlockReserveBottomMm"/>; right grows when a title block sits
+    ///     on the right half (Форма 3 / основная надпись).
+    /// </summary>
+    public static void ResolveTitleBlockReserves(
+        double outlineMinU,
+        double outlineMinV,
+        double outlineMaxU,
+        double outlineMaxV,
+        IEnumerable<(double MinX, double MinY, double MaxX, double MaxY)> titleBlocks,
+        double titleBlockReserveBottomMm,
+        out double reserveBottomMm,
+        out double reserveRightMm)
+    {
+        reserveBottomMm = Math.Max(0, titleBlockReserveBottomMm);
+        reserveRightMm = 0.0;
+
+        if (titleBlocks == null)
+            return;
+
+        var sheetMidU = (outlineMinU + outlineMaxU) / 2.0;
+        foreach (var tb in titleBlocks)
+        {
+            var fromBottomMm = FeetToMm(tb.MaxY - outlineMinV);
+            if (fromBottomMm > reserveBottomMm)
+                reserveBottomMm = fromBottomMm;
+
+            if (tb.MinX >= sheetMidU - GeometryTolerance)
+            {
+                var fromRightMm = FeetToMm(outlineMaxU - tb.MinX);
+                if (fromRightMm > reserveRightMm)
+                    reserveRightMm = fromRightMm;
+            }
+        }
+    }
+
+    private static RectFt ComputeUsableArea(
+        RectFt paper,
+        AutoLayoutSheetInfo info,
+        List<RectFt> stampObstacles,
+        List<string> warnings)
+    {
+        var paperWidthMm = FeetToMm(paper.Width);
+        var paperHeightMm = FeetToMm(paper.Height);
+
+        var measuredBlocks = stampObstacles
+            .Select(rect => (rect.MinX, rect.MinY, rect.MaxX, rect.MaxY))
+            .ToList();
+
+        ResolveTitleBlockReserves(
+            paper.MinX,
+            paper.MinY,
+            paper.MaxX,
+            paper.MaxY,
+            measuredBlocks,
+            info.TitleBlockReserveBottom,
+            out var reserveBottomMm,
+            out var reserveRightMm);
+
+        reserveRightMm = Math.Min(reserveRightMm, Math.Max(0, paperWidthMm * 0.45));
+        reserveBottomMm = Math.Min(
+            reserveBottomMm,
+            Math.Max(info.TitleBlockReserveBottom, paperHeightMm * 0.40));
+
+        if (reserveRightMm > 0.5 || reserveBottomMm > info.TitleBlockReserveBottom + 0.5)
+        {
+            warnings.Add(
+                $"Usable area accounts for title block reserve bottom={reserveBottomMm:0.#} mm, right={reserveRightMm:0.#} mm.");
+        }
+
+        var usable = new RectFt(
+            paper.MinX + MmToFeet(info.MarginLeft),
+            paper.MinY + MmToFeet(info.MarginBottom + reserveBottomMm),
+            paper.MaxX - MmToFeet(info.MarginRight + reserveRightMm),
+            paper.MaxY - MmToFeet(info.MarginTop));
+
+        if (usable.Width > 0 && usable.Height > 0)
+            return usable;
+
+        warnings.Add(
+            "Title-block reserves emptied the usable area; falling back to margins + titleBlockReserveBottom only.");
+        return new RectFt(
+            paper.MinX + MmToFeet(info.MarginLeft),
+            paper.MinY + MmToFeet(info.MarginBottom + Math.Max(0, info.TitleBlockReserveBottom)),
+            paper.MaxX - MmToFeet(info.MarginRight),
+            paper.MaxY - MmToFeet(info.MarginTop));
+    }
+
+    /// <summary>
+    ///     Prefer the largest title-block bounding box as the printable paper frame.
+    ///     sheet.Outline often extends left/below the drawn A3 for ADSK stamp families.
+    /// </summary>
+    private static RectFt ResolvePaperRect(
+        BoundingBoxUV outline,
+        List<RectFt> titleBlocks,
+        List<string> warnings)
+    {
+        var outlineRect = new RectFt(outline.Min.U, outline.Min.V, outline.Max.U, outline.Max.V);
+        var outlineArea = outlineRect.Width * outlineRect.Height;
+        if (outlineArea <= GeometryTolerance || titleBlocks == null || titleBlocks.Count == 0)
+            return outlineRect;
+
+        RectFt best = null;
+        var bestArea = 0.0;
+        foreach (var tb in titleBlocks)
+        {
+            var area = tb.Width * tb.Height;
+            if (area > bestArea)
+            {
+                bestArea = area;
+                best = tb;
+            }
+        }
+
+        if (best == null)
+            return outlineRect;
+
+        // Substantial paper-sized title block (A3/A2/…), not a tiny orphan bbox.
+        if (bestArea >= outlineArea * 0.35 &&
+            FeetToMm(best.Width) >= 150 &&
+            FeetToMm(best.Height) >= 150)
+        {
+            warnings.Add(
+                $"Paper frame taken from title block extents {FeetToMm(best.Width):0.#}×{FeetToMm(best.Height):0.#} mm.");
+            return best;
+        }
+
+        return outlineRect;
+    }
+
+    private static List<RectFt> CollectTitleBlockOutlines(Document doc, ViewSheet sheet)
+    {
+        var outlines = new List<RectFt>();
+
+        foreach (var element in new FilteredElementCollector(doc, sheet.Id)
+                     .OfCategory(BuiltInCategory.OST_TitleBlocks)
+                     .WhereElementIsNotElementType())
+        {
+            var bbox = element.get_BoundingBox(sheet);
+            if (bbox == null)
+                continue;
+
+            outlines.Add(new RectFt(bbox.Min.X, bbox.Min.Y, bbox.Max.X, bbox.Max.Y));
+        }
+
+        return outlines;
+    }
+
+    private static List<RectFt> FilterCornerTitleBlocks(BoundingBoxUV outline, List<RectFt> titleBlocks)
+    {
+        return FilterCornerTitleBlocks(
+            new RectFt(outline.Min.U, outline.Min.V, outline.Max.U, outline.Max.V),
+            titleBlocks);
+    }
+
+    /// <summary>
+    ///     Keep only corner/partial stamps. Drop near-full-sheet title blocks whose bbox
+    ///     would block the entire printable field if used as packing obstacles.
+    /// </summary>
+    private static List<RectFt> FilterCornerTitleBlocks(RectFt paper, List<RectFt> titleBlocks)
+    {
+        var paperWidthMm = FeetToMm(paper.Width);
+        var paperHeightMm = FeetToMm(paper.Height);
+
+        return titleBlocks
+            .Where(rect =>
+            {
+                var w = FeetToMm(rect.Width);
+                var h = FeetToMm(rect.Height);
+                return w < paperWidthMm * 0.85 || h < paperHeightMm * 0.85;
+            })
+            .ToList();
     }
 
     private static ViewSheet FindSheetContainingView(Document doc, ElementId viewId)
@@ -654,7 +1014,7 @@ public class AutoLayoutSheetEventHandler : IExternalEventHandler, IWaitableExter
 
     private static ViewSheet CreateSheet(Document doc, AutoLayoutSheetInfo info, List<string> warnings)
     {
-        var titleBlock = FindTitleBlock(doc, info.TitleBlockFamilyName, info.TitleBlockTypeName);
+        var titleBlock = ResolveTitleBlockForNewSheet(doc, info, warnings);
 
         ViewSheet sheet;
         if (titleBlock != null)
@@ -688,6 +1048,93 @@ public class AutoLayoutSheetEventHandler : IExternalEventHandler, IWaitableExter
             sheet.SheetNumber = GetUniqueSheetNumber(doc, sheet, info.SheetNumber.Trim());
 
         return sheet;
+    }
+
+    /// <summary>
+    ///     "Форма 3" / ADSK_ОсновнаяНадпись is a stamp, not a sheet format. Prefer ADSK_Титул A3
+    ///     so the printable frame matches the title block the user sees.
+    /// </summary>
+    private static FamilySymbol ResolveTitleBlockForNewSheet(
+        Document doc,
+        AutoLayoutSheetInfo info,
+        List<string> warnings)
+    {
+        var requested = FindTitleBlock(doc, info.TitleBlockFamilyName, info.TitleBlockTypeName);
+        if (requested != null && !IsStampOnlyTitleBlock(requested))
+            return requested;
+
+        if (requested != null && IsStampOnlyTitleBlock(requested))
+        {
+            var paper = FindTitleBlock(doc, "ADSK_Титул", "А3А")
+                        ?? FindTitleBlock(doc, "ADSK_Титул1", "А3А 2")
+                        ?? FindLargestPaperTitleBlock(doc);
+            if (paper != null)
+            {
+                warnings.Add(
+                    $"'{requested.FamilyName} - {requested.Name}' is a stamp without a full sheet frame; " +
+                    $"using paper title block '{paper.FamilyName} - {paper.Name}' so layout stays inside the A3 border.");
+                return paper;
+            }
+        }
+
+        return requested ?? FindTitleBlock(doc, string.Empty, string.Empty);
+    }
+
+    private static bool IsStampOnlyTitleBlock(FamilySymbol symbol)
+    {
+        if (symbol == null)
+            return false;
+
+        var family = symbol.FamilyName ?? string.Empty;
+        var name = symbol.Name ?? string.Empty;
+        return family.IndexOf("ОсновнаяНадпись", StringComparison.OrdinalIgnoreCase) >= 0
+               || name.StartsWith("Форма ", StringComparison.OrdinalIgnoreCase)
+               || name.Equals("Форма 3", StringComparison.OrdinalIgnoreCase)
+               || name.Equals("Форма 5", StringComparison.OrdinalIgnoreCase)
+               || name.Equals("Форма 6", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static FamilySymbol FindLargestPaperTitleBlock(Document doc)
+    {
+        FamilySymbol best = null;
+        var bestScore = 0.0;
+
+        foreach (var symbol in new FilteredElementCollector(doc)
+                     .OfCategory(BuiltInCategory.OST_TitleBlocks)
+                     .OfClass(typeof(FamilySymbol))
+                     .Cast<FamilySymbol>())
+        {
+            if (IsStampOnlyTitleBlock(symbol))
+                continue;
+
+            // Prefer symbols with width/height parameters near A3.
+            var width = TryGetTypeLengthMm(symbol, "Ширина") ?? TryGetTypeLengthMm(symbol, "Width");
+            var height = TryGetTypeLengthMm(symbol, "Высота") ?? TryGetTypeLengthMm(symbol, "Height");
+            var score = (width ?? 0) * (height ?? 0);
+            if (score > bestScore)
+            {
+                bestScore = score;
+                best = symbol;
+            }
+        }
+
+        return best;
+    }
+
+    private static double? TryGetTypeLengthMm(FamilySymbol symbol, string parameterName)
+    {
+        var parameter = symbol.LookupParameter(parameterName);
+        if (parameter == null || !parameter.HasValue)
+            return null;
+
+        try
+        {
+            return parameter.AsDouble() * MmPerFoot;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static FamilySymbol FindTitleBlock(Document doc, string familyName, string typeName)

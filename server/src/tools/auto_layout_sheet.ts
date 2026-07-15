@@ -14,7 +14,7 @@ const layoutItemSchema = z.object({
 export function registerAutoLayoutSheetTool(server: McpServer) {
   server.tool(
     "auto_layout_sheet",
-    "Automatically lay out views and schedules on a Revit sheet without manual coordinates. Measures the actual extents of each element (Viewport.GetBoxOutline / ScheduleSheetInstance bounding box) and packs them in rows with configurable gaps inside the usable area (sheet outline minus margins and the title block zone along the bottom). Avoids overlaps, including elements already placed on the sheet. Views already on another sheet are duplicated as dependents by default (createDependentViewIfNeeded). Items that do not fit are reported and removed; Success=false when nothing placeable fits, PartialSuccess when only some items place.",
+    "Automatically lay out views and schedules on a Revit sheet without manual coordinates. Measures the actual extents of each element (Viewport.GetBoxOutline / ScheduleSheetInstance bounding box) and packs them in rows with configurable gaps inside the usable area (sheet outline minus margins and the title-block zone measured from real title-block instances — including bottom + right reserve for GOST Form 3). Title blocks are always treated as obstacles. Oversized viewports are auto-scaled down when autoFitScale is true (increase 1:N until they fit, up to maxViewScale). Schedules cannot be scaled — oversized schedules are skipped with a warning. Views already on another sheet are duplicated as dependents by default (createDependentViewIfNeeded). Success=false when nothing placeable fits; PartialSuccess when only some items place.",
     {
       items: z
         .array(layoutItemSchema)
@@ -63,7 +63,7 @@ export function registerAutoLayoutSheetTool(server: McpServer) {
         .optional()
         .default(55)
         .describe(
-          "Height of the title block (основная надпись) zone reserved along the sheet bottom, mm. Defaults to 55."
+          "Minimum height reserved for the title block along the sheet bottom, mm. Actual title-block bounds can increase bottom and right reserves. Defaults to 55."
         ),
       order: z
         .enum(["input", "heightDesc", "areaDesc"])
@@ -83,6 +83,21 @@ export function registerAutoLayoutSheetTool(server: McpServer) {
         .default(true)
         .describe(
           "When a view is already on another sheet, duplicate it as a dependent and place the dependent. Defaults to true."
+        ),
+      autoFitScale: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe(
+          "When a viewport is larger than the usable area, increase its scale (1:N) until it fits. Defaults to true. Schedules are not scaled."
+        ),
+      maxViewScale: z
+        .number()
+        .int()
+        .optional()
+        .default(500)
+        .describe(
+          "Maximum scale denominator used by autoFitScale (e.g. 500 means do not go past 1:500). Defaults to 500."
         ),
     },
     async (args) => {
@@ -104,6 +119,8 @@ export function registerAutoLayoutSheetTool(server: McpServer) {
         order: args.order ?? "input",
         avoidExisting: args.avoidExisting ?? true,
         createDependentViewIfNeeded: args.createDependentViewIfNeeded ?? true,
+        autoFitScale: args.autoFitScale ?? true,
+        maxViewScale: args.maxViewScale ?? 500,
       };
 
       try {
