@@ -2,6 +2,9 @@ using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Architecture;
 using Nice3point.TUnit.Revit;
 using Nice3point.TUnit.Revit.Executors;
+using RevitMCPCommandSet.Models.Views;
+using RevitMCPCommandSet.Services.Views;
+using RevitMCPCommandSet.Utils;
 using TUnit.Core;
 using TUnit.Core.Executors;
 
@@ -71,6 +74,38 @@ public class CreateFinishScheduleTests : RevitApiTest
 
         await Assert.That(schedule).IsNotNull();
         await Assert.That(schedule.Definition.GetFieldCount()).IsGreaterThanOrEqualTo(3);
+    }
+
+    [Test]
+    [HookExecutor<RevitThreadExecutor>]
+    public async Task BuildScheduleCreationInfo_DefaultFields_ResolveByBuiltInParameterId()
+    {
+        var warnings = new List<string>();
+        var scheduleInfo = CreateFinishScheduleEventHandler.BuildScheduleCreationInfo(
+            _doc,
+            new FinishScheduleCreationInfo(),
+            warnings);
+
+        ViewSchedule probe;
+        using (var tx = new Transaction(_doc, "Probe Schedulable Fields"))
+        {
+            tx.Start();
+            probe = ViewSchedule.CreateSchedule(_doc, new ElementId(BuiltInCategory.OST_Rooms));
+            tx.Commit();
+        }
+
+        // Ids must resolve against a rooms schedule so localized (RU) projects
+        // don't depend on the English parameter names.
+        var schedulableIds = probe.Definition.GetSchedulableFields()
+            .Select(field => field.ParameterId.GetValue())
+            .ToHashSet();
+
+        await Assert.That(scheduleInfo.Fields.Count).IsEqualTo(7);
+        foreach (var field in scheduleInfo.Fields)
+        {
+            await Assert.That(field.ParameterId).IsNotEqualTo(0);
+            await Assert.That(schedulableIds.Contains(field.ParameterId)).IsTrue();
+        }
     }
 
     [Test]

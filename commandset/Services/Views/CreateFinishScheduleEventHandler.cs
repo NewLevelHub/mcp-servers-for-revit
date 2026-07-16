@@ -302,6 +302,17 @@ public class CreateFinishScheduleEventHandler : IExternalEventHandler, IWaitable
         if (scheduleResult.Warnings.Count > 0)
             warnings.AddRange(scheduleResult.Warnings);
 
+        // A schedule without a single resolved column is useless; surface an error
+        // instead of leaving an empty ViewSchedule in the project (REV-43 follow-up).
+        if (scheduleResult.FieldCount == 0)
+        {
+            TryDeleteSchedule(doc, scheduleResult.ScheduleUniqueId, warnings);
+            throw new InvalidOperationException(
+                $"No schedule fields could be resolved for '{scheduleResult.ScheduleName}': room parameters " +
+                "(Number/Номер, Name/Имя, Level/Уровень, Area/Площадь, finish parameters) were not found in this project. " +
+                "The empty schedule was deleted. Pass templateId of an existing room finish schedule to clone it instead.");
+        }
+
         return new FinishScheduleCreationResult
         {
             Success = true,
@@ -479,7 +490,7 @@ public class CreateFinishScheduleEventHandler : IExternalEventHandler, IWaitable
         }
     }
 
-    private static ScheduleCreationInfo BuildScheduleCreationInfo(
+    public static ScheduleCreationInfo BuildScheduleCreationInfo(
         Document doc,
         FinishScheduleCreationInfo info,
         List<string> warnings)
@@ -500,7 +511,7 @@ public class CreateFinishScheduleEventHandler : IExternalEventHandler, IWaitable
             ShowGridLines = true,
             SortFields = new List<ScheduleSortInfo>
             {
-                new ScheduleSortInfo { FieldName = "Number", SortOrder = "Ascending" }
+                new ScheduleSortInfo { FieldName = "Number|Номер", SortOrder = "Ascending" }
             }
         };
 
@@ -515,18 +526,69 @@ public class CreateFinishScheduleEventHandler : IExternalEventHandler, IWaitable
         if (!string.IsNullOrWhiteSpace(info.TemplateId))
             warnings.Add($"Template '{info.TemplateId}' was not found; created schedule with default finish columns.");
 
+        // BuiltInParameter ids resolve regardless of the Revit UI language;
+        // the EN|RU name aliases only remain as a fallback.
         scheduleInfo.Fields = new List<ScheduleFieldInfo>
         {
-            new() { ParameterName = "Number", FieldType = "Instance", Heading = "№" },
-            new() { ParameterName = "Name", FieldType = "Instance", Heading = "Помещение" },
-            new() { ParameterName = "Level", FieldType = "Instance", Heading = "Уровень" },
-            new() { ParameterName = "Area", FieldType = "Instance", Heading = "Площадь" },
-            new() { ParameterName = "Floor Finish", FieldType = "Instance", Heading = "Пол" },
-            new() { ParameterName = "Wall Finish", FieldType = "Instance", Heading = "Стены" },
-            new() { ParameterName = "Ceiling Finish", FieldType = "Instance", Heading = "Потолок" }
+            new()
+            {
+                ParameterId = (int)BuiltInParameter.ROOM_NUMBER,
+                ParameterName = "Number|Номер", FieldType = "Instance", Heading = "№"
+            },
+            new()
+            {
+                ParameterId = (int)BuiltInParameter.ROOM_NAME,
+                ParameterName = "Name|Имя", FieldType = "Instance", Heading = "Помещение"
+            },
+            new()
+            {
+                ParameterId = (int)BuiltInParameter.ROOM_LEVEL_ID,
+                ParameterName = "Level|Уровень", FieldType = "Instance", Heading = "Уровень"
+            },
+            new()
+            {
+                ParameterId = (int)BuiltInParameter.ROOM_AREA,
+                ParameterName = "Area|Площадь", FieldType = "Instance", Heading = "Площадь"
+            },
+            new()
+            {
+                ParameterId = (int)BuiltInParameter.ROOM_FINISH_FLOOR,
+                ParameterName = "Floor Finish|Отделка пола", FieldType = "Instance", Heading = "Пол"
+            },
+            new()
+            {
+                ParameterId = (int)BuiltInParameter.ROOM_FINISH_WALL,
+                ParameterName = "Wall Finish|Отделка стен", FieldType = "Instance", Heading = "Стены"
+            },
+            new()
+            {
+                ParameterId = (int)BuiltInParameter.ROOM_FINISH_CEILING,
+                ParameterName = "Ceiling Finish|Отделка потолка", FieldType = "Instance", Heading = "Потолок"
+            }
         };
 
         return scheduleInfo;
+    }
+
+    private static void TryDeleteSchedule(Document doc, string scheduleUniqueId, List<string> warnings)
+    {
+        try
+        {
+            var schedule = doc.GetElement(scheduleUniqueId);
+            if (schedule == null)
+                return;
+
+            using (var tx = new Transaction(doc, "Delete Empty Finish Schedule"))
+            {
+                tx.Start();
+                doc.Delete(schedule.Id);
+                tx.Commit();
+            }
+        }
+        catch (Exception ex)
+        {
+            warnings.Add($"Failed to delete empty schedule: {ex.Message}");
+        }
     }
 
     private static ViewSchedule ResolveTemplateSchedule(Document doc, string templateId)
