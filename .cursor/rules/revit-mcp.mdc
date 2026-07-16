@@ -18,6 +18,18 @@ alwaysApply: true
 4. **Запрещено без явного согласия пользователя:** `send_code_to_revit`, правки файлов репозитория, новые `.py`/`.cs`/`.dyn` в проекте.
 5. **В конце ответа** — таблица «Использованные MCP-функции» (имя tool + зачем).
 
+## Показать нарушения (по умолчанию — цветовая область)
+
+Фразы вроде «покажи нарушения», «подсвети нарушения», «покрась нарушения», «где нарушения»:
+
+1. `get_current_view_info`
+2. `run_norm_audit` (`mode=report`, текущий этаж / `levelName`)
+3. `create_filled_regions` с `roomIds` из findings (помещения: `violation` + `nearLimit`), `colorPreset: "red"`, `clearPrevious: true`
+4. Двери и прочие не-Room — `operate_element` `SetColor` красным
+5. Краткий отчёт: сколько областей, список нарушений
+
+**Не** использовать для этого `run_norm_audit mode=highlight`, `color_elements` или только `highlight_room_tags`.
+
 ## Запрет `send_code_to_revit`
 
 **Не вызывай**, если задачу решает `create_*_element`, `export_room_data`, `operate_element` и др.
@@ -84,12 +96,15 @@ MCP **не создаёт** новый проект. Сообщи пользов
 | Экспликация полов (м², только `(полы)*`) | `create_floor_schedule` — без плит/утеплителей; `validate_schedule` Floors — сверка площадей |
 | Лист экспликации полов | `create_floor_explication` — колонки из recipe; группы этажей по (полы)* (типовые = тот же тип + контур); названия динамические |
 | Нормативы: извлечь / сохранить / найти / seed / статус | MCP: `extract_norm_rules_from_pdf` (topic = поиск; pdfPath = извлечение; `action=seed` = все PDF из `normatives/`; `action=status` = сколько правил; saveToLibrary) |
-| Нормоконтроль: ширина эвак. коридора | `extract_norm_rules_from_pdf` (topic) → `check_evacuation_width` |
-| **Покраска марок помещений (быстро)** | **`highlight_room_tags`** — один вызов. `elementIds` (Room/марка) или `roomNames` + `colorPreset: "green"\|"red"`. Это Override Graphics → Проекционные линии (как в UI). Не используй `apply_norm_result` только ради покраски. |
-| Подсветка при нормоконтроле | `check_evacuation_width` (`mode=highlight`, `highlightTarget`: violations/compliant/both) — или после check передай ids в `highlight_room_tags` |
-| Нормоконтроль: глубина помещений | `extract_norm_rules_from_pdf` (topic) → `check_room_depth` |
-| Нормоконтроль: противопожарные двери | `check_fire_doors` (параметры модели + колонка «Примечание» в спеке заполнения проёмов; в отчёте `markSource`: parameter / schedule_note / both) |
-| Нормоконтроль: мин. размеры лоджии/балкона/простенка | `extract_norm_rules_from_pdf` (topic) → `check_min_dimensions` |
+| **Нормоконтроль этажа (сводный)** | **`run_norm_audit`** — один вызов: коридоры, глубины, лоджии/балконы/простенки, ПД. `levelName` или текущий вид; `topics` опц.; `mode=report` (данные) или `mode=highlight` (отчёт + заливка). В ответе `skippedRules` (напр. ширина двери в свету — Phase 2). Не «весь ГОСТ». |
+| Нормоконтроль: ширина эвак. коридора | `run_norm_audit` или точечно `check_evacuation_width` |
+| **Покраска площади помещений (Цветовая область)** | **`create_filled_regions`** — Annotate → Filled Region по контуру комнаты. Тип из проекта (напр. `ADSK_У_Сплошная_Красный`). `roomIds` / `roomNames` или все на виде; `clearPrevious` снимает прошлые MCP-области. Для «мягкой» палитры по параметру — `color_elements` (цветовая схема вида), не путать. |
+| **Показать / покрасить нарушения (по умолчанию)** | Фразы «покажи нарушения», «подсвети нарушения», «покрась нарушения» → **всегда** `run_norm_audit` (`mode=report`) → **`create_filled_regions`** по `elementId` помещений (violation + nearLimit). Двери ПД / не-Room → `operate_element` `SetColor` красным. Не `mode=highlight`, не `color_elements`, не только марки. |
+| **Покраска марок помещений (быстро)** | **`highlight_room_tags`** — только если пользователь явно просит покрасить **марки** (текст), не площадь. |
+| Подсветка при нормоконтроле | См. строку «Показать / покрасить нарушения» — `create_filled_regions` |
+| Нормоконтроль: глубина помещений | `run_norm_audit` или `extract_norm_rules_from_pdf` (topic) → `check_room_depth` |
+| Нормоконтроль: противопожарные двери | `run_norm_audit` или `check_fire_doors` (параметры + примечание спеки; `markSource`) |
+| Нормоконтроль: мин. размеры лоджии/балкона/простенка | `run_norm_audit` или `check_min_dimensions` |
 
 ## Создание здания (порядок вызовов)
 
