@@ -94,6 +94,11 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "export_apartment_data",
+      "description": "Квартирография/ТЭП: group rooms into apartments by apartment-number parameter, compute living/useful/total areas with СП РК 3.02-101-2012* А.8 coefficients (loggia 0.5, balcony/terrace 0.3, veranda 0.8), per-apartment list and summary by type",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "get_material_quantities",
       "description": "Calculate material quantities and takeoffs with area and volume calculations per material",
       "assemblyPath": "RevitMCPCommandSet.dll"
