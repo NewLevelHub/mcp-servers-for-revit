@@ -433,7 +433,8 @@ public class CreateScheduleEventHandler : IExternalEventHandler, IWaitableExtern
         var schedulableFields = definition.GetSchedulableFields();
         foreach (var schedulableField in schedulableFields)
         {
-            if (fieldInfo.ParameterId > 0 &&
+            // BuiltInParameter ids are negative, so match on any non-zero id.
+            if (fieldInfo.ParameterId != 0 &&
                 GetElementIdValue(schedulableField.ParameterId) == fieldInfo.ParameterId)
                 return schedulableField;
         }

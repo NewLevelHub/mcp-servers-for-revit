@@ -66,7 +66,7 @@ const finishScheduleSchema = z.object({
 export function registerCreateFinishScheduleTool(server: McpServer) {
   server.tool(
     "create_finish_schedule",
-    "Create a room finish schedule set in Revit. By default reproduces the ADSK_RU template chain: key styles schedule (В_Отделка-помещения-01_Стили_Ключевая) → data-filling schedule (В_Отделка-помещения-02_Заполнение данных) → output finish list(s) (О_АР_Ведомость отделки помещений_Имя/_Номер). The key schedule is reused to keep its key parameter linked; data and output schedules are duplicated with template formatting. Rows are rooms; columns are finish types. Falls back to a single schedule when no chain templates exist. Warns when more than 30% of rooms lack finish parameters.",
+    "Create a room finish schedule set in Revit. By default reproduces the ADSK_RU template chain: key styles schedule (В_Отделка-помещения-01_Стили_Ключевая) → data-filling schedule (В_Отделка-помещения-02_Заполнение данных) → output finish list(s) (О_АР_Ведомость отделки помещений_Имя/_Номер). The key schedule is reused to keep its key parameter linked; data and output schedules are duplicated with template formatting. Rows are rooms; columns are finish types. Falls back to a single schedule when no chain templates exist; its default columns resolve by built-in parameter ids, so localized (e.g. Russian) projects work without English parameter names. Fails with an explicit error instead of creating an empty schedule when no fields resolve. Warns when more than 30% of rooms lack finish parameters.",
     {
       schedule: finishScheduleSchema
         .optional()
