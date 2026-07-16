@@ -197,6 +197,108 @@ function mockDeps(overrides: Partial<NormAuditDeps> = {}): NormAuditDeps {
       },
       rule: { id: "tambour-1" } as never,
     }),
+    runRoomArea: async () => ({
+      success: true,
+      message: "ok area",
+      limits: [
+        {
+          category: "living_room" as const,
+          minAreaM2: 9,
+          source: {
+            document: "СП РК 3.02-101-2012",
+            clause: "п. 5.1.2",
+            quote: "9 м²",
+          },
+          rule: { id: "area-1" } as never,
+        },
+      ],
+      totalChecked: 1,
+      violations: [
+        {
+          id: 601,
+          name: "Жилая",
+          level: "1 этаж",
+          status: "violation" as const,
+          areaM2: 8,
+          requiredAreaM2: 9,
+          deviationM2: 1,
+          category: "living_room" as const,
+          limitSource: {
+            category: "living_room" as const,
+            minAreaM2: 9,
+            source: {
+              document: "СП РК 3.02-101-2012",
+              clause: "п. 5.1.2",
+              quote: "9 м²",
+            },
+            rule: { id: "area-1" } as never,
+          },
+        },
+      ],
+      nearLimit: [],
+      compliant: [],
+      warnings: [],
+    }),
+    runRoomHeight: async () => ({
+      success: true,
+      message: "ok height",
+      minHeightMm: 2500,
+      totalChecked: 1,
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      source: {
+        document: "СП РК 3.02-101-2012",
+        clause: "п. 4.4.10",
+        quote: "2500 мм",
+      },
+      warnings: [],
+    }),
+    runStoreyHeight: async () => ({
+      success: true,
+      message: "ok storey",
+      minStoreyHeightMm: 2800,
+      totalChecked: 1,
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      source: {
+        document: "СП РК 3.02-101-2012",
+        clause: "п. 4.4",
+        quote: "2800 мм",
+      },
+      warnings: [],
+    }),
+    resolveRoomAreaLimits: () => [
+      {
+        category: "living_room" as const,
+        minAreaM2: 9,
+        source: {
+          document: "СП РК 3.02-101-2012",
+          clause: "п. 5.1.2",
+          quote: "9 м²",
+        },
+        rule: { id: "area-1" } as never,
+      },
+    ],
+    resolveRoomHeight: () => ({
+      minHeightMm: 2500,
+      source: {
+        document: "СП РК 3.02-101-2012",
+        clause: "п. 4.4.10",
+        quote: "2500 мм",
+      },
+      rule: { id: "height-1" } as never,
+    }),
+    resolveStoreyHeight: () => ({
+      minStoreyHeightMm: 2800,
+      source: {
+        document: "СП РК 3.02-101-2012",
+        clause: "п. 4.4",
+        quote: "2800 мм",
+      },
+      rule: { id: "storey-1" } as never,
+    }),
     highlight: async ({ findings }) => ({
       highlightedCount: findings.filter(
         (f) => f.status === "violation" || f.status === "nearLimit"
@@ -222,7 +324,7 @@ describe("runNormAudit orchestrator", () => {
 
     assert.equal(result.success, true);
     assert.equal(result.levelName, "1 этаж");
-    assert.equal(result.summary.checksRun, 6);
+    assert.equal(result.summary.checksRun, 9);
     assert.ok(result.summary.violations >= 5);
 
     const narrowDoor = result.findings.find(
@@ -369,9 +471,41 @@ describe("runNormAudit orchestrator", () => {
           source,
           warnings: [],
         }),
+        runRoomArea: async () => ({
+          success: false,
+          message: "fail",
+          limits: [],
+          totalChecked: 0,
+          violations: [],
+          nearLimit: [],
+          compliant: [],
+          warnings: [],
+        }),
+        runRoomHeight: async () => ({
+          success: false,
+          message: "fail",
+          minHeightMm: 2500,
+          totalChecked: 0,
+          violations: [],
+          nearLimit: [],
+          compliant: [],
+          source,
+          warnings: [],
+        }),
+        runStoreyHeight: async () => ({
+          success: false,
+          message: "fail",
+          minStoreyHeightMm: 2800,
+          totalChecked: 0,
+          violations: [],
+          nearLimit: [],
+          compliant: [],
+          source,
+          warnings: [],
+        }),
       })
     );
     assert.equal(result.success, false);
-    assert.equal(result.summary.checksFailed, 6);
+    assert.equal(result.summary.checksFailed, 9);
   });
 });

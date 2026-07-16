@@ -16,6 +16,7 @@
         "build": "tsc",
         "test": "npm run build && node --test \"build/normatives/**/*.test.js\"",
         "seed:norms": "npm run build && node build/scripts/seed-norm-library.js",
+        "seed:residential-norms": "npm run build && node build/scripts/seed-residential-norms.js",
         "prepublishOnly": "npm run build"
     },
     "files": [

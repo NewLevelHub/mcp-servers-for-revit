@@ -12,6 +12,7 @@ import {
   withSuggestedTags,
   type NormLibraryStats,
 } from "./rulesStore.js";
+import { ensureCuratedResidentialRoomNorms } from "./normAudit/curatedResidentialRoomNorms.js";
 
 type Database = DatabaseConstructor.Database;
 
@@ -132,6 +133,10 @@ export async function seedNormLibrary(
       });
     }
   }
+
+  const curated = ensureCuratedResidentialRoomNorms(db);
+  inserted += curated.inserted;
+  updated += curated.updated;
 
   return {
     normativesDir,

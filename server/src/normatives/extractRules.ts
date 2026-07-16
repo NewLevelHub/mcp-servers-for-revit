@@ -266,6 +266,16 @@ function parseLimits(text: string): ParsedLimit[] {
     `(?:не\\s+менее|кемінде)\\s+(\\d+(?:[.,]\\d+)?)\\s*(${UNIT_CAPTURE})?`,
     "gi"
   );
+  // Table / note wording: «ванной - 2,25 м²», «кухня не менее 9 м²» already covered above.
+  const labeledAreaPattern = new RegExp(
+    `(?:ванн\\w*|уборн\\w*|сануз\\w*|кухн\\w*)\\s*[-–—:]\\s*(\\d+(?:[.,]\\d+)?)\\s*(${UNIT_CAPTURE})`,
+    "gi"
+  );
+  // «Высота жилых помещений … 2,5 м» (classification tables).
+  const livingHeightPattern = new RegExp(
+    `высота\\s+жилых\\s+помещений[^.\\n]{0,80}?(\\d+(?:[.,]\\d+)?)\\s*(${UNIT_CAPTURE})`,
+    "gi"
+  );
   const maxPattern = new RegExp(
     `(?:не\\s+более|аспауға\\s+тиіс|артық\\s+емес|жоғары\\s+емес)\\s+(\\d+(?:[.,]\\d+)?)\\s*(${UNIT_CAPTURE})?`,
     "gi"
@@ -294,6 +304,28 @@ function parseLimits(text: string): ParsedLimit[] {
       value: parseNumber(match[1]),
       unit: parseUnit(match[2]),
     });
+  }
+
+  for (const match of text.matchAll(labeledAreaPattern)) {
+    const unit = parseUnit(match[2]);
+    if (unit === "m2" || unit === "m" || /м\s*2|м²/i.test(match[2] ?? "")) {
+      limits.push({
+        type: "min_value",
+        value: parseNumber(match[1]),
+        unit: unit === "m" && /м\s*2|м²/i.test(match[2] ?? "") ? "m2" : unit === "none" ? "m2" : unit,
+      });
+    }
+  }
+
+  for (const match of text.matchAll(livingHeightPattern)) {
+    const unit = parseUnit(match[2]);
+    if (unit === "m" || unit === "mm") {
+      limits.push({
+        type: "min_value",
+        value: parseNumber(match[1]),
+        unit,
+      });
+    }
   }
 
   for (const match of text.matchAll(maxPattern)) {

@@ -39,10 +39,51 @@ export {
 } from "./tambourSize.js";
 export {
   runDoorWidthCheck,
+  runRoomAreaCheck,
+  runRoomHeightCheck,
+  runStoreyHeightCheck,
   runTambourSizeCheck,
   type DoorWidthRunnerResult,
   type TambourSizeRunnerResult,
 } from "./runners.js";
+export {
+  classifyResidentialRoom,
+  isResidentialRoomForHeight,
+  type ResidentialRoomCategory,
+} from "./roomPurpose.js";
+export {
+  classifyRoomAreas,
+  type RoomAreaClassification,
+  type RoomAreaInput,
+} from "./roomArea.js";
+export {
+  classifyRoomHeights,
+  type RoomHeightClassification,
+  type RoomHeightInput,
+} from "./roomHeight.js";
+export {
+  classifyStoreyHeights,
+  computeStoreyHeights,
+  type LevelInput,
+  type StoreyHeightClassification,
+} from "./storeyHeight.js";
+export {
+  resolveRoomAreaLimitsFromLibrary,
+  type RoomAreaLimit,
+} from "./resolveRoomAreaLimits.js";
+export {
+  resolveRoomHeightLimitFromLibrary,
+  type ResolvedRoomHeightLimit,
+} from "./resolveRoomHeightLimit.js";
+export {
+  resolveStoreyHeightLimitFromLibrary,
+  type ResolvedStoreyHeightLimit,
+} from "./resolveStoreyHeightLimit.js";
+export {
+  normalizeRoomAreaFindings,
+  normalizeRoomHeightFindings,
+  normalizeStoreyHeightFindings,
+} from "./normalizeFindings.js";
 export type {
   NormAuditCheckType,
   NormAuditFinding,

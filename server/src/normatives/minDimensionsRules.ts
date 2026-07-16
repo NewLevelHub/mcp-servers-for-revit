@@ -140,10 +140,75 @@ function parseMinValueMm(sentence: string): number | null {
 
 function extractApplicability(sentence: string): string | undefined {
   const match = sentence.match(
-    /(?:для\s+[^.;]+|в\s+жилых\s+зданиях[^.;]*|класс[а-яё]*\s*ф[^.;]+)/i
+    /(?:для\s+[^.;]+|в\s+квартирах\s+для\s+[^.;]+|в\s+жилых\s+зданиях[^.;]*|класс[а-яё]*\s*ф[^.;]+|қарт\s+және\s+мүгедек[^.;]+|престар[^.;]+|инвалид[^.;]{0,80})/i
   );
   return match ? match[0].replace(/\s+/g, " ").trim() : undefined;
 }
+
+/** МГН / спецжильё / пожилые — не для массового жилого дома. */
+export function isMgnOrSpecialHousingRule(rule: MinDimensionNormRule): boolean {
+  const blob =
+    `${rule.source.document} ${rule.sourcePdf} ${rule.source.clause} ${rule.source.quote} ${rule.applicability ?? ""}`.toLowerCase();
+
+  if (/3\.06-101|3\.06-31/.test(blob)) return true;
+  if (
+    /престар|инвалид|мүгедек|қарт\s+және|маломобил|коляск|специальн\w*\s+квартир|спецжил|арнайы\s+(?:пәтер|квартир)/i.test(
+      blob
+    )
+  ) {
+    return true;
+  }
+  // СП РК 3.02-101 п. 4.6.5 — раздел доступности МГН.
+  if (/п\.?\s*4\.6\.5\b/.test(blob) || /\b4\.6\.5\b/.test(rule.source.clause)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Ширина балкона/галереи к незадымляемой ЛК (Н1) — не габарит летнего
+ * помещения обычной квартиры.
+ */
+export function isFirePathBalconyWidthRule(rule: MinDimensionNormRule): boolean {
+  if (rule.metric !== "width") return false;
+  if (rule.object !== "балкон" && rule.object !== "лоджия") return false;
+  const blob = `${rule.source.quote} ${rule.applicability ?? ""}`.toLowerCase();
+  return /түтіндет|незадымл|лестничн|баспалдақ\s+тор|галереялард|типті\s+түтін|типа\s+н\s*1|\bh1\b/i.test(
+    blob
+  );
+}
+
+export type MinDimensionsHousingType = "ordinary" | "mgn";
+
+export function filterMinDimensionRulesForHousing(
+  rules: MinDimensionNormRule[],
+  housingType: MinDimensionsHousingType = "ordinary"
+): MinDimensionNormRule[] {
+  return rules.filter((rule) => {
+    if (isFirePathBalconyWidthRule(rule)) return false;
+
+    const isSummerRoom =
+      rule.object === "балкон" || rule.object === "лоджия";
+    const isSummerSize =
+      isSummerRoom && (rule.metric === "width" || rule.metric === "depth");
+
+    if (housingType === "ordinary") {
+      // В normatives/ нет общей мин. ширины/глубины лоджии для массового жилья —
+      // только МГН (1,4 м) и спецжильё (глубина 1,6 м). Не применяем.
+      if (isSummerSize) return false;
+      return true;
+    }
+
+    // housingType === "mgn": предпочитаем МГН/спецправила, простенки тоже ок.
+    if (isSummerSize && !isMgnOrSpecialHousingRule(rule)) {
+      // Общие/пожарные ширины галерей к ЛК уже отсечены; остальное без МГН-метки
+      // для режима mgn не берём как замену п. 4.6.5.
+      if (rule.metric === "width" && rule.minValueMm !== 1400) return false;
+    }
+    return true;
+  });
+}
+
 
 export function inferMinDimensionRule(
   sentence: string,
@@ -331,36 +396,55 @@ export function extractMinDimensionRulesFromText(
   return rules;
 }
 
-function scoreRule(rule: MinDimensionNormRule): number {
+function scoreRule(
+  rule: MinDimensionNormRule,
+  housingType: MinDimensionsHousingType = "ordinary"
+): number {
   let score = 0;
   if (rule.source.clause) score += 10;
   if (/СП\s*РК|SP_RK/i.test(rule.source.document)) score += 30;
   if (/ТР|тех\.?\s*регламент|пожарн/i.test(rule.source.document)) score += 25;
-  if (rule.metric === "width" && rule.minValueMm === 1400) score += 20;
-  if (rule.metric === "depth" && rule.minValueMm === 1600) score += 30;
+  if (rule.metric === "depth" && rule.minValueMm === 1600) score += 10;
   if (rule.metric === "depth" && rule.minValueMm > 2000) score -= 15;
   if (/общие\s+для\s+жилой\s+группы/i.test(rule.source.quote)) score -= 20;
   if (rule.metric === "pier_to_opening" && rule.minValueMm === 1200) score += 20;
   if (rule.metric === "pier_between_openings" && rule.minValueMm === 1600) score += 25;
   if (rule.metric === "pier_between_openings" && rule.minValueMm === 1200) score += 5;
+
+  const mgn = isMgnOrSpecialHousingRule(rule);
+  if (housingType === "ordinary" && mgn) score -= 100;
+  if (housingType === "mgn" && mgn && rule.metric === "width" && rule.minValueMm === 1400) {
+    score += 40;
+  }
+  if (housingType === "mgn" && mgn && rule.metric === "depth" && rule.minValueMm === 1600) {
+    score += 30;
+  }
+
   return score;
 }
 
 export function pickPrimaryMinDimensionRules(
-  rules: MinDimensionNormRule[]
+  rules: MinDimensionNormRule[],
+  options?: { housingType?: MinDimensionsHousingType }
 ): Partial<Record<`${MinDimensionObject}:${MinDimensionMetric}`, MinDimensionNormRule>> {
+  const housingType = options?.housingType ?? "ordinary";
+  const filtered = filterMinDimensionRulesForHousing(rules, housingType);
   const buckets = new Map<string, MinDimensionNormRule[]>();
 
-  for (const rule of rules) {
+  for (const rule of filtered) {
     const key = `${rule.object}:${rule.metric}`;
     const list = buckets.get(key) ?? [];
     list.push(rule);
     buckets.set(key, list);
   }
 
-  const result: Partial<Record<`${MinDimensionObject}:${MinDimensionMetric}`, MinDimensionNormRule>> = {};
+  const result: Partial<
+    Record<`${MinDimensionObject}:${MinDimensionMetric}`, MinDimensionNormRule>
+  > = {};
   for (const [key, list] of buckets) {
-    const best = [...list].sort((a, b) => scoreRule(b) - scoreRule(a))[0];
+    const best = [...list].sort(
+      (a, b) => scoreRule(b, housingType) - scoreRule(a, housingType)
+    )[0];
     result[key as `${MinDimensionObject}:${MinDimensionMetric}`] = best;
   }
   return result;
@@ -373,13 +457,27 @@ export interface ResolvedMinDimensionLimits {
   minFirePierToOpeningMm?: number;
   minFirePierBetweenOpeningsMm?: number;
   appliedRules: MinDimensionNormRule[];
+  housingType: MinDimensionsHousingType;
+  skippedMgnRules: number;
 }
 
 export function resolveMinDimensionLimits(
   rules: MinDimensionNormRule[],
-  overrides?: Partial<ResolvedMinDimensionLimits>
+  overrides?: Partial<ResolvedMinDimensionLimits> & {
+    housingType?: MinDimensionsHousingType;
+  }
 ): ResolvedMinDimensionLimits {
-  const primary = pickPrimaryMinDimensionRules(rules);
+  const housingType = overrides?.housingType ?? "ordinary";
+  const skippedMgnRules =
+    housingType === "ordinary"
+      ? rules.filter(
+          (r) =>
+            (r.object === "балкон" || r.object === "лоджия") &&
+            (r.metric === "width" || r.metric === "depth")
+        ).length
+      : 0;
+
+  const primary = pickPrimaryMinDimensionRules(rules, { housingType });
   const applied: MinDimensionNormRule[] = [];
 
   const pick = (
@@ -412,6 +510,8 @@ export function resolveMinDimensionLimits(
       "minFirePierBetweenOpeningsMm"
     ),
     appliedRules: applied,
+    housingType,
+    skippedMgnRules,
   };
 }
 
