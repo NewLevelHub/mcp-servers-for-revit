@@ -8,6 +8,7 @@ export {
   normalizeFireDoorFindings,
   normalizeMinDimensionFindings,
   normalizeRoomDepthFindings,
+  normalizeTambourSizeFindings,
   summarizeFindings,
 } from "./normalizeFindings.js";
 export {
@@ -21,12 +22,27 @@ export {
   type ResolvedDoorWidthLimit,
 } from "./resolveDoorWidth.js";
 export {
+  resolveTambourSizeLimitFromLibrary,
+  type ResolvedTambourSizeLimit,
+} from "./resolveTambourSize.js";
+export {
   classifyDoorWidths,
   isDoorAccessory,
   type DoorWidthInput,
   type DoorWidthClassification,
 } from "./doorWidth.js";
-export { runDoorWidthCheck, type DoorWidthRunnerResult } from "./runners.js";
+export {
+  classifyTambourSizes,
+  isTambourRoom,
+  type TambourRoomInput,
+  type TambourSizeClassification,
+} from "./tambourSize.js";
+export {
+  runDoorWidthCheck,
+  runTambourSizeCheck,
+  type DoorWidthRunnerResult,
+  type TambourSizeRunnerResult,
+} from "./runners.js";
 export type {
   NormAuditCheckType,
   NormAuditFinding,

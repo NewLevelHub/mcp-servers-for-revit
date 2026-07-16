@@ -9,7 +9,7 @@ import {
 describe("normAudit checklist", () => {
   it("runs all Phase-1 checkers when topics omitted", () => {
     const selected = selectPhase1Checkers();
-    assert.equal(selected.length, 5);
+    assert.equal(selected.length, 6);
     assert.deepEqual(
       selected.map((c) => c.checkType),
       [
@@ -18,6 +18,7 @@ describe("normAudit checklist", () => {
         "min_dimensions",
         "fire_doors",
         "door_clear_width",
+        "tambour_size_min",
       ]
     );
   });
@@ -48,6 +49,11 @@ describe("normAudit checklist", () => {
   it("still surfaces the clear-opening «в свету» follow-up as skipped", () => {
     const skipped = selectSkippedRules(["дверь в свету"]);
     assert.ok(skipped.some((s) => s.checkType === "door_clear_width"));
+  });
+
+  it("runs the tambour checker when user asks about тамбур size", () => {
+    const selected = selectPhase1Checkers(["тамбур 1.65"]);
+    assert.ok(selected.some((c) => c.checkType === "tambour_size_min"));
   });
 
   it("topicMatchesHints is bidirectional substring", () => {

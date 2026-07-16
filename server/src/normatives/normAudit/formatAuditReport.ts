@@ -8,6 +8,7 @@ const CHECK_TITLES: Record<string, string> = {
   min_dimensions: "Лоджии / балконы / простенки",
   fire_doors: "Противопожарные двери",
   door_clear_width: "Ширина двери в свету",
+  tambour_size_min: "Габариты входного тамбура",
   egress_opening_width: "Ширина эвак. выхода",
   passage_width: "Ширина прохода",
 };

@@ -160,6 +160,43 @@ function mockDeps(overrides: Partial<NormAuditDeps> = {}): NormAuditDeps {
       },
       rule: { id: "door-1" } as never,
     }),
+    runTambourSize: async () => ({
+      success: true,
+      message: "ok tambour",
+      minSideMm: 1650,
+      totalChecked: 1,
+      violations: [
+        {
+          id: 501,
+          uniqueId: "501",
+          name: "Тамбур входной",
+          level: "1 этаж",
+          status: "violation",
+          widthMm: 1400,
+          depthMm: 1900,
+          minSideMm: 1400,
+          requiredSideMm: 1650,
+          deviationMm: 250,
+        },
+      ],
+      nearLimit: [],
+      compliant: [],
+      source: {
+        document: "СП РК 3.02-101-2012",
+        clause: "п. 4.4.10.6",
+        quote: "Тамбур не менее 1,65 м × 1,65 м.",
+      },
+      warnings: [],
+    }),
+    resolveTambourSize: () => ({
+      minSideMm: 1650,
+      source: {
+        document: "СП РК 3.02-101-2012",
+        clause: "п. 4.4.10.6",
+        quote: "Тамбур не менее 1,65 м × 1,65 м.",
+      },
+      rule: { id: "tambour-1" } as never,
+    }),
     highlight: async ({ findings }) => ({
       highlightedCount: findings.filter(
         (f) => f.status === "violation" || f.status === "nearLimit"
@@ -185,8 +222,8 @@ describe("runNormAudit orchestrator", () => {
 
     assert.equal(result.success, true);
     assert.equal(result.levelName, "1 этаж");
-    assert.equal(result.summary.checksRun, 5);
-    assert.ok(result.summary.violations >= 4);
+    assert.equal(result.summary.checksRun, 6);
+    assert.ok(result.summary.violations >= 5);
 
     const narrowDoor = result.findings.find(
       (f) => f.checkType === "door_clear_width" && f.elementId === 401
@@ -199,10 +236,19 @@ describe("runNormAudit orchestrator", () => {
 
     const tambour = result.findings.find((f) => f.name === "Тамбур");
     assert.ok(tambour);
+    assert.equal(tambour!.checkType, "evacuation_width");
     assert.equal(tambour!.actualMm, 1130);
     assert.equal(tambour!.requiredMm, 1200);
     assert.equal(tambour!.source.document, "СП РК 3.02-101");
     assert.match(tambour!.source.quote, /1200/);
+
+    const tambourSize = result.findings.find(
+      (f) => f.checkType === "tambour_size_min" && f.elementId === 501
+    );
+    assert.ok(tambourSize);
+    assert.equal(tambourSize!.actualMm, 1400);
+    assert.equal(tambourSize!.requiredMm, 1650);
+    assert.match(tambourSize!.source.clause, /4\.4\.10/);
 
     const loggia = result.findings.find((f) => f.name === "Лоджия");
     assert.ok(loggia);
@@ -312,9 +358,20 @@ describe("runNormAudit orchestrator", () => {
           source,
           warnings: [],
         }),
+        runTambourSize: async () => ({
+          success: false,
+          message: "fail",
+          minSideMm: 1650,
+          totalChecked: 0,
+          violations: [],
+          nearLimit: [],
+          compliant: [],
+          source,
+          warnings: [],
+        }),
       })
     );
     assert.equal(result.success, false);
-    assert.equal(result.summary.checksFailed, 5);
+    assert.equal(result.summary.checksFailed, 6);
   });
 });

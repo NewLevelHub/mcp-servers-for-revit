@@ -8,6 +8,7 @@ export interface NormAuditCheckerDef {
     | "min_dimensions"
     | "fire_doors"
     | "door_clear_width"
+    | "tambour_size_min"
   >;
   title: string;
   /** Substrings matched against user topics (lowercase). Empty topics → all. */
@@ -77,6 +78,20 @@ export const PHASE1_CHECKERS: readonly NormAuditCheckerDef[] = [
       "выход",
     ],
   },
+  {
+    checkType: "tambour_size_min",
+    title: "Габариты входного тамбура",
+    topicHints: [
+      "тамбур",
+      "tambour",
+      "vestibule",
+      "входной тамбур",
+      "тамбұр",
+      "кіреберіс",
+      "1.65",
+      "1,65",
+    ],
+  },
 ] as const;
 
 /**
@@ -102,7 +117,7 @@ export const PHASE2_SKIPPED: readonly NormAuditSkippedRule[] = [
     checkType: "passage_width",
     reason:
       "Отдельный checker мин. ширины прохода (если не покрыто коридором) ещё не реализован (Phase 2).",
-    topics: ["ширина прохода", "тамбур мин"],
+    topics: ["ширина прохода"],
   },
 ] as const;
 

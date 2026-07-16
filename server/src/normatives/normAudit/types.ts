@@ -7,6 +7,7 @@ export type NormAuditCheckType =
   | "min_dimensions"
   | "fire_doors"
   | "door_clear_width"
+  | "tambour_size_min"
   | "egress_opening_width"
   | "passage_width";
 

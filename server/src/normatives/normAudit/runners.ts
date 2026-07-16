@@ -21,6 +21,11 @@ import {
   type ClassifiedDoor,
   type DoorWidthInput,
 } from "./doorWidth.js";
+import {
+  classifyTambourSizes,
+  type ClassifiedTambour,
+  type TambourRoomInput,
+} from "./tambourSize.js";
 import type { NormAuditFinding, NormAuditSource } from "./types.js";
 import { toAuditSource } from "./types.js";
 
@@ -576,6 +581,134 @@ export async function runDoorWidthCheck(options: {
       `(из ${classified.totalDoors} дверных блоков). Норма ≥ ${options.minWidthMm} мм.`,
     minWidthMm: options.minWidthMm,
     totalChecked: classified.egressChecked,
+    violations: classified.violations,
+    nearLimit: classified.nearLimit,
+    compliant: classified.compliant,
+    source: options.source,
+    warnings,
+  };
+}
+
+const roomGeometryItemSchema = z.object({
+  id: z.number(),
+  uniqueId: z.string().optional().default(""),
+  name: z.string().optional().default(""),
+  number: z.string().optional().default(""),
+  level: z.string().optional().default(""),
+  widthMm: z.number(),
+  depthMm: z.number(),
+});
+
+export interface TambourSizeRunnerResult {
+  success: boolean;
+  message: string;
+  minSideMm: number;
+  totalChecked: number;
+  violations: ClassifiedTambour[];
+  nearLimit: ClassifiedTambour[];
+  compliant: ClassifiedTambour[];
+  source: NormAuditSource;
+  warnings: string[];
+}
+
+/**
+ * Tambour / vestibule size check (REV-67).
+ * Reads room geometry via get_room_geometry_metrics and compares min(width, depth)
+ * against the resolved minimum side (typically 1650 mm).
+ */
+export async function runTambourSizeCheck(options: {
+  levelName: string;
+  includeCompliant: boolean;
+  minSideMm: number;
+  source: NormAuditSource;
+  nearLimitToleranceMm?: number;
+}): Promise<TambourSizeRunnerResult> {
+  if (!(options.minSideMm > 0)) {
+    return {
+      success: false,
+      message:
+        "Нет числовой нормы габарита тамбура. Сделайте seed / query «тамбур 1.65».",
+      minSideMm: 0,
+      totalChecked: 0,
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      source: options.source,
+      warnings: [],
+    };
+  }
+
+  const rawResponse = await withRevitConnection(async (revitClient) => {
+    return await revitClient.sendCommand("get_room_geometry_metrics", {
+      levelName: options.levelName,
+      includeUnplacedRooms: false,
+    });
+  });
+
+  const raw = z
+    .object({
+      success: z.boolean(),
+      message: z.string().optional().default(""),
+      rooms: z.array(roomGeometryItemSchema).optional().default([]),
+    })
+    .parse(rawResponse);
+
+  if (!raw.success) {
+    return {
+      success: false,
+      message: raw.message || "get_room_geometry_metrics failed.",
+      minSideMm: options.minSideMm,
+      totalChecked: 0,
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      source: options.source,
+      warnings: [],
+    };
+  }
+
+  const rooms: TambourRoomInput[] = raw.rooms.map((room) => ({
+    id: room.id,
+    uniqueId: room.uniqueId || String(room.id),
+    name: room.name,
+    number: room.number,
+    level: room.level,
+    widthMm: room.widthMm,
+    depthMm: room.depthMm,
+  }));
+
+  const classified = classifyTambourSizes(rooms, {
+    minSideMm: options.minSideMm,
+    nearLimitToleranceMm: options.nearLimitToleranceMm ?? 50,
+  });
+
+  const warnings: string[] = [
+    "v1: сравнивается ограничивающий прямоугольник помещения (ширина × глубина по геометрии Revit). " +
+      "Фактический габарит с учётом отделки и ниш может отличаться.",
+  ];
+  if (classified.missingGeometry > 0) {
+    warnings.push(
+      `Тамбуров без читаемой геометрии: ${classified.missingGeometry} (пропущены).`
+    );
+  }
+  if (classified.tamboursFound === 0) {
+    warnings.push(
+      "Помещения с именем «тамбур» / vestibule на этаже не найдены — проверьте именование помещений."
+    );
+  }
+
+  const totalChecked =
+    classified.violations.length +
+    classified.nearLimit.length +
+    classified.compliant.length;
+
+  return {
+    success: true,
+    message:
+      `Найдено тамбуров: ${classified.tamboursFound}, проверено: ${totalChecked}. ` +
+      `Норма ≥ ${options.minSideMm} × ${options.minSideMm} мм.`,
+    minSideMm: options.minSideMm,
+    totalChecked,
     violations: classified.violations,
     nearLimit: classified.nearLimit,
     compliant: classified.compliant,
