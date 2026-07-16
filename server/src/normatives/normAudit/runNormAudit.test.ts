@@ -114,6 +114,34 @@ function mockDeps(overrides: Partial<NormAuditDeps> = {}): NormAuditDeps {
       ],
       warnings: [],
     }),
+    runDoorWidth: async () => ({
+      success: true,
+      message: "ok doors width",
+      minWidthMm: 900,
+      totalChecked: 2,
+      violations: [
+        {
+          id: 401,
+          uniqueId: "401",
+          family: "Дверь",
+          type: "700",
+          level: "1 этаж",
+          status: "violation",
+          actualMm: 700,
+          requiredMm: 900,
+          deviationMm: 200,
+          isOnEgressPath: true,
+        },
+      ],
+      nearLimit: [],
+      compliant: [],
+      source: {
+        document: "СП РК 3.02-101-2012",
+        clause: "п. 4.6.11",
+        quote: "Ширина дверных проёмов на лестничную клетку не менее 0,9 м.",
+      },
+      warnings: [],
+    }),
     resolveDepthLimit: () => ({
       maxDepthMm: 6000,
       source: {
@@ -122,6 +150,15 @@ function mockDeps(overrides: Partial<NormAuditDeps> = {}): NormAuditDeps {
         quote: "Глубина не более 6 м.",
       },
       rule: { id: "depth-1" } as never,
+    }),
+    resolveDoorWidth: () => ({
+      minWidthMm: 900,
+      source: {
+        document: "СП РК 3.02-101-2012",
+        clause: "п. 4.6.11",
+        quote: "Ширина дверных проёмов на лестничную клетку не менее 0,9 м.",
+      },
+      rule: { id: "door-1" } as never,
     }),
     highlight: async ({ findings }) => ({
       highlightedCount: findings.filter(
@@ -148,9 +185,17 @@ describe("runNormAudit orchestrator", () => {
 
     assert.equal(result.success, true);
     assert.equal(result.levelName, "1 этаж");
-    assert.equal(result.summary.checksRun, 4);
-    assert.ok(result.summary.violations >= 3);
-    assert.ok(result.skippedRules.some((s) => s.checkType === "door_clear_width"));
+    assert.equal(result.summary.checksRun, 5);
+    assert.ok(result.summary.violations >= 4);
+
+    const narrowDoor = result.findings.find(
+      (f) => f.checkType === "door_clear_width" && f.elementId === 401
+    );
+    assert.ok(narrowDoor);
+    assert.equal(narrowDoor!.status, "violation");
+    assert.equal(narrowDoor!.actualMm, 700);
+    assert.equal(narrowDoor!.requiredMm, 900);
+    assert.match(narrowDoor!.source.clause, /4\.6\.11/);
 
     const tambour = result.findings.find((f) => f.name === "Тамбур");
     assert.ok(tambour);
@@ -256,9 +301,20 @@ describe("runNormAudit orchestrator", () => {
           doors: [],
           warnings: [],
         }),
+        runDoorWidth: async () => ({
+          success: false,
+          message: "fail",
+          minWidthMm: 900,
+          totalChecked: 0,
+          violations: [],
+          nearLimit: [],
+          compliant: [],
+          source,
+          warnings: [],
+        }),
       })
     );
     assert.equal(result.success, false);
-    assert.equal(result.summary.checksFailed, 4);
+    assert.equal(result.summary.checksFailed, 5);
   });
 });

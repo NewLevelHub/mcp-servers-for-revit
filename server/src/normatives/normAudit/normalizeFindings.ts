@@ -244,6 +244,67 @@ export function normalizeFireDoorFindings(
   return findings;
 }
 
+export interface DoorWidthItemInput {
+  id: number;
+  uniqueId?: string;
+  family?: string;
+  type?: string;
+  level?: string;
+  status: "violation" | "nearLimit" | "compliant";
+  actualMm: number;
+  requiredMm: number;
+  deviationMm: number;
+  isOnEgressPath?: boolean;
+}
+
+function doorNameOf(item: {
+  type?: string;
+  family?: string;
+  id: number;
+}): string {
+  return (
+    (item.type && item.type.trim()) ||
+    (item.family && item.family.trim()) ||
+    `дверь ${item.id}`
+  );
+}
+
+export function normalizeDoorWidthFindings(input: {
+  violations: DoorWidthItemInput[];
+  nearLimit: DoorWidthItemInput[];
+  compliant: DoorWidthItemInput[];
+  source: NormAuditSource | null | undefined;
+  minWidthMm: number;
+}): NormAuditFinding[] {
+  const source = toAuditSource(
+    input.source,
+    `Минимальная ширина двери/проёма: ${input.minWidthMm} мм.`
+  );
+  const findings: NormAuditFinding[] = [];
+
+  const push = (item: DoorWidthItemInput) => {
+    findings.push({
+      checkType: "door_clear_width",
+      status: item.status,
+      elementId: item.id,
+      uniqueId: item.uniqueId,
+      name: doorNameOf(item),
+      level: item.level ?? "",
+      metric: "ширина",
+      actualMm: roundMm(item.actualMm),
+      requiredMm: roundMm(item.requiredMm || input.minWidthMm),
+      deviationMm: roundMm(item.deviationMm),
+      note: item.isOnEgressPath ? "на пути эвакуации" : undefined,
+      source,
+    });
+  };
+
+  for (const item of input.violations) push(item);
+  for (const item of input.nearLimit) push(item);
+  for (const item of input.compliant) push(item);
+  return findings;
+}
+
 export function summarizeFindings(
   findings: NormAuditFinding[],
   skippedCount: number

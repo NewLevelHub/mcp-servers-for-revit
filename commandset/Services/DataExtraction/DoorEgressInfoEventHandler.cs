@@ -41,6 +41,11 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                 var result = new List<DoorEgressInfo>();
                 foreach (var door in doorInstances)
                 {
+                    // Slopes / trims (откосы) live in OST_Doors but are not door
+                    // blocks — exclude them so width checks do not count them (REV-41).
+                    if (!OpeningFillClassifier.IsSchedulableDoor(door))
+                        continue;
+
                     var levelName = doc.GetElement(door.LevelId)?.Name ?? string.Empty;
                     if (!string.IsNullOrWhiteSpace(_levelNameFilter) &&
                         !string.Equals(levelName, _levelNameFilter, StringComparison.OrdinalIgnoreCase))

@@ -3,6 +3,7 @@ export { formatNormAuditReport } from "./formatAuditReport.js";
 export {
   findingsForHighlight,
   formatFindingNote,
+  normalizeDoorWidthFindings,
   normalizeEvacuationFindings,
   normalizeFireDoorFindings,
   normalizeMinDimensionFindings,
@@ -15,6 +16,17 @@ export {
   type RunNormAuditOptions,
 } from "./runNormAudit.js";
 export { resolveRoomDepthLimitFromLibrary } from "./resolveDepthLimit.js";
+export {
+  resolveDoorWidthLimitFromLibrary,
+  type ResolvedDoorWidthLimit,
+} from "./resolveDoorWidth.js";
+export {
+  classifyDoorWidths,
+  isDoorAccessory,
+  type DoorWidthInput,
+  type DoorWidthClassification,
+} from "./doorWidth.js";
+export { runDoorWidthCheck, type DoorWidthRunnerResult } from "./runners.js";
 export type {
   NormAuditCheckType,
   NormAuditFinding,
