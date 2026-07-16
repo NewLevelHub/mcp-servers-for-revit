@@ -225,6 +225,7 @@ export function registerCheckMinDimensionsTool(server: McpServer) {
           });
 
         const limits = resolveMinDimensionLimits(rules, {
+          housingType: "ordinary",
           minBalconyWidthMm: args.minBalconyWidthMm,
           minLoggiaWidthMm: args.minLoggiaWidthMm,
           minLoggiaDepthMm: args.minLoggiaDepthMm,
@@ -240,13 +241,18 @@ export function registerCheckMinDimensionsTool(server: McpServer) {
           limits.minFirePierBetweenOpeningsMm !== undefined;
 
         if (!hasLimit) {
+          const skipNote =
+            limits.skippedMgnRules > 0
+              ? ` Пропущено ${limits.skippedMgnRules} правил МГН/спецжилья (для обычного жилья не применяются).`
+              : "";
           return {
             content: [
               {
                 type: "text",
                 text:
-                  "check_min_dimensions failed: could not determine any limit. " +
-                  "Pass limits explicitly or ensure normatives/ PDFs are available.",
+                  "check_min_dimensions: для обычного жилья нет применимой мин. ширины/глубины лоджий-балконов." +
+                  skipNote +
+                  " Простенки тоже не извлечены. Передайте лимиты явно или housingType=mgn.",
               },
             ],
             isError: true,

@@ -12,11 +12,17 @@ import {
   normalizeFireDoorFindings,
   normalizeMinDimensionFindings,
   normalizeRoomDepthFindings,
+  normalizeRoomAreaFindings,
+  normalizeRoomHeightFindings,
+  normalizeStoreyHeightFindings,
   normalizeTambourSizeFindings,
   summarizeFindings,
 } from "./normalizeFindings.js";
 import { resolveRoomDepthLimitFromLibrary } from "./resolveDepthLimit.js";
 import { resolveDoorWidthLimitFromLibrary } from "./resolveDoorWidth.js";
+import { resolveRoomAreaLimitsFromLibrary } from "./resolveRoomAreaLimits.js";
+import { resolveRoomHeightLimitFromLibrary } from "./resolveRoomHeightLimit.js";
+import { resolveStoreyHeightLimitFromLibrary } from "./resolveStoreyHeightLimit.js";
 import { resolveTambourSizeLimitFromLibrary } from "./resolveTambourSize.js";
 import {
   highlightAuditViolations,
@@ -25,13 +31,19 @@ import {
   runEvacuationWidthCheck,
   runFireDoorsCheck,
   runMinDimensionsCheck,
+  runRoomAreaCheck,
   runRoomDepthCheck,
+  runRoomHeightCheck,
+  runStoreyHeightCheck,
   runTambourSizeCheck,
   type DoorWidthRunnerResult,
   type EvacuationWidthRunnerResult,
   type FireDoorsRunnerResult,
   type MinDimensionsRunnerResult,
+  type RoomAreaRunnerResult,
   type RoomDepthRunnerResult,
+  type RoomHeightRunnerResult,
+  type StoreyHeightRunnerResult,
   type TambourSizeRunnerResult,
 } from "./runners.js";
 import type {
@@ -95,6 +107,33 @@ export interface NormAuditDeps {
   resolveTambourSize?: (
     db: Database
   ) => ReturnType<typeof resolveTambourSizeLimitFromLibrary>;
+  runRoomArea?: (opts: {
+    levelName: string;
+    includeCompliant: boolean;
+    limits: ReturnType<typeof resolveRoomAreaLimitsFromLibrary>;
+    nearLimitToleranceM2?: number;
+  }) => Promise<RoomAreaRunnerResult>;
+  runRoomHeight?: (opts: {
+    levelName: string;
+    includeCompliant: boolean;
+    minHeightMm: number;
+    source: NormAuditSource;
+    nearLimitToleranceMm?: number;
+  }) => Promise<RoomHeightRunnerResult>;
+  runStoreyHeight?: (opts: {
+    minStoreyHeightMm: number;
+    source: NormAuditSource;
+    nearLimitToleranceMm?: number;
+  }) => Promise<StoreyHeightRunnerResult>;
+  resolveRoomAreaLimits?: (
+    db: Database
+  ) => ReturnType<typeof resolveRoomAreaLimitsFromLibrary>;
+  resolveRoomHeight?: (
+    db: Database
+  ) => ReturnType<typeof resolveRoomHeightLimitFromLibrary>;
+  resolveStoreyHeight?: (
+    db: Database
+  ) => ReturnType<typeof resolveStoreyHeightLimitFromLibrary>;
 }
 
 export interface RunNormAuditOptions {
@@ -143,9 +182,15 @@ async function runOneChecker(
         | "runFireDoors"
         | "runDoorWidth"
         | "runTambourSize"
+        | "runRoomArea"
+        | "runRoomHeight"
+        | "runStoreyHeight"
         | "resolveDepthLimit"
         | "resolveDoorWidth"
         | "resolveTambourSize"
+        | "resolveRoomAreaLimits"
+        | "resolveRoomHeight"
+        | "resolveStoreyHeight"
       >
     > & { db?: Database };
   }
@@ -462,6 +507,202 @@ async function runOneChecker(
           warnings,
         };
       }
+      case "room_area_min": {
+        if (!ctx.deps.db) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "skipped",
+              checkedCount: 0,
+              message: "База норм недоступна — площади помещений пропускаем.",
+            },
+            warnings: ["room_area_min: нет подключения к библиотеке норм"],
+          };
+        }
+        const limits = ctx.deps.resolveRoomAreaLimits!(ctx.deps.db);
+        if (limits.length === 0) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "skipped",
+              checkedCount: 0,
+              message:
+                "В библиотеке нет числовых норм площади помещений — сделайте seed.",
+            },
+            warnings: [
+              "room_area_min: правила площади не найдены в библиотеке (skipped, не violation)",
+            ],
+          };
+        }
+        const result = await ctx.deps.runRoomArea!({
+          levelName: ctx.levelName,
+          includeCompliant: ctx.includeCompliant,
+          limits,
+          nearLimitToleranceM2: 0.5,
+        });
+        warnings.push(...result.warnings);
+        if (!result.success) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "error",
+              checkedCount: 0,
+              message: result.message,
+            },
+            warnings,
+          };
+        }
+        const findings = normalizeRoomAreaFindings({
+          violations: result.violations,
+          nearLimit: result.nearLimit,
+          compliant: ctx.includeCompliant ? result.compliant : [],
+        });
+        return {
+          findings,
+          check: {
+            checkType: checker.checkType,
+            status: "ok",
+            checkedCount: result.totalChecked,
+            message: result.message,
+          },
+          warnings,
+        };
+      }
+      case "room_height_min": {
+        if (!ctx.deps.db) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "skipped",
+              checkedCount: 0,
+              message: "База норм недоступна — высоту помещений пропускаем.",
+            },
+            warnings: ["room_height_min: нет подключения к библиотеке норм"],
+          };
+        }
+        const limit = ctx.deps.resolveRoomHeight!(ctx.deps.db);
+        if (!limit) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "skipped",
+              checkedCount: 0,
+              message:
+                "В библиотеке нет числовой нормы высоты помещения — сделайте seed.",
+            },
+            warnings: [
+              "room_height_min: правило высоты не найдено в библиотеке (skipped, не violation)",
+            ],
+          };
+        }
+        const result = await ctx.deps.runRoomHeight!({
+          levelName: ctx.levelName,
+          includeCompliant: ctx.includeCompliant,
+          minHeightMm: limit.minHeightMm,
+          source: limit.source,
+          nearLimitToleranceMm: 50,
+        });
+        warnings.push(...result.warnings);
+        if (!result.success) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "error",
+              checkedCount: 0,
+              message: result.message,
+            },
+            warnings,
+          };
+        }
+        const findings = normalizeRoomHeightFindings({
+          violations: result.violations,
+          nearLimit: result.nearLimit,
+          compliant: ctx.includeCompliant ? result.compliant : [],
+          source: result.source,
+          minHeightMm: result.minHeightMm,
+        });
+        return {
+          findings,
+          check: {
+            checkType: checker.checkType,
+            status: "ok",
+            checkedCount: result.totalChecked,
+            message: result.message,
+          },
+          warnings,
+        };
+      }
+      case "storey_height": {
+        if (!ctx.deps.db) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "skipped",
+              checkedCount: 0,
+              message: "База норм недоступна — высоту этажа пропускаем.",
+            },
+            warnings: ["storey_height: нет подключения к библиотеке норм"],
+          };
+        }
+        const limit = ctx.deps.resolveStoreyHeight!(ctx.deps.db);
+        if (!limit) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "skipped",
+              checkedCount: 0,
+              message:
+                "В библиотеке нет числовой нормы высоты этажа — сделайте seed.",
+            },
+            warnings: [
+              "storey_height: правило высоты этажа не найдено в библиотеке (skipped, не violation)",
+            ],
+          };
+        }
+        const result = await ctx.deps.runStoreyHeight!({
+          minStoreyHeightMm: limit.minStoreyHeightMm,
+          source: limit.source,
+          nearLimitToleranceMm: 50,
+        });
+        warnings.push(...result.warnings);
+        if (!result.success) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "error",
+              checkedCount: 0,
+              message: result.message,
+            },
+            warnings,
+          };
+        }
+        const findings = normalizeStoreyHeightFindings({
+          violations: result.violations,
+          nearLimit: result.nearLimit,
+          compliant: ctx.includeCompliant ? result.compliant : [],
+          source: result.source,
+          minStoreyHeightMm: result.minStoreyHeightMm,
+        });
+        return {
+          findings,
+          check: {
+            checkType: checker.checkType,
+            status: "ok",
+            checkedCount: result.totalChecked,
+            message: result.message,
+          },
+          warnings,
+        };
+      }
       default: {
         const _exhaustive: never = checker.checkType;
         return {
@@ -524,12 +765,21 @@ export async function runNormAudit(
     runFireDoors: deps.runFireDoors ?? runFireDoorsCheck,
     runDoorWidth: deps.runDoorWidth ?? runDoorWidthCheck,
     runTambourSize: deps.runTambourSize ?? runTambourSizeCheck,
+    runRoomArea: deps.runRoomArea ?? runRoomAreaCheck,
+    runRoomHeight: deps.runRoomHeight ?? runRoomHeightCheck,
+    runStoreyHeight: deps.runStoreyHeight ?? runStoreyHeightCheck,
     resolveDepthLimit:
       deps.resolveDepthLimit ?? resolveRoomDepthLimitFromLibrary,
     resolveDoorWidth:
       deps.resolveDoorWidth ?? resolveDoorWidthLimitFromLibrary,
     resolveTambourSize:
       deps.resolveTambourSize ?? resolveTambourSizeLimitFromLibrary,
+    resolveRoomAreaLimits:
+      deps.resolveRoomAreaLimits ?? resolveRoomAreaLimitsFromLibrary,
+    resolveRoomHeight:
+      deps.resolveRoomHeight ?? resolveRoomHeightLimitFromLibrary,
+    resolveStoreyHeight:
+      deps.resolveStoreyHeight ?? resolveStoreyHeightLimitFromLibrary,
     highlight: deps.highlight ?? highlightAuditViolations,
   };
 

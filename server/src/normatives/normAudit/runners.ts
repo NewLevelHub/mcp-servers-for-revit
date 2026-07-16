@@ -26,6 +26,27 @@ import {
   type ClassifiedTambour,
   type TambourRoomInput,
 } from "./tambourSize.js";
+import {
+  classifyRoomAreas,
+  type ClassifiedRoomArea,
+  type RoomAreaInput,
+} from "./roomArea.js";
+import {
+  classifyRoomHeights,
+  type ClassifiedRoomHeight,
+  type RoomHeightInput,
+} from "./roomHeight.js";
+import {
+  resolveRoomClearHeight,
+  DEFAULT_FLOOR_THICKNESS_MM,
+  type LevelElevation,
+} from "./resolveRoomClearHeight.js";
+import {
+  classifyStoreyHeights,
+  type ClassifiedStoreyHeight,
+  type LevelInput,
+} from "./storeyHeight.js";
+import type { RoomAreaLimit } from "./resolveRoomAreaLimits.js";
 import type { NormAuditFinding, NormAuditSource } from "./types.js";
 import { toAuditSource } from "./types.js";
 
@@ -276,7 +297,13 @@ export async function runMinDimensionsCheck(options: {
   includeCompliant: boolean;
 }): Promise<MinDimensionsRunnerResult> {
   const { rules, warnings } = await loadMinDimensionRulesFromNormatives({});
-  const limits = resolveMinDimensionLimits(rules, {});
+  const limits = resolveMinDimensionLimits(rules, { housingType: "ordinary" });
+  const allWarnings = [...(warnings ?? [])];
+  if (limits.skippedMgnRules > 0) {
+    allWarnings.push(
+      `Обычное жильё: не применялись ${limits.skippedMgnRules} правил(а) ширины/глубины лоджий/балконов (в PDF есть только нормы МГН/спецжилья, напр. 1,4 м по п. 4.6.5).`
+    );
+  }
   const hasLimit =
     limits.minBalconyWidthMm !== undefined ||
     limits.minLoggiaWidthMm !== undefined ||
@@ -286,14 +313,15 @@ export async function runMinDimensionsCheck(options: {
 
   if (!hasLimit) {
     return {
-      success: false,
-      message: "Не удалось определить лимиты лоджий/балконов/простенков из normatives/.",
+      success: true,
+      message:
+        "Для обычного жилья нет применимой мин. ширины/глубины лоджий-балконов в normatives/; простенки и прочие лимиты тоже не извлечены.",
       totalChecked: 0,
       violations: [],
       compliant: [],
-      appliedRules: [],
+      appliedRules: limits.appliedRules,
       fallbackSource: toAuditSource(null),
-      warnings: warnings ?? [],
+      warnings: allWarnings,
     };
   }
 
@@ -331,7 +359,7 @@ export async function runMinDimensionsCheck(options: {
       compliant: [],
       appliedRules: limits.appliedRules,
       fallbackSource: toAuditSource(limits.appliedRules[0]?.source),
-      warnings: warnings ?? [],
+      warnings: allWarnings,
     };
   }
 
@@ -344,7 +372,7 @@ export async function runMinDimensionsCheck(options: {
     appliedRules: limits.appliedRules,
     fallbackSource: toAuditSource(limits.appliedRules[0]?.source),
     warnings: [
-      ...(warnings ?? []),
+      ...allWarnings,
       `PDF по умолчанию: ${DEFAULT_MIN_DIMENSIONS_PDF_FILES.join(", ")}`,
     ],
   };
@@ -717,6 +745,383 @@ export async function runTambourSizeCheck(options: {
   };
 }
 
+const exportRoomItemSchema = z.object({
+  id: z.number(),
+  uniqueId: z.string().optional().default(""),
+  name: z.string().optional().default(""),
+  number: z.string().optional().default(""),
+  level: z.string().optional().default(""),
+  area: z.number(),
+  unboundedHeight: z.number(),
+  /** Optional: exporter clear height (storey ΔZ − floor thickness), mm. */
+  clearHeight: z.number().optional(),
+  storeyHeight: z.number().optional(),
+  floorThickness: z.number().optional(),
+  heightSource: z.string().optional(),
+  department: z.string().optional().default(""),
+});
+
+const tepLevelSchema = z.object({
+  levelName: z.string(),
+  elevation: z.number(),
+  storeyKind: z.string(),
+});
+
+export interface RoomAreaRunnerResult {
+  success: boolean;
+  message: string;
+  limits: RoomAreaLimit[];
+  totalChecked: number;
+  violations: ClassifiedRoomArea[];
+  nearLimit: ClassifiedRoomArea[];
+  compliant: ClassifiedRoomArea[];
+  warnings: string[];
+}
+
+export interface RoomHeightRunnerResult {
+  success: boolean;
+  message: string;
+  minHeightMm: number;
+  source: NormAuditSource;
+  totalChecked: number;
+  violations: ClassifiedRoomHeight[];
+  nearLimit: ClassifiedRoomHeight[];
+  compliant: ClassifiedRoomHeight[];
+  warnings: string[];
+}
+
+export interface StoreyHeightRunnerResult {
+  success: boolean;
+  message: string;
+  minStoreyHeightMm: number;
+  source: NormAuditSource;
+  totalChecked: number;
+  violations: ClassifiedStoreyHeight[];
+  nearLimit: ClassifiedStoreyHeight[];
+  compliant: ClassifiedStoreyHeight[];
+  warnings: string[];
+}
+
+type ExportedRoomRow = RoomAreaInput & {
+  unboundedHeightMm: number;
+  exportedClearHeightMm?: number;
+  exportedStoreyHeightMm?: number;
+  floorThicknessMm?: number;
+};
+
+async function fetchExportRoomData(levelName: string): Promise<ExportedRoomRow[]> {
+  const rawResponse = await withRevitConnection(async (revitClient) => {
+    return await revitClient.sendCommand("export_room_data", {
+      includeUnplacedRooms: false,
+      includeNotEnclosedRooms: false,
+    });
+  });
+
+  const raw = z
+    .object({
+      success: z.boolean(),
+      message: z.string().optional().default(""),
+      rooms: z.array(exportRoomItemSchema).optional().default([]),
+    })
+    .parse(rawResponse);
+
+  if (!raw.success) {
+    throw new Error(raw.message || "export_room_data failed.");
+  }
+
+  return raw.rooms
+    .filter(
+      (room) =>
+        !levelName ||
+        room.level.toLowerCase() === levelName.toLowerCase()
+    )
+    .map((room) => ({
+      id: room.id,
+      uniqueId: room.uniqueId || String(room.id),
+      name: room.name,
+      number: room.number,
+      department: room.department,
+      level: room.level,
+      areaM2: room.area,
+      unboundedHeightMm: room.unboundedHeight,
+      exportedClearHeightMm: room.clearHeight,
+      exportedStoreyHeightMm: room.storeyHeight,
+      floorThicknessMm: room.floorThickness,
+    }));
+}
+
+async function fetchTepLevels(): Promise<LevelElevation[]> {
+  const rawResponse = await withRevitConnection(async (revitClient) => {
+    return await revitClient.sendCommand("export_tep_data", {});
+  });
+  const raw = z
+    .object({
+      success: z.boolean(),
+      message: z.string().optional().default(""),
+      levels: z.array(tepLevelSchema).optional().default([]),
+    })
+    .parse(rawResponse);
+  if (!raw.success) {
+    throw new Error(raw.message || "export_tep_data failed.");
+  }
+  return raw.levels.map((level) => ({
+    levelName: level.levelName,
+    elevationMm: level.elevation,
+    storeyKind: level.storeyKind,
+  }));
+}
+
+/**
+ * Room min-area check (REV-57). Uses export_room_data area (m²) vs per-category
+ * limits resolved from the norm library. Room type from name/department keywords.
+ */
+export async function runRoomAreaCheck(options: {
+  levelName: string;
+  includeCompliant: boolean;
+  limits: RoomAreaLimit[];
+  nearLimitToleranceM2?: number;
+}): Promise<RoomAreaRunnerResult> {
+  if (options.limits.length === 0) {
+    return {
+      success: false,
+      message:
+        "Нет числовых норм площади помещений в библиотеке. Сделайте seed / query «площадь жилой комнаты».",
+      limits: [],
+      totalChecked: 0,
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      warnings: [],
+    };
+  }
+
+  const rooms = await fetchExportRoomData(options.levelName);
+  const classified = classifyRoomAreas(rooms, {
+    limits: options.limits,
+    nearLimitToleranceM2: options.nearLimitToleranceM2 ?? 0.5,
+  });
+
+  const warnings: string[] = [
+    "v1: тип помещения определяется по имени/назначению (жилая, кухня, санузел, спальня). " +
+      "Проверяются только категории с найденной нормой в библиотеке.",
+  ];
+  if (classified.skippedUnknown > 0) {
+    warnings.push(
+      `Помещений без распознанного типа (или исключённых): ${classified.skippedUnknown}.`
+    );
+  }
+  if (classified.skippedNoLimit > 0) {
+    warnings.push(
+      `Помещений без применимой нормы площади: ${classified.skippedNoLimit}.`
+    );
+  }
+  if (classified.missingArea > 0) {
+    warnings.push(`Помещений без площади: ${classified.missingArea} (пропущены).`);
+  }
+
+  return {
+    success: true,
+    message: `Проверено помещений по площади: ${classified.checked}. Норм категорий: ${options.limits.length}.`,
+    limits: options.limits,
+    totalChecked: classified.checked,
+    violations: classified.violations,
+    nearLimit: classified.nearLimit,
+    compliant: classified.compliant,
+    warnings,
+  };
+}
+
+/**
+ * Room min-height check (REV-57).
+ * Prefer clear height from level ΔZ − floor slab; do not trust Revit default
+ * Room Limit Offset (often 8'-0" = 2438 mm).
+ */
+export async function runRoomHeightCheck(options: {
+  levelName: string;
+  includeCompliant: boolean;
+  minHeightMm: number;
+  source: NormAuditSource;
+  nearLimitToleranceMm?: number;
+}): Promise<RoomHeightRunnerResult> {
+  if (!(options.minHeightMm > 0)) {
+    return {
+      success: false,
+      message:
+        "Нет числовой нормы высоты помещения. Сделайте seed / query «высота жилых помещений».",
+      minHeightMm: 0,
+      source: options.source,
+      totalChecked: 0,
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      warnings: [],
+    };
+  }
+
+  const [rooms, levels] = await Promise.all([
+    fetchExportRoomData(options.levelName),
+    fetchTepLevels().catch(() => [] as LevelElevation[]),
+  ]);
+
+  const resolvedRooms: RoomHeightInput[] = rooms.map((room) => {
+    const resolved = resolveRoomClearHeight(
+      {
+        levelName: room.level,
+        unboundedHeightMm: room.unboundedHeightMm,
+        exportedClearHeightMm: room.exportedClearHeightMm,
+        exportedStoreyHeightMm: room.exportedStoreyHeightMm,
+        floorThicknessMm: room.floorThicknessMm,
+      },
+      levels
+    );
+    return {
+      id: room.id,
+      uniqueId: room.uniqueId,
+      name: room.name,
+      number: room.number,
+      department: room.department,
+      level: room.level,
+      clearHeightMm: resolved.heightMm,
+      heightSource: resolved.source,
+    };
+  });
+
+  const classified = classifyRoomHeights(resolvedRooms, {
+    minHeightMm: options.minHeightMm,
+    nearLimitToleranceMm: options.nearLimitToleranceMm ?? 50,
+  });
+
+  const sourceCounts = resolvedRooms.reduce(
+    (acc, room) => {
+      const key = room.heightSource ?? "missing";
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    },
+    {} as Record<string, number>
+  );
+
+  const warnings: string[] = [
+    "Высота помещений: ΔZ соседних уровней минус толщина перекрытия " +
+      `(типично ${DEFAULT_FLOOR_THICKNESS_MM} мм, если толщина пола не пришла из export). ` +
+      "Дефолт Room Limit Offset 8' (2438 мм) игнорируется.",
+  ];
+  if (levels.length === 0) {
+    warnings.push(
+      "export_tep_data недоступен — высота помещений без ΔZ уровней менее надёжна."
+    );
+  }
+  if (sourceCounts.level_clear) {
+    warnings.push(
+      `Высота по уровням (ΔZ − перекрытие): ${sourceCounts.level_clear} пом.`
+    );
+  }
+  if (classified.skipped > 0) {
+    warnings.push(
+      `Помещений вне жилых категорий (не проверялись): ${classified.skipped}.`
+    );
+  }
+  if (classified.missingHeight > 0) {
+    warnings.push(
+      `Помещений без читаемой высоты: ${classified.missingHeight} (пропущены).`
+    );
+  }
+
+  return {
+    success: true,
+    message: `Проверено помещений по высоте: ${classified.checked}. Норма ≥ ${options.minHeightMm} мм.`,
+    minHeightMm: options.minHeightMm,
+    source: options.source,
+    totalChecked: classified.checked,
+    violations: classified.violations,
+    nearLimit: classified.nearLimit,
+    compliant: classified.compliant,
+    warnings,
+  };
+}
+
+/**
+ * Storey height check (REV-57). ΔZ between consecutive above-ground levels from export_tep_data.
+ */
+export async function runStoreyHeightCheck(options: {
+  minStoreyHeightMm: number;
+  source: NormAuditSource;
+  nearLimitToleranceMm?: number;
+}): Promise<StoreyHeightRunnerResult> {
+  if (!(options.minStoreyHeightMm > 0)) {
+    return {
+      success: false,
+      message:
+        "Нет числовой нормы высоты этажа. Сделайте seed / query «высота этажа жилого здания».",
+      minStoreyHeightMm: 0,
+      source: options.source,
+      totalChecked: 0,
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      warnings: [],
+    };
+  }
+
+  const rawResponse = await withRevitConnection(async (revitClient) => {
+    return await revitClient.sendCommand("export_tep_data", {});
+  });
+
+  const raw = z
+    .object({
+      success: z.boolean(),
+      message: z.string().optional().default(""),
+      levels: z.array(tepLevelSchema).optional().default([]),
+    })
+    .parse(rawResponse);
+
+  if (!raw.success) {
+    return {
+      success: false,
+      message: raw.message || "export_tep_data failed.",
+      minStoreyHeightMm: options.minStoreyHeightMm,
+      source: options.source,
+      totalChecked: 0,
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      warnings: [],
+    };
+  }
+
+  const levels: LevelInput[] = raw.levels.map((level) => ({
+    levelName: level.levelName,
+    elevationMm: level.elevation,
+    storeyKind: level.storeyKind,
+  }));
+
+  const classified = classifyStoreyHeights(levels, {
+    minStoreyHeightMm: options.minStoreyHeightMm,
+    nearLimitToleranceMm: options.nearLimitToleranceMm ?? 50,
+  });
+
+  const warnings: string[] = [
+    "v1: высота этажа = разница отметок соседних надземных уровней (export_tep_data). " +
+      "Технические / подвальные уровни не участвуют.",
+  ];
+  if (classified.checked === 0) {
+    warnings.push(
+      "Недостаточно надземных уровней для расчёта высоты этажа (нужно ≥ 2)."
+    );
+  }
+
+  return {
+    success: true,
+    message: `Проверено перепадов этажей: ${classified.checked}. Норма ≥ ${options.minStoreyHeightMm} мм.`,
+    minStoreyHeightMm: options.minStoreyHeightMm,
+    source: options.source,
+    totalChecked: classified.checked,
+    violations: classified.violations,
+    nearLimit: classified.nearLimit,
+    compliant: classified.compliant,
+    warnings,
+  };
+}
+
 export interface HighlightAuditResult {
   highlightedCount: number;
   filledRegionCount: number;
@@ -745,6 +1150,9 @@ function paintTargetsFromFindings(findings: NormAuditFinding[]): {
         doorSeen.add(finding.elementId);
         doorIds.push(finding.elementId);
       }
+      continue;
+    }
+    if (finding.checkType === "storey_height") {
       continue;
     }
     if (!roomSeen.has(finding.elementId)) {
