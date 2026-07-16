@@ -17,6 +17,7 @@ const PRIORITY_TOOL_FILES = [
   "check_fire_doors",
   "check_room_depth",
   "check_min_dimensions",
+  "check_door_width",
   "run_norm_audit",
   "apply_norm_result",
   "highlight_room_tags",

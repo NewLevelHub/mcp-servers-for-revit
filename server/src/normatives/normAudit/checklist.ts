@@ -3,7 +3,11 @@ import type { NormAuditCheckType, NormAuditSkippedRule } from "./types.js";
 export interface NormAuditCheckerDef {
   checkType: Extract<
     NormAuditCheckType,
-    "evacuation_width" | "room_depth" | "min_dimensions" | "fire_doors"
+    | "evacuation_width"
+    | "room_depth"
+    | "min_dimensions"
+    | "fire_doors"
+    | "door_clear_width"
   >;
   title: string;
   /** Substrings matched against user topics (lowercase). Empty topics → all. */
@@ -56,15 +60,37 @@ export const PHASE1_CHECKERS: readonly NormAuditCheckerDef[] = [
       "двер",
     ],
   },
+  {
+    checkType: "door_clear_width",
+    title: "Ширина двери / проёма (номинал)",
+    topicHints: [
+      "двер",
+      "door",
+      "ширина двери",
+      "дверной проём",
+      "дверной проем",
+      "проём",
+      "проем",
+      "есік",
+      "ойық",
+      "эвак. выход",
+      "выход",
+    ],
+  },
 ] as const;
 
-/** Known measurable rules without a checker yet — always reported as skipped. */
+/**
+ * Known measurable rules without a checker yet — always reported as skipped.
+ * door_clear_width now has a v1 checker (nominal DOOR_WIDTH); the «в свету»
+ * (clear opening minus frame) refinement stays a documented follow-up.
+ */
 export const PHASE2_SKIPPED: readonly NormAuditSkippedRule[] = [
   {
     checkType: "door_clear_width",
     reason:
-      "Checker ширины дверного проёма в свету ещё не реализован (Phase 2).",
-    topics: ["ширина двери", "дверной проём", "дверь в свету", "clear width"],
+      "Ширина двери проверяется по номиналу параметра (DOOR_WIDTH). " +
+      "Ширина «в свету» (за вычетом коробки) — отдельный follow-up (Phase 2).",
+    topics: ["дверь в свету", "clear width", "в свету"],
   },
   {
     checkType: "egress_opening_width",

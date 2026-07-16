@@ -7,6 +7,7 @@ import {
 } from "./checklist.js";
 import { formatNormAuditReport } from "./formatAuditReport.js";
 import {
+  normalizeDoorWidthFindings,
   normalizeEvacuationFindings,
   normalizeFireDoorFindings,
   normalizeMinDimensionFindings,
@@ -14,13 +15,16 @@ import {
   summarizeFindings,
 } from "./normalizeFindings.js";
 import { resolveRoomDepthLimitFromLibrary } from "./resolveDepthLimit.js";
+import { resolveDoorWidthLimitFromLibrary } from "./resolveDoorWidth.js";
 import {
   highlightAuditViolations,
   resolveLevelNameFromView,
+  runDoorWidthCheck,
   runEvacuationWidthCheck,
   runFireDoorsCheck,
   runMinDimensionsCheck,
   runRoomDepthCheck,
+  type DoorWidthRunnerResult,
   type EvacuationWidthRunnerResult,
   type FireDoorsRunnerResult,
   type MinDimensionsRunnerResult,
@@ -56,6 +60,13 @@ export interface NormAuditDeps {
   runFireDoors?: (opts: {
     levelName: string;
   }) => Promise<FireDoorsRunnerResult>;
+  runDoorWidth?: (opts: {
+    levelName: string;
+    includeCompliant: boolean;
+    minWidthMm: number;
+    source: NormAuditSource;
+    nearLimitToleranceMm?: number;
+  }) => Promise<DoorWidthRunnerResult>;
   highlight?: (opts: {
     findings: NormAuditFinding[];
   }) => Promise<{
@@ -67,6 +78,9 @@ export interface NormAuditDeps {
   resolveDepthLimit?: (
     db: Database
   ) => ReturnType<typeof resolveRoomDepthLimitFromLibrary>;
+  resolveDoorWidth?: (
+    db: Database
+  ) => ReturnType<typeof resolveDoorWidthLimitFromLibrary>;
 }
 
 export interface RunNormAuditOptions {
@@ -113,7 +127,9 @@ async function runOneChecker(
         | "runRoomDepth"
         | "runMinDimensions"
         | "runFireDoors"
+        | "runDoorWidth"
         | "resolveDepthLimit"
+        | "resolveDoorWidth"
       >
     > & { db?: Database };
   }
@@ -296,6 +312,73 @@ async function runOneChecker(
           warnings,
         };
       }
+      case "door_clear_width": {
+        if (!ctx.deps.db) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "skipped",
+              checkedCount: 0,
+              message: "База норм недоступна — ширину дверей пропускаем.",
+            },
+            warnings: ["door_clear_width: нет подключения к библиотеке норм"],
+          };
+        }
+        const limit = ctx.deps.resolveDoorWidth(ctx.deps.db);
+        if (!limit) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "skipped",
+              checkedCount: 0,
+              message:
+                "В библиотеке нет числовой нормы ширины двери/проёма — сделайте seed.",
+            },
+            warnings: [
+              "door_clear_width: правило ширины двери не найдено в библиотеке (skipped, не violation)",
+            ],
+          };
+        }
+        const result = await ctx.deps.runDoorWidth({
+          levelName: ctx.levelName,
+          includeCompliant: ctx.includeCompliant,
+          minWidthMm: limit.minWidthMm,
+          source: limit.source,
+          nearLimitToleranceMm: 50,
+        });
+        warnings.push(...result.warnings);
+        if (!result.success) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "error",
+              checkedCount: 0,
+              message: result.message,
+            },
+            warnings,
+          };
+        }
+        const findings = normalizeDoorWidthFindings({
+          violations: result.violations,
+          nearLimit: result.nearLimit,
+          compliant: ctx.includeCompliant ? result.compliant : [],
+          source: result.source,
+          minWidthMm: result.minWidthMm,
+        });
+        return {
+          findings,
+          check: {
+            checkType: checker.checkType,
+            status: "ok",
+            checkedCount: result.totalChecked,
+            message: result.message,
+          },
+          warnings,
+        };
+      }
       default: {
         const _exhaustive: never = checker.checkType;
         return {
@@ -356,8 +439,11 @@ export async function runNormAudit(
     runRoomDepth: deps.runRoomDepth ?? runRoomDepthCheck,
     runMinDimensions: deps.runMinDimensions ?? runMinDimensionsCheck,
     runFireDoors: deps.runFireDoors ?? runFireDoorsCheck,
+    runDoorWidth: deps.runDoorWidth ?? runDoorWidthCheck,
     resolveDepthLimit:
       deps.resolveDepthLimit ?? resolveRoomDepthLimitFromLibrary,
+    resolveDoorWidth:
+      deps.resolveDoorWidth ?? resolveDoorWidthLimitFromLibrary,
     highlight: deps.highlight ?? highlightAuditViolations,
   };
 

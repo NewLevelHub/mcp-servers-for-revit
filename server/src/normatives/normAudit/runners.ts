@@ -16,6 +16,11 @@ import {
   DEFAULT_FIRE_DOOR_PDF_FILES,
   loadFireDoorRulesFromNormatives,
 } from "../fireDoorRules.js";
+import {
+  classifyDoorWidths,
+  type ClassifiedDoor,
+  type DoorWidthInput,
+} from "./doorWidth.js";
 import type { NormAuditFinding, NormAuditSource } from "./types.js";
 import { toAuditSource } from "./types.js";
 
@@ -448,6 +453,137 @@ export async function runFireDoorsCheck(options: {
   };
 }
 
+const doorEgressItemSchema = z.object({
+  id: z.number(),
+  uniqueId: z.string().optional().default(""),
+  family: z.string().optional().default(""),
+  type: z.string().optional().default(""),
+  level: z.string().optional().default(""),
+  openingWidthMm: z.number().nullable().optional(),
+  isOnEgressPath: z.boolean().optional().default(false),
+});
+
+export interface DoorWidthRunnerResult {
+  success: boolean;
+  message: string;
+  minWidthMm: number;
+  /** Door blocks after the accessory (откос) filter. */
+  totalChecked: number;
+  violations: ClassifiedDoor[];
+  nearLimit: ClassifiedDoor[];
+  compliant: ClassifiedDoor[];
+  source: NormAuditSource;
+  warnings: string[];
+}
+
+/**
+ * Door clear-width check (REV-56, v1 = nominal DOOR_WIDTH).
+ * Reads widths via get_door_egress_info, drops откосы (REV-41), and compares
+ * only doors on an egress path against the resolved minimum.
+ */
+export async function runDoorWidthCheck(options: {
+  levelName: string;
+  includeCompliant: boolean;
+  minWidthMm: number;
+  source: NormAuditSource;
+  nearLimitToleranceMm?: number;
+  egressOnly?: boolean;
+}): Promise<DoorWidthRunnerResult> {
+  if (!(options.minWidthMm > 0)) {
+    return {
+      success: false,
+      message:
+        "Нет числовой нормы ширины двери. Сделайте seed / query «ширина эвакуационного выхода».",
+      minWidthMm: 0,
+      totalChecked: 0,
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      source: options.source,
+      warnings: [],
+    };
+  }
+
+  const rawResponse = await withRevitConnection(async (revitClient) => {
+    return await revitClient.sendCommand("get_door_egress_info", {
+      levelName: options.levelName,
+    });
+  });
+
+  const raw = z
+    .object({
+      success: z.boolean(),
+      message: z.string().optional().default(""),
+      totalDoors: z.number().optional(),
+      doors: z.array(doorEgressItemSchema).optional().default([]),
+    })
+    .parse(rawResponse);
+
+  if (!raw.success) {
+    return {
+      success: false,
+      message: raw.message || "get_door_egress_info failed.",
+      minWidthMm: options.minWidthMm,
+      totalChecked: 0,
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      source: options.source,
+      warnings: [],
+    };
+  }
+
+  const doors: DoorWidthInput[] = raw.doors.map((door) => ({
+    id: door.id,
+    uniqueId: door.uniqueId || String(door.id),
+    family: door.family,
+    type: door.type,
+    level: door.level,
+    openingWidthMm: door.openingWidthMm ?? null,
+    isOnEgressPath: door.isOnEgressPath,
+  }));
+
+  const classified = classifyDoorWidths(doors, {
+    minWidthMm: options.minWidthMm,
+    nearLimitToleranceMm: options.nearLimitToleranceMm ?? 50,
+    egressOnly: options.egressOnly ?? true,
+  });
+
+  const warnings: string[] = [
+    "v1: сравнивается номинальная ширина параметра двери (DOOR_WIDTH). " +
+      "Ширина «в свету» (за вычетом коробки) — отдельный follow-up.",
+  ];
+  if (classified.accessoriesSkipped > 0) {
+    warnings.push(
+      `Откосы/наличники исключены из проверки: ${classified.accessoriesSkipped} (REV-41).`
+    );
+  }
+  if (classified.nonEgressSkipped > 0) {
+    warnings.push(
+      `Двери вне путей эвакуации не проверялись (нет применимой нормы ширины): ${classified.nonEgressSkipped}.`
+    );
+  }
+  if (classified.missingWidth > 0) {
+    warnings.push(
+      `Дверей без читаемой ширины: ${classified.missingWidth} (пропущены).`
+    );
+  }
+
+  return {
+    success: true,
+    message:
+      `Проверено дверей на путях эвакуации: ${classified.egressChecked} ` +
+      `(из ${classified.totalDoors} дверных блоков). Норма ≥ ${options.minWidthMm} мм.`,
+    minWidthMm: options.minWidthMm,
+    totalChecked: classified.egressChecked,
+    violations: classified.violations,
+    nearLimit: classified.nearLimit,
+    compliant: classified.compliant,
+    source: options.source,
+    warnings,
+  };
+}
+
 export interface HighlightAuditResult {
   highlightedCount: number;
   filledRegionCount: number;
@@ -468,7 +604,10 @@ function paintTargetsFromFindings(findings: NormAuditFinding[]): {
     if (finding.status !== "violation" && finding.status !== "nearLimit") {
       continue;
     }
-    if (finding.checkType === "fire_doors") {
+    if (
+      finding.checkType === "fire_doors" ||
+      finding.checkType === "door_clear_width"
+    ) {
       if (!doorSeen.has(finding.elementId)) {
         doorSeen.add(finding.elementId);
         doorIds.push(finding.elementId);
