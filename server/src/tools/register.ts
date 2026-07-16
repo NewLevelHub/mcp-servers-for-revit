@@ -18,6 +18,7 @@ const PRIORITY_TOOL_FILES = [
   "check_room_depth",
   "check_min_dimensions",
   "check_door_width",
+  "check_tambour_size",
   "run_norm_audit",
   "apply_norm_result",
   "highlight_room_tags",

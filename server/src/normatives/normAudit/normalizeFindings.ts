@@ -305,6 +305,58 @@ export function normalizeDoorWidthFindings(input: {
   return findings;
 }
 
+export interface TambourSizeItemInput {
+  id: number;
+  uniqueId?: string;
+  name: string;
+  level?: string;
+  status: "violation" | "nearLimit" | "compliant";
+  widthMm: number;
+  depthMm: number;
+  minSideMm: number;
+  requiredSideMm: number;
+  deviationMm: number;
+}
+
+export function normalizeTambourSizeFindings(input: {
+  violations: TambourSizeItemInput[];
+  nearLimit: TambourSizeItemInput[];
+  compliant: TambourSizeItemInput[];
+  source: NormAuditSource | null | undefined;
+  minSideMm: number;
+}): NormAuditFinding[] {
+  const source = toAuditSource(
+    input.source,
+    `Минимальный габарит входного тамбура: ${input.minSideMm} × ${input.minSideMm} мм.`
+  );
+  const findings: NormAuditFinding[] = [];
+
+  const push = (item: TambourSizeItemInput) => {
+    const required = item.requiredSideMm || input.minSideMm;
+    findings.push({
+      checkType: "tambour_size_min",
+      status: item.status,
+      elementId: item.id,
+      uniqueId: item.uniqueId,
+      name: item.name,
+      level: item.level ?? "",
+      metric: "габарит тамбура",
+      actualMm: roundMm(item.minSideMm),
+      requiredMm: roundMm(required),
+      deviationMm: roundMm(item.deviationMm),
+      note:
+        `ширина ${roundMm(item.widthMm)} мм × глубина ${roundMm(item.depthMm)} мм ` +
+        `(норма ≥ ${roundMm(required)} × ${roundMm(required)} мм)`,
+      source,
+    });
+  };
+
+  for (const item of input.violations) push(item);
+  for (const item of input.nearLimit) push(item);
+  for (const item of input.compliant) push(item);
+  return findings;
+}
+
 export function summarizeFindings(
   findings: NormAuditFinding[],
   skippedCount: number

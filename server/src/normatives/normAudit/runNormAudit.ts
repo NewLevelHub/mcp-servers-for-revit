@@ -12,10 +12,12 @@ import {
   normalizeFireDoorFindings,
   normalizeMinDimensionFindings,
   normalizeRoomDepthFindings,
+  normalizeTambourSizeFindings,
   summarizeFindings,
 } from "./normalizeFindings.js";
 import { resolveRoomDepthLimitFromLibrary } from "./resolveDepthLimit.js";
 import { resolveDoorWidthLimitFromLibrary } from "./resolveDoorWidth.js";
+import { resolveTambourSizeLimitFromLibrary } from "./resolveTambourSize.js";
 import {
   highlightAuditViolations,
   resolveLevelNameFromView,
@@ -24,11 +26,13 @@ import {
   runFireDoorsCheck,
   runMinDimensionsCheck,
   runRoomDepthCheck,
+  runTambourSizeCheck,
   type DoorWidthRunnerResult,
   type EvacuationWidthRunnerResult,
   type FireDoorsRunnerResult,
   type MinDimensionsRunnerResult,
   type RoomDepthRunnerResult,
+  type TambourSizeRunnerResult,
 } from "./runners.js";
 import type {
   NormAuditCheckRunSummary,
@@ -67,6 +71,13 @@ export interface NormAuditDeps {
     source: NormAuditSource;
     nearLimitToleranceMm?: number;
   }) => Promise<DoorWidthRunnerResult>;
+  runTambourSize?: (opts: {
+    levelName: string;
+    includeCompliant: boolean;
+    minSideMm: number;
+    source: NormAuditSource;
+    nearLimitToleranceMm?: number;
+  }) => Promise<TambourSizeRunnerResult>;
   highlight?: (opts: {
     findings: NormAuditFinding[];
   }) => Promise<{
@@ -81,6 +92,9 @@ export interface NormAuditDeps {
   resolveDoorWidth?: (
     db: Database
   ) => ReturnType<typeof resolveDoorWidthLimitFromLibrary>;
+  resolveTambourSize?: (
+    db: Database
+  ) => ReturnType<typeof resolveTambourSizeLimitFromLibrary>;
 }
 
 export interface RunNormAuditOptions {
@@ -128,8 +142,10 @@ async function runOneChecker(
         | "runMinDimensions"
         | "runFireDoors"
         | "runDoorWidth"
+        | "runTambourSize"
         | "resolveDepthLimit"
         | "resolveDoorWidth"
+        | "resolveTambourSize"
       >
     > & { db?: Database };
   }
@@ -379,6 +395,73 @@ async function runOneChecker(
           warnings,
         };
       }
+      case "tambour_size_min": {
+        if (!ctx.deps.db) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "skipped",
+              checkedCount: 0,
+              message: "База норм недоступна — габарит тамбура пропускаем.",
+            },
+            warnings: ["tambour_size_min: нет подключения к библиотеке норм"],
+          };
+        }
+        const limit = ctx.deps.resolveTambourSize!(ctx.deps.db);
+        if (!limit) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "skipped",
+              checkedCount: 0,
+              message:
+                "В библиотеке нет числовой нормы габарита тамбура — сделайте seed.",
+            },
+            warnings: [
+              "tambour_size_min: правило габарита тамбура не найдено в библиотеке (skipped, не violation)",
+            ],
+          };
+        }
+        const result = await ctx.deps.runTambourSize!({
+          levelName: ctx.levelName,
+          includeCompliant: ctx.includeCompliant,
+          minSideMm: limit.minSideMm,
+          source: limit.source,
+          nearLimitToleranceMm: 50,
+        });
+        warnings.push(...result.warnings);
+        if (!result.success) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "error",
+              checkedCount: 0,
+              message: result.message,
+            },
+            warnings,
+          };
+        }
+        const findings = normalizeTambourSizeFindings({
+          violations: result.violations,
+          nearLimit: result.nearLimit,
+          compliant: ctx.includeCompliant ? result.compliant : [],
+          source: result.source,
+          minSideMm: result.minSideMm,
+        });
+        return {
+          findings,
+          check: {
+            checkType: checker.checkType,
+            status: "ok",
+            checkedCount: result.totalChecked,
+            message: result.message,
+          },
+          warnings,
+        };
+      }
       default: {
         const _exhaustive: never = checker.checkType;
         return {
@@ -440,10 +523,13 @@ export async function runNormAudit(
     runMinDimensions: deps.runMinDimensions ?? runMinDimensionsCheck,
     runFireDoors: deps.runFireDoors ?? runFireDoorsCheck,
     runDoorWidth: deps.runDoorWidth ?? runDoorWidthCheck,
+    runTambourSize: deps.runTambourSize ?? runTambourSizeCheck,
     resolveDepthLimit:
       deps.resolveDepthLimit ?? resolveRoomDepthLimitFromLibrary,
     resolveDoorWidth:
       deps.resolveDoorWidth ?? resolveDoorWidthLimitFromLibrary,
+    resolveTambourSize:
+      deps.resolveTambourSize ?? resolveTambourSizeLimitFromLibrary,
     highlight: deps.highlight ?? highlightAuditViolations,
   };
 
