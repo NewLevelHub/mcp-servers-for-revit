@@ -1,5 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { withRevitConnection } from "../utils/ConnectionManager.js";
+import {
+  paginateScheduleExport,
+  scheduleExportPaginationSchema,
+  ScheduleExportPaginationArgs,
+} from "../utils/ScheduleExportPagination.js";
 
 function registerScheduleExportTool(
   server: McpServer,
@@ -11,8 +16,8 @@ function registerScheduleExportTool(
   server.tool(
     toolName,
     description,
-    {},
-    async () => {
+    { ...scheduleExportPaginationSchema },
+    async (args: ScheduleExportPaginationArgs) => {
       try {
         const response = await withRevitConnection(async (revitClient) => {
           return await revitClient.sendCommand(commandName, {});
@@ -22,7 +27,7 @@ function registerScheduleExportTool(
           content: [
             {
               type: "text",
-              text: JSON.stringify(response, null, 2),
+              text: JSON.stringify(paginateScheduleExport(response, args), null, 2),
             },
           ],
         };
@@ -48,7 +53,7 @@ export function registerCreateDoorScheduleTool(server: McpServer) {
     "create_door_schedule",
     "create_door_schedule",
     "door",
-    "Export structured door schedule data for door blocks only (excludes slopes/reveals and similar accessories by family/type name). Returns all instances (including those without mark) plus rows grouped by family type with mark, type, size, level, elementIds, and count. Foundation for create_schedule and validate_schedule workflows."
+    "Export structured door schedule data for door blocks only (excludes slopes/reveals and similar accessories by family/type name). Returns rows grouped by family type with mark, type, size, level, elementIds (truncated per maxElementIdsPerGroup), and count. The per-instance list is omitted by default — page through it with includeInstances/instancesOffset/instancesLimit. Foundation for create_schedule and validate_schedule workflows."
   );
 }
 
@@ -58,7 +63,7 @@ export function registerCreateWindowScheduleTool(server: McpServer) {
     "create_window_schedule",
     "create_window_schedule",
     "window",
-    "Export structured window schedule data for window blocks only (excludes slopes/sills and similar accessories by family/type name). Returns all instances (including those without mark) plus rows grouped by family type with mark, type, size, level, elementIds, and count. Foundation for create_schedule and validate_schedule workflows."
+    "Export structured window schedule data for window blocks only (excludes slopes/sills and similar accessories by family/type name). Returns rows grouped by family type with mark, type, size, level, elementIds (truncated per maxElementIdsPerGroup), and count. The per-instance list is omitted by default — page through it with includeInstances/instancesOffset/instancesLimit. Foundation for create_schedule and validate_schedule workflows."
   );
 }
 
@@ -68,6 +73,6 @@ export function registerCreateFloorScheduleTool(server: McpServer) {
     "create_floor_schedule",
     "create_floor_schedule",
     "floor",
-    "Export floor finish экспликация from the model: finish floors only (e.g. types (полы)*), excluding structural slabs, ceiling insulation, and facade floor-like types. Returns instances and groups by type/level with areaM2 (m²), optional compound layers, totalAreaM2, and count. Use this for floor area reports — not for counting all OST_Floors."
+    "Export floor finish экспликация from the model: finish floors only (e.g. types (полы)*), excluding structural slabs, ceiling insulation, and facade floor-like types. Returns groups by type/level with areaM2 (m²), optional compound layers, totalAreaM2, and count; the per-instance list is omitted by default — page through it with includeInstances/instancesOffset/instancesLimit. Use this for floor area reports — not for counting all OST_Floors."
   );
 }

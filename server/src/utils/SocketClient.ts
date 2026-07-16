@@ -3,6 +3,28 @@ import * as net from "net";
 const CONNECT_TIMEOUT_MS = 5000;
 const COMMAND_TIMEOUT_MS = 120000;
 
+// Commands whose plugin-side wait is 120–180 s. The socket timeout must outlast the
+// plugin's own timeout so its TimeoutException reaches the chat instead of a blind
+// socket cut-off (observed on large models, e.g. 572-room «Короткий блок»).
+const HEAVY_COMMAND_TIMEOUT_MS = 210000;
+const HEAVY_COMMANDS = new Set([
+  "analyze_model_statistics",
+  "export_room_finish_data",
+  "create_door_schedule",
+  "create_window_schedule",
+  "create_floor_schedule",
+  "create_curtain_wall_schedule",
+  "get_material_quantities",
+  "validate_schedule",
+  "get_schedule_definition",
+  "create_schedule",
+  "auto_layout_sheet",
+  "render_tep_table",
+  "create_floor_explication",
+  "check_min_dimensions",
+  "check_fire_doors",
+]);
+
 export class RevitClientConnection {
   host: string;
   port: number;
@@ -257,12 +279,19 @@ export class RevitClientConnection {
         const commandString = JSON.stringify(commandObj);
         this.socket.write(commandString);
 
+        const timeoutMs = HEAVY_COMMANDS.has(command)
+          ? HEAVY_COMMAND_TIMEOUT_MS
+          : COMMAND_TIMEOUT_MS;
         setTimeout(() => {
           if (this.responseCallbacks.has(requestId)) {
             this.responseCallbacks.delete(requestId);
-            reject(new Error(`Command timed out after 2 minutes: ${command}`));
+            reject(
+              new Error(
+                `Command timed out after ${timeoutMs / 1000} s: ${command}`
+              )
+            );
           }
-        }, COMMAND_TIMEOUT_MS);
+        }, timeoutMs);
       } catch (error) {
         reject(error);
       }
