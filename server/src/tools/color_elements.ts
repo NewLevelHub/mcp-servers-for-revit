@@ -5,14 +5,14 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerColorElementsTool(server: McpServer) {
   server.tool(
       "color_elements",
-      "Color elements in the current view based on a category and parameter value. Each unique parameter value gets assigned a distinct color.",
+      "Color elements via View Color Scheme (цветовая схема) for Rooms, or Override Graphics for other categories. NOT Annotate → Filled Region («Цветовая область») — for that use create_filled_regions. Prefer create_filled_regions for norm-violation solid fills that look like the Annotate UI; use this tool for soft multi-color schemes by parameter (as on plans with «Номер» / «Назначение»).",
       {
         categoryName: z
             .string()
-            .describe("The name of the Revit category to color (e.g., 'Walls', 'Doors', 'Rooms')"),
+            .describe("Revit category, e.g. 'Помещения' or 'Rooms' for room color fill scheme; 'Walls', 'Doors' for override splash"),
         parameterName: z
             .string()
-            .describe("The name of the parameter to use for grouping and coloring elements"),
+            .describe("Parameter to group/color by, e.g. 'Комментарии', 'Имя', 'Назначение'"),
         useGradient: z
             .boolean()
             .optional()
@@ -27,7 +27,7 @@ export function registerColorElementsTool(server: McpServer) {
                 })
             )
             .optional()
-            .describe("Optional array of custom RGB colors to use for specific parameter values"),
+            .describe("Optional RGB colors in group order (first group → first color). For violations mark them first in parameter values or use Комментарии='НК-нарушение'."),
       },
       async (args, extra) => {
         const params = args;

@@ -9,16 +9,6 @@
       "env": {
         "MCP_TOOL_PROFILE": "default"
       }
-    },
-    "mcp-server-for-revit-norms": {
-      "command": "C:/Program Files/nodejs/node.exe",
-      "args": [
-        "C:/Mac/Home/Desktop/mcp-servers-for-revit/server/build/index.js"
-      ],
-      "cwd": "C:/Mac/Home/Desktop/mcp-servers-for-revit/server",
-      "env": {
-        "MCP_TOOL_PROFILE": "norms"
-      }
     }
   }
 }

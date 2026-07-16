@@ -158,6 +158,7 @@ const MUTATING_COMMANDS = new Set([
   "delete_element",
   "operate_element",
   "color_splash",
+  "create_filled_regions",
   "tag_walls",
   "tag_rooms",
   "place_view_on_sheet",
