@@ -11,8 +11,14 @@ export {
   normalizeEvacuationFindings,
   normalizeFireDoorFindings,
   normalizeMinDimensionFindings,
+  normalizeOpeningHeightFindings,
   normalizeRoomDepthFindings,
   normalizeTambourSizeFindings,
+  normalizeWindowSillFindings,
+  normalizeStairWidthFindings,
+  normalizeStairRiserTreadFindings,
+  normalizeRampFindings,
+  normalizeRailingHeightFindings,
   summarizeFindings,
 } from "./normalizeFindings.js";
 export {
@@ -30,11 +36,54 @@ export {
   type ResolvedTambourSizeLimit,
 } from "./resolveTambourSize.js";
 export {
+  resolveWindowSillLimitFromLibrary,
+  type ResolvedWindowSillLimit,
+} from "./resolveWindowSill.js";
+export {
+  resolveOpeningHeightLimitFromLibrary,
+  type ResolvedOpeningHeightLimit,
+} from "./resolveOpeningHeight.js";
+export {
+  resolveStairWidthLimitFromLibrary,
+  resolveStairRiserTreadLimitsFromLibrary,
+  resolveRampLimitsFromLibrary,
+  resolveRailingHeightLimitFromLibrary,
+  type ResolvedStairWidthLimit,
+  type ResolvedStairRiserTreadLimits,
+  type ResolvedRampLimits,
+  type ResolvedRailingHeightLimit,
+} from "./resolveVerticalCirculation.js";
+export {
   classifyDoorWidths,
   isDoorAccessory,
   type DoorWidthInput,
   type DoorWidthClassification,
 } from "./doorWidth.js";
+export {
+  classifyWindowSills,
+  isWindowAccessory,
+  type WindowSillInput,
+  type WindowSillClassification,
+} from "./windowSill.js";
+export {
+  classifyOpeningHeights,
+  type OpeningHeightInput,
+  type OpeningHeightClassification,
+} from "./openingHeight.js";
+export {
+  classifyStairWidths,
+  classifyStairRiserTreads,
+  classifyRamps,
+  classifyRailingHeights,
+  type StairWidthInput,
+  type ClassifiedStairWidth,
+  type StairRiserTreadInput,
+  type ClassifiedStairRiserTread,
+  type RampInput,
+  type ClassifiedRamp,
+  type RailingInput,
+  type ClassifiedRailing,
+} from "./verticalCirculation.js";
 export {
   classifyTambourSizes,
   isTambourRoom,
@@ -43,12 +92,24 @@ export {
 } from "./tambourSize.js";
 export {
   runDoorWidthCheck,
+  runOpeningHeightCheck,
+  runRailingHeightCheck,
+  runRampCheck,
   runRoomAreaCheck,
   runRoomHeightCheck,
+  runStairRiserTreadCheck,
+  runStairWidthCheck,
   runStoreyHeightCheck,
   runTambourSizeCheck,
+  runWindowSillCheck,
   type DoorWidthRunnerResult,
+  type OpeningHeightRunnerResult,
+  type RailingHeightRunnerResult,
+  type RampRunnerResult,
+  type StairRiserTreadRunnerResult,
+  type StairWidthRunnerResult,
   type TambourSizeRunnerResult,
+  type WindowSillRunnerResult,
 } from "./runners.js";
 export {
   classifyResidentialRoom,

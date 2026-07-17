@@ -14,9 +14,10 @@ export function registerRunNormAuditTool(server: McpServer) {
     "run_norm_audit",
     "Unified measurable-norm audit for the open Revit floor/project (REV-54). " +
       "One call runs existing checkers: evacuation corridor width, room depth (from norm library), " +
-      "balcony/loggia/pier min dimensions, fire doors (parameter + schedule note). " +
+      "balcony/loggia/pier min dimensions, fire doors (parameter + schedule note), " +
+      "door width (nominal), tambour size, room area/height/storey, window sill height, opening height. " +
       "Returns summary + findings[] with document/clause/quote + actualMm/requiredMm, and skippedRules[] " +
-      "for checks not yet implemented (e.g. door clear width). " +
+      "for checks not yet implemented (e.g. door clear width «в свету»). " +
       "Does NOT claim full GOST coverage — only measurable checks with a checker. " +
       "Prefer this over calling multiple check_* when the user says «проверь этаж по нормам». " +
       "mode=highlight runs the same audit then paints violations: rooms via create_filled_regions " +

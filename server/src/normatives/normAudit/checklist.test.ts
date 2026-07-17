@@ -9,7 +9,7 @@ import {
 describe("normAudit checklist", () => {
   it("runs all Phase-1 checkers when topics omitted", () => {
     const selected = selectPhase1Checkers();
-    assert.equal(selected.length, 9);
+    assert.equal(selected.length, 15);
     assert.deepEqual(
       selected.map((c) => c.checkType),
       [
@@ -22,6 +22,12 @@ describe("normAudit checklist", () => {
         "room_area_min",
         "room_height_min",
         "storey_height",
+        "window_sill_height",
+        "opening_height",
+        "stair_width",
+        "stair_riser_tread",
+        "ramp_slope_width",
+        "railing_height",
       ]
     );
   });
@@ -57,6 +63,25 @@ describe("normAudit checklist", () => {
   it("runs the tambour checker when user asks about тамбур size", () => {
     const selected = selectPhase1Checkers(["тамбур 1.65"]);
     assert.ok(selected.some((c) => c.checkType === "tambour_size_min"));
+  });
+
+  it("runs sill / opening checkers when user asks about windows / exits", () => {
+    const sill = selectPhase1Checkers(["подоконник"]);
+    assert.ok(sill.some((c) => c.checkType === "window_sill_height"));
+
+    const opening = selectPhase1Checkers(["высота проёма"]);
+    assert.ok(opening.some((c) => c.checkType === "opening_height"));
+  });
+
+  it("runs stair / ramp / railing checkers by topic", () => {
+    const stair = selectPhase1Checkers(["ширина марша"]);
+    assert.ok(stair.some((c) => c.checkType === "stair_width"));
+
+    const ramp = selectPhase1Checkers(["пандус"]);
+    assert.ok(ramp.some((c) => c.checkType === "ramp_slope_width"));
+
+    const rail = selectPhase1Checkers(["ограждение"]);
+    assert.ok(rail.some((c) => c.checkType === "railing_height"));
   });
 
   it("topicMatchesHints is bidirectional substring", () => {

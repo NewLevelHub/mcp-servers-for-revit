@@ -498,6 +498,304 @@ export function normalizeStoreyHeightFindings(input: {
   return findings;
 }
 
+export function normalizeWindowSillFindings(input: {
+  violations: Array<{
+    id: number;
+    uniqueId?: string;
+    family?: string;
+    type?: string;
+    level?: string;
+    status: "violation" | "nearLimit" | "compliant";
+    actualMm: number;
+    requiredMm: number;
+    deviationMm: number;
+  }>;
+  nearLimit: typeof input.violations;
+  compliant: typeof input.violations;
+  source: NormAuditSource | null | undefined;
+  minSillHeightMm: number;
+}): NormAuditFinding[] {
+  const source = toAuditSource(
+    input.source,
+    `Минимальная высота подоконника: ${input.minSillHeightMm} мм.`
+  );
+  const findings: NormAuditFinding[] = [];
+
+  const push = (item: (typeof input.violations)[number]) => {
+    const name =
+      (item.type && item.type.trim()) ||
+      (item.family && item.family.trim()) ||
+      `окно ${item.id}`;
+    findings.push({
+      checkType: "window_sill_height",
+      status: item.status,
+      elementId: item.id,
+      uniqueId: item.uniqueId,
+      name,
+      level: item.level ?? "",
+      metric: "подоконник",
+      actualMm: roundMm(item.actualMm),
+      requiredMm: roundMm(item.requiredMm || input.minSillHeightMm),
+      deviationMm: roundMm(item.deviationMm),
+      source,
+    });
+  };
+
+  for (const item of input.violations) push(item);
+  for (const item of input.nearLimit) push(item);
+  for (const item of input.compliant) push(item);
+  return findings;
+}
+
+export function normalizeOpeningHeightFindings(input: {
+  violations: Array<{
+    id: number;
+    uniqueId?: string;
+    family?: string;
+    type?: string;
+    level?: string;
+    category?: string;
+    status: "violation" | "nearLimit" | "compliant";
+    actualMm: number;
+    requiredMm: number;
+    deviationMm: number;
+    isOnEgressPath?: boolean;
+  }>;
+  nearLimit: typeof input.violations;
+  compliant: typeof input.violations;
+  source: NormAuditSource | null | undefined;
+  minHeightMm: number;
+}): NormAuditFinding[] {
+  const source = toAuditSource(
+    input.source,
+    `Минимальная высота проёма: ${input.minHeightMm} мм.`
+  );
+  const findings: NormAuditFinding[] = [];
+
+  const push = (item: (typeof input.violations)[number]) => {
+    const name =
+      (item.type && item.type.trim()) ||
+      (item.family && item.family.trim()) ||
+      `проём ${item.id}`;
+    findings.push({
+      checkType: "opening_height",
+      status: item.status,
+      elementId: item.id,
+      uniqueId: item.uniqueId,
+      name,
+      level: item.level ?? "",
+      metric: "высота проёма",
+      actualMm: roundMm(item.actualMm),
+      requiredMm: roundMm(item.requiredMm || input.minHeightMm),
+      deviationMm: roundMm(item.deviationMm),
+      note: item.isOnEgressPath ? "на пути эвакуации" : undefined,
+      source,
+    });
+  };
+
+  for (const item of input.violations) push(item);
+  for (const item of input.nearLimit) push(item);
+  for (const item of input.compliant) push(item);
+  return findings;
+}
+
+export function normalizeStairWidthFindings(input: {
+  violations: Array<{
+    id: number;
+    uniqueId?: string;
+    name: string;
+    type?: string;
+    level?: string;
+    status: "violation" | "nearLimit" | "compliant";
+    actualMm: number;
+    requiredMm: number;
+    deviationMm: number;
+  }>;
+  nearLimit: typeof input.violations;
+  compliant: typeof input.violations;
+  source: NormAuditSource | null | undefined;
+  minWidthMm: number;
+}): NormAuditFinding[] {
+  const source = toAuditSource(
+    input.source,
+    `Минимальная ширина марша: ${input.minWidthMm} мм.`
+  );
+  const findings: NormAuditFinding[] = [];
+
+  const push = (item: (typeof input.violations)[number]) => {
+    findings.push({
+      checkType: "stair_width",
+      status: item.status,
+      elementId: item.id,
+      uniqueId: item.uniqueId,
+      name: item.name || item.type || `лестница ${item.id}`,
+      level: item.level ?? "",
+      metric: "ширина марша",
+      actualMm: roundMm(item.actualMm),
+      requiredMm: roundMm(item.requiredMm || input.minWidthMm),
+      deviationMm: roundMm(item.deviationMm),
+      source,
+    });
+  };
+
+  for (const item of input.violations) push(item);
+  for (const item of input.nearLimit) push(item);
+  for (const item of input.compliant) push(item);
+  return findings;
+}
+
+export function normalizeStairRiserTreadFindings(input: {
+  violations: Array<{
+    id: number;
+    uniqueId?: string;
+    name: string;
+    type?: string;
+    level?: string;
+    metric: "подступенок" | "проступь";
+    status: "violation" | "nearLimit" | "compliant";
+    actualMm: number;
+    requiredMm: number;
+    deviationMm: number;
+  }>;
+  nearLimit: typeof input.violations;
+  compliant: typeof input.violations;
+  riserSource?: NormAuditSource | null;
+  treadSource?: NormAuditSource | null;
+  fallbackSource?: NormAuditSource | null;
+}): NormAuditFinding[] {
+  const findings: NormAuditFinding[] = [];
+
+  const push = (item: (typeof input.violations)[number]) => {
+    const source =
+      item.metric === "подступенок"
+        ? toAuditSource(
+            input.riserSource ?? input.fallbackSource,
+            `Макс. высота подступенка: ${item.requiredMm} мм.`
+          )
+        : toAuditSource(
+            input.treadSource ?? input.fallbackSource,
+            `Мин. ширина проступи: ${item.requiredMm} мм.`
+          );
+    findings.push({
+      checkType: "stair_riser_tread",
+      status: item.status,
+      elementId: item.id,
+      uniqueId: item.uniqueId,
+      name: item.name || item.type || `лестница ${item.id}`,
+      level: item.level ?? "",
+      metric: item.metric,
+      actualMm: roundMm(item.actualMm),
+      requiredMm: roundMm(item.requiredMm),
+      deviationMm: roundMm(item.deviationMm),
+      source,
+    });
+  };
+
+  for (const item of input.violations) push(item);
+  for (const item of input.nearLimit) push(item);
+  for (const item of input.compliant) push(item);
+  return findings;
+}
+
+export function normalizeRampFindings(input: {
+  violations: Array<{
+    id: number;
+    uniqueId?: string;
+    name: string;
+    type?: string;
+    level?: string;
+    metric: "ширина" | "уклон";
+    status: "violation" | "nearLimit" | "compliant";
+    actualMm: number;
+    requiredMm: number;
+    deviationMm: number;
+  }>;
+  nearLimit: typeof input.violations;
+  compliant: typeof input.violations;
+  widthSource?: NormAuditSource | null;
+  slopeSource?: NormAuditSource | null;
+  fallbackSource?: NormAuditSource | null;
+}): NormAuditFinding[] {
+  const findings: NormAuditFinding[] = [];
+
+  const push = (item: (typeof input.violations)[number]) => {
+    const source =
+      item.metric === "ширина"
+        ? toAuditSource(
+            input.widthSource ?? input.fallbackSource,
+            `Минимальная ширина пандуса: ${item.requiredMm} мм.`
+          )
+        : toAuditSource(
+            input.slopeSource ?? input.fallbackSource,
+            `Максимальный уклон пандуса: ${item.requiredMm}%.`
+          );
+    findings.push({
+      checkType: "ramp_slope_width",
+      status: item.status,
+      elementId: item.id,
+      uniqueId: item.uniqueId,
+      name: item.name || item.type || `пандус ${item.id}`,
+      level: item.level ?? "",
+      metric: item.metric === "уклон" ? "уклон %" : "ширина",
+      actualMm: roundMm(item.actualMm),
+      requiredMm: roundMm(item.requiredMm),
+      deviationMm: roundMm(item.deviationMm),
+      note: item.metric === "уклон" ? "уклон в процентах" : undefined,
+      source,
+    });
+  };
+
+  for (const item of input.violations) push(item);
+  for (const item of input.nearLimit) push(item);
+  for (const item of input.compliant) push(item);
+  return findings;
+}
+
+export function normalizeRailingHeightFindings(input: {
+  violations: Array<{
+    id: number;
+    uniqueId?: string;
+    name: string;
+    type?: string;
+    level?: string;
+    status: "violation" | "nearLimit" | "compliant";
+    actualMm: number;
+    requiredMm: number;
+    deviationMm: number;
+  }>;
+  nearLimit: typeof input.violations;
+  compliant: typeof input.violations;
+  source: NormAuditSource | null | undefined;
+  minHeightMm: number;
+}): NormAuditFinding[] {
+  const source = toAuditSource(
+    input.source,
+    `Минимальная высота ограждения: ${input.minHeightMm} мм.`
+  );
+  const findings: NormAuditFinding[] = [];
+
+  const push = (item: (typeof input.violations)[number]) => {
+    findings.push({
+      checkType: "railing_height",
+      status: item.status,
+      elementId: item.id,
+      uniqueId: item.uniqueId,
+      name: item.name || item.type || `ограждение ${item.id}`,
+      level: item.level ?? "",
+      metric: "высота ограждения",
+      actualMm: roundMm(item.actualMm),
+      requiredMm: roundMm(item.requiredMm || input.minHeightMm),
+      deviationMm: roundMm(item.deviationMm),
+      source,
+    });
+  };
+
+  for (const item of input.violations) push(item);
+  for (const item of input.nearLimit) push(item);
+  for (const item of input.compliant) push(item);
+  return findings;
+}
+
 export function summarizeFindings(
   findings: NormAuditFinding[],
   skippedCount: number
@@ -538,6 +836,14 @@ export function formatFindingNote(finding: NormAuditFinding): string {
   }
   if (finding.checkType === "room_area_min" && finding.actualMm != null && finding.requiredMm != null) {
     return `${metric}${finding.actualMm} м² vs норма ${finding.requiredMm} м²`;
+  }
+  if (
+    finding.checkType === "ramp_slope_width" &&
+    finding.metric?.includes("уклон") &&
+    finding.actualMm != null &&
+    finding.requiredMm != null
+  ) {
+    return `${metric}${finding.actualMm}% vs норма ≤ ${finding.requiredMm}%`;
   }
   if (finding.actualMm != null && finding.requiredMm != null) {
     return `${metric}${finding.actualMm} мм vs норма ${finding.requiredMm} мм`;

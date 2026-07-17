@@ -12,6 +12,12 @@ export interface NormAuditCheckerDef {
     | "room_area_min"
     | "room_height_min"
     | "storey_height"
+    | "window_sill_height"
+    | "opening_height"
+    | "stair_width"
+    | "stair_riser_tread"
+    | "ramp_slope_width"
+    | "railing_height"
   >;
   title: string;
   /** Substrings matched against user topics (lowercase). Empty topics → all. */
@@ -128,6 +134,79 @@ export const PHASE1_CHECKERS: readonly NormAuditCheckerDef[] = [
       "этажность",
       "қабат биіктігі",
       "перепад уровней",
+    ],
+  },
+  {
+    checkType: "window_sill_height",
+    title: "Высота подоконника",
+    topicHints: [
+      "подокон",
+      "sill",
+      "высота подоконника",
+      "оконный проём",
+      "оконный проем",
+      "окно",
+      "терезе",
+    ],
+  },
+  {
+    checkType: "opening_height",
+    title: "Высота дверного / оконного проёма",
+    topicHints: [
+      "высота проём",
+      "высота проем",
+      "высота двери",
+      "высота выхода",
+      "opening height",
+      "эвак. выход",
+      "в свету",
+      "дверн",
+    ],
+  },
+  {
+    checkType: "stair_width",
+    title: "Ширина лестничного марша",
+    topicHints: [
+      "лестниц",
+      "марш",
+      "ширина марша",
+      "stair",
+      "баспалдақ",
+    ],
+  },
+  {
+    checkType: "stair_riser_tread",
+    title: "Подступенок / проступь",
+    topicHints: [
+      "подступенок",
+      "проступь",
+      "ступен",
+      "riser",
+      "tread",
+      "высота ступени",
+    ],
+  },
+  {
+    checkType: "ramp_slope_width",
+    title: "Уклон и ширина пандуса",
+    topicHints: [
+      "пандус",
+      "уклон",
+      "еңіс",
+      "ramp",
+      "доступност",
+      "мгн",
+    ],
+  },
+  {
+    checkType: "railing_height",
+    title: "Высота ограждения",
+    topicHints: [
+      "огражд",
+      "перил",
+      "railing",
+      "қоршау",
+      "высота ограждения",
     ],
   },
 ] as const;

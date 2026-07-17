@@ -11,6 +11,12 @@ export type NormAuditCheckType =
   | "room_area_min"
   | "room_height_min"
   | "storey_height"
+  | "window_sill_height"
+  | "opening_height"
+  | "stair_width"
+  | "stair_riser_tread"
+  | "ramp_slope_width"
+  | "railing_height"
   | "egress_opening_width"
   | "passage_width";
 

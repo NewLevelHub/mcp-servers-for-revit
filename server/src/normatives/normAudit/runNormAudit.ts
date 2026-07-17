@@ -16,6 +16,12 @@ import {
   normalizeRoomHeightFindings,
   normalizeStoreyHeightFindings,
   normalizeTambourSizeFindings,
+  normalizeWindowSillFindings,
+  normalizeOpeningHeightFindings,
+  normalizeStairWidthFindings,
+  normalizeStairRiserTreadFindings,
+  normalizeRampFindings,
+  normalizeRailingHeightFindings,
   summarizeFindings,
 } from "./normalizeFindings.js";
 import { resolveRoomDepthLimitFromLibrary } from "./resolveDepthLimit.js";
@@ -24,6 +30,14 @@ import { resolveRoomAreaLimitsFromLibrary } from "./resolveRoomAreaLimits.js";
 import { resolveRoomHeightLimitFromLibrary } from "./resolveRoomHeightLimit.js";
 import { resolveStoreyHeightLimitFromLibrary } from "./resolveStoreyHeightLimit.js";
 import { resolveTambourSizeLimitFromLibrary } from "./resolveTambourSize.js";
+import { resolveWindowSillLimitFromLibrary } from "./resolveWindowSill.js";
+import { resolveOpeningHeightLimitFromLibrary } from "./resolveOpeningHeight.js";
+import {
+  resolveStairWidthLimitFromLibrary,
+  resolveStairRiserTreadLimitsFromLibrary,
+  resolveRampLimitsFromLibrary,
+  resolveRailingHeightLimitFromLibrary,
+} from "./resolveVerticalCirculation.js";
 import {
   highlightAuditViolations,
   resolveLevelNameFromView,
@@ -31,20 +45,32 @@ import {
   runEvacuationWidthCheck,
   runFireDoorsCheck,
   runMinDimensionsCheck,
+  runOpeningHeightCheck,
+  runRailingHeightCheck,
+  runRampCheck,
   runRoomAreaCheck,
   runRoomDepthCheck,
   runRoomHeightCheck,
+  runStairRiserTreadCheck,
+  runStairWidthCheck,
   runStoreyHeightCheck,
   runTambourSizeCheck,
+  runWindowSillCheck,
   type DoorWidthRunnerResult,
   type EvacuationWidthRunnerResult,
   type FireDoorsRunnerResult,
   type MinDimensionsRunnerResult,
+  type OpeningHeightRunnerResult,
+  type RailingHeightRunnerResult,
+  type RampRunnerResult,
   type RoomAreaRunnerResult,
   type RoomDepthRunnerResult,
   type RoomHeightRunnerResult,
+  type StairRiserTreadRunnerResult,
+  type StairWidthRunnerResult,
   type StoreyHeightRunnerResult,
   type TambourSizeRunnerResult,
+  type WindowSillRunnerResult,
 } from "./runners.js";
 import type {
   NormAuditCheckRunSummary,
@@ -134,6 +160,65 @@ export interface NormAuditDeps {
   resolveStoreyHeight?: (
     db: Database
   ) => ReturnType<typeof resolveStoreyHeightLimitFromLibrary>;
+  runWindowSill?: (opts: {
+    levelName: string;
+    includeCompliant: boolean;
+    minSillHeightMm: number;
+    source: NormAuditSource;
+    nearLimitToleranceMm?: number;
+  }) => Promise<WindowSillRunnerResult>;
+  runOpeningHeight?: (opts: {
+    levelName: string;
+    includeCompliant: boolean;
+    minHeightMm: number;
+    source: NormAuditSource;
+    nearLimitToleranceMm?: number;
+  }) => Promise<OpeningHeightRunnerResult>;
+  resolveWindowSill?: (
+    db: Database
+  ) => ReturnType<typeof resolveWindowSillLimitFromLibrary>;
+  resolveOpeningHeight?: (
+    db: Database
+  ) => ReturnType<typeof resolveOpeningHeightLimitFromLibrary>;
+  runStairWidth?: (opts: {
+    levelName: string;
+    includeCompliant: boolean;
+    minWidthMm: number;
+    source: NormAuditSource;
+    nearLimitToleranceMm?: number;
+  }) => Promise<StairWidthRunnerResult>;
+  runStairRiserTread?: (opts: {
+    levelName: string;
+    includeCompliant: boolean;
+    maxRiserMm?: number | null;
+    minTreadMm?: number | null;
+    source: NormAuditSource;
+  }) => Promise<StairRiserTreadRunnerResult>;
+  runRamp?: (opts: {
+    levelName: string;
+    includeCompliant: boolean;
+    minWidthMm?: number | null;
+    maxSlopePercent?: number | null;
+    source: NormAuditSource;
+  }) => Promise<RampRunnerResult>;
+  runRailingHeight?: (opts: {
+    levelName: string;
+    includeCompliant: boolean;
+    minHeightMm: number;
+    source: NormAuditSource;
+  }) => Promise<RailingHeightRunnerResult>;
+  resolveStairWidth?: (
+    db: Database
+  ) => ReturnType<typeof resolveStairWidthLimitFromLibrary>;
+  resolveStairRiserTread?: (
+    db: Database
+  ) => ReturnType<typeof resolveStairRiserTreadLimitsFromLibrary>;
+  resolveRamp?: (
+    db: Database
+  ) => ReturnType<typeof resolveRampLimitsFromLibrary>;
+  resolveRailingHeight?: (
+    db: Database
+  ) => ReturnType<typeof resolveRailingHeightLimitFromLibrary>;
 }
 
 export interface RunNormAuditOptions {
@@ -185,12 +270,24 @@ async function runOneChecker(
         | "runRoomArea"
         | "runRoomHeight"
         | "runStoreyHeight"
+        | "runWindowSill"
+        | "runOpeningHeight"
+        | "runStairWidth"
+        | "runStairRiserTread"
+        | "runRamp"
+        | "runRailingHeight"
         | "resolveDepthLimit"
         | "resolveDoorWidth"
         | "resolveTambourSize"
         | "resolveRoomAreaLimits"
         | "resolveRoomHeight"
         | "resolveStoreyHeight"
+        | "resolveWindowSill"
+        | "resolveOpeningHeight"
+        | "resolveStairWidth"
+        | "resolveStairRiserTread"
+        | "resolveRamp"
+        | "resolveRailingHeight"
       >
     > & { db?: Database };
   }
@@ -703,6 +800,417 @@ async function runOneChecker(
           warnings,
         };
       }
+      case "window_sill_height": {
+        if (!ctx.deps.db) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "skipped",
+              checkedCount: 0,
+              message: "База норм недоступна — высоту подоконника пропускаем.",
+            },
+            warnings: ["window_sill_height: нет подключения к библиотеке норм"],
+          };
+        }
+        const limit = ctx.deps.resolveWindowSill!(ctx.deps.db);
+        if (!limit) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "skipped",
+              checkedCount: 0,
+              message:
+                "В библиотеке нет числовой нормы высоты подоконника — сделайте seed или передайте minSillHeightMm.",
+            },
+            warnings: [
+              "window_sill_height: правило высоты подоконника не найдено в библиотеке (skipped, не violation)",
+            ],
+          };
+        }
+        const result = await ctx.deps.runWindowSill!({
+          levelName: ctx.levelName,
+          includeCompliant: ctx.includeCompliant,
+          minSillHeightMm: limit.minSillHeightMm,
+          source: limit.source,
+          nearLimitToleranceMm: 50,
+        });
+        warnings.push(...result.warnings);
+        if (!result.success) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "error",
+              checkedCount: 0,
+              message: result.message,
+            },
+            warnings,
+          };
+        }
+        const findings = normalizeWindowSillFindings({
+          violations: result.violations,
+          nearLimit: result.nearLimit,
+          compliant: ctx.includeCompliant ? result.compliant : [],
+          source: result.source,
+          minSillHeightMm: result.minSillHeightMm,
+        });
+        return {
+          findings,
+          check: {
+            checkType: checker.checkType,
+            status: "ok",
+            checkedCount: result.totalChecked,
+            message: result.message,
+          },
+          warnings,
+        };
+      }
+      case "opening_height": {
+        if (!ctx.deps.db) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "skipped",
+              checkedCount: 0,
+              message: "База норм недоступна — высоту проёма пропускаем.",
+            },
+            warnings: ["opening_height: нет подключения к библиотеке норм"],
+          };
+        }
+        const limit = ctx.deps.resolveOpeningHeight!(ctx.deps.db);
+        if (!limit) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "skipped",
+              checkedCount: 0,
+              message:
+                "В библиотеке нет числовой нормы высоты проёма — сделайте seed.",
+            },
+            warnings: [
+              "opening_height: правило высоты проёма не найдено в библиотеке (skipped, не violation)",
+            ],
+          };
+        }
+        const result = await ctx.deps.runOpeningHeight!({
+          levelName: ctx.levelName,
+          includeCompliant: ctx.includeCompliant,
+          minHeightMm: limit.minHeightMm,
+          source: limit.source,
+          nearLimitToleranceMm: 50,
+        });
+        warnings.push(...result.warnings);
+        if (!result.success) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "error",
+              checkedCount: 0,
+              message: result.message,
+            },
+            warnings,
+          };
+        }
+        const findings = normalizeOpeningHeightFindings({
+          violations: result.violations,
+          nearLimit: result.nearLimit,
+          compliant: ctx.includeCompliant ? result.compliant : [],
+          source: result.source,
+          minHeightMm: result.minHeightMm,
+        });
+        return {
+          findings,
+          check: {
+            checkType: checker.checkType,
+            status: "ok",
+            checkedCount: result.totalChecked,
+            message: result.message,
+          },
+          warnings,
+        };
+      }
+      case "stair_width": {
+        if (!ctx.deps.db) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "skipped",
+              checkedCount: 0,
+              message: "База норм недоступна — ширину марша пропускаем.",
+            },
+            warnings: ["stair_width: нет подключения к библиотеке норм"],
+          };
+        }
+        const limit = ctx.deps.resolveStairWidth!(ctx.deps.db);
+        if (!limit) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "skipped",
+              checkedCount: 0,
+              message:
+                "В библиотеке нет числовой нормы ширины марша — сделайте seed или extract 3.06.",
+            },
+            warnings: [
+              "stair_width: правило ширины марша не найдено в библиотеке (skipped, не violation)",
+            ],
+          };
+        }
+        const result = await ctx.deps.runStairWidth!({
+          levelName: ctx.levelName,
+          includeCompliant: ctx.includeCompliant,
+          minWidthMm: limit.minWidthMm,
+          source: limit.source,
+          nearLimitToleranceMm: 50,
+        });
+        warnings.push(...result.warnings);
+        if (!result.success) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "error",
+              checkedCount: 0,
+              message: result.message,
+            },
+            warnings,
+          };
+        }
+        const findings = normalizeStairWidthFindings({
+          violations: result.violations,
+          nearLimit: result.nearLimit,
+          compliant: ctx.includeCompliant ? result.compliant : [],
+          source: result.source,
+          minWidthMm: result.minWidthMm,
+        });
+        return {
+          findings,
+          check: {
+            checkType: checker.checkType,
+            status: "ok",
+            checkedCount: result.totalChecked,
+            message: result.message,
+          },
+          warnings,
+        };
+      }
+      case "stair_riser_tread": {
+        if (!ctx.deps.db) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "skipped",
+              checkedCount: 0,
+              message: "База норм недоступна — подступенок/проступь пропускаем.",
+            },
+            warnings: ["stair_riser_tread: нет подключения к библиотеке норм"],
+          };
+        }
+        const limits = ctx.deps.resolveStairRiserTread!(ctx.deps.db);
+        if (!limits) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "skipped",
+              checkedCount: 0,
+              message:
+                "В библиотеке нет норм подступенка/проступи — сделайте seed (3.06).",
+            },
+            warnings: [
+              "stair_riser_tread: правила riser/tread не найдены (skipped, не violation)",
+            ],
+          };
+        }
+        const source =
+          limits.riserSource ??
+          limits.treadSource ??
+          toAuditSource(undefined, "Норма ступени из библиотеки.");
+        const result = await ctx.deps.runStairRiserTread!({
+          levelName: ctx.levelName,
+          includeCompliant: ctx.includeCompliant,
+          maxRiserMm: limits.maxRiserMm,
+          minTreadMm: limits.minTreadMm,
+          source,
+        });
+        warnings.push(...result.warnings);
+        if (!result.success) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "error",
+              checkedCount: 0,
+              message: result.message,
+            },
+            warnings,
+          };
+        }
+        const findings = normalizeStairRiserTreadFindings({
+          violations: result.violations,
+          nearLimit: result.nearLimit,
+          compliant: ctx.includeCompliant ? result.compliant : [],
+          riserSource: limits.riserSource,
+          treadSource: limits.treadSource,
+          fallbackSource: source,
+        });
+        return {
+          findings,
+          check: {
+            checkType: checker.checkType,
+            status: "ok",
+            checkedCount: result.totalChecked,
+            message: result.message,
+          },
+          warnings,
+        };
+      }
+      case "ramp_slope_width": {
+        if (!ctx.deps.db) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "skipped",
+              checkedCount: 0,
+              message: "База норм недоступна — пандусы пропускаем.",
+            },
+            warnings: ["ramp_slope_width: нет подключения к библиотеке норм"],
+          };
+        }
+        const limits = ctx.deps.resolveRamp!(ctx.deps.db);
+        if (!limits) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "skipped",
+              checkedCount: 0,
+              message:
+                "В библиотеке нет норм ширины/уклона пандуса — сделайте seed (3.06).",
+            },
+            warnings: [
+              "ramp_slope_width: правила пандуса не найдены (skipped, не violation)",
+            ],
+          };
+        }
+        const source =
+          limits.widthSource ??
+          limits.slopeSource ??
+          toAuditSource(undefined, "Норма пандуса из библиотеки.");
+        const result = await ctx.deps.runRamp!({
+          levelName: ctx.levelName,
+          includeCompliant: ctx.includeCompliant,
+          minWidthMm: limits.minWidthMm,
+          maxSlopePercent: limits.maxSlopePercent,
+          source,
+        });
+        warnings.push(...result.warnings);
+        if (!result.success) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "error",
+              checkedCount: 0,
+              message: result.message,
+            },
+            warnings,
+          };
+        }
+        const findings = normalizeRampFindings({
+          violations: result.violations,
+          nearLimit: result.nearLimit,
+          compliant: ctx.includeCompliant ? result.compliant : [],
+          widthSource: limits.widthSource,
+          slopeSource: limits.slopeSource,
+          fallbackSource: source,
+        });
+        return {
+          findings,
+          check: {
+            checkType: checker.checkType,
+            status: "ok",
+            checkedCount: result.totalChecked,
+            message: result.message,
+          },
+          warnings,
+        };
+      }
+      case "railing_height": {
+        if (!ctx.deps.db) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "skipped",
+              checkedCount: 0,
+              message: "База норм недоступна — ограждения пропускаем.",
+            },
+            warnings: ["railing_height: нет подключения к библиотеке норм"],
+          };
+        }
+        const limit = ctx.deps.resolveRailingHeight!(ctx.deps.db);
+        if (!limit) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "skipped",
+              checkedCount: 0,
+              message:
+                "В библиотеке нет числовой нормы высоты ограждения — сделайте seed.",
+            },
+            warnings: [
+              "railing_height: правило высоты ограждения не найдено (skipped, не violation)",
+            ],
+          };
+        }
+        const result = await ctx.deps.runRailingHeight!({
+          levelName: ctx.levelName,
+          includeCompliant: ctx.includeCompliant,
+          minHeightMm: limit.minHeightMm,
+          source: limit.source,
+        });
+        warnings.push(...result.warnings);
+        if (!result.success) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "error",
+              checkedCount: 0,
+              message: result.message,
+            },
+            warnings,
+          };
+        }
+        const findings = normalizeRailingHeightFindings({
+          violations: result.violations,
+          nearLimit: result.nearLimit,
+          compliant: ctx.includeCompliant ? result.compliant : [],
+          source: result.source,
+          minHeightMm: result.minHeightMm,
+        });
+        return {
+          findings,
+          check: {
+            checkType: checker.checkType,
+            status: "ok",
+            checkedCount: result.totalChecked,
+            message: result.message,
+          },
+          warnings,
+        };
+      }
       default: {
         const _exhaustive: never = checker.checkType;
         return {
@@ -768,6 +1276,12 @@ export async function runNormAudit(
     runRoomArea: deps.runRoomArea ?? runRoomAreaCheck,
     runRoomHeight: deps.runRoomHeight ?? runRoomHeightCheck,
     runStoreyHeight: deps.runStoreyHeight ?? runStoreyHeightCheck,
+    runWindowSill: deps.runWindowSill ?? runWindowSillCheck,
+    runOpeningHeight: deps.runOpeningHeight ?? runOpeningHeightCheck,
+    runStairWidth: deps.runStairWidth ?? runStairWidthCheck,
+    runStairRiserTread: deps.runStairRiserTread ?? runStairRiserTreadCheck,
+    runRamp: deps.runRamp ?? runRampCheck,
+    runRailingHeight: deps.runRailingHeight ?? runRailingHeightCheck,
     resolveDepthLimit:
       deps.resolveDepthLimit ?? resolveRoomDepthLimitFromLibrary,
     resolveDoorWidth:
@@ -780,6 +1294,17 @@ export async function runNormAudit(
       deps.resolveRoomHeight ?? resolveRoomHeightLimitFromLibrary,
     resolveStoreyHeight:
       deps.resolveStoreyHeight ?? resolveStoreyHeightLimitFromLibrary,
+    resolveWindowSill:
+      deps.resolveWindowSill ?? resolveWindowSillLimitFromLibrary,
+    resolveOpeningHeight:
+      deps.resolveOpeningHeight ?? resolveOpeningHeightLimitFromLibrary,
+    resolveStairWidth:
+      deps.resolveStairWidth ?? resolveStairWidthLimitFromLibrary,
+    resolveStairRiserTread:
+      deps.resolveStairRiserTread ?? resolveStairRiserTreadLimitsFromLibrary,
+    resolveRamp: deps.resolveRamp ?? resolveRampLimitsFromLibrary,
+    resolveRailingHeight:
+      deps.resolveRailingHeight ?? resolveRailingHeightLimitFromLibrary,
     highlight: deps.highlight ?? highlightAuditViolations,
   };
 
