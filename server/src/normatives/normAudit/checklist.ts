@@ -9,6 +9,8 @@ export interface NormAuditCheckerDef {
     | "fire_doors"
     | "door_clear_width"
     | "tambour_size_min"
+    | "mgn_room_geometry"
+    | "mgn_door_width"
     | "room_area_min"
     | "room_height_min"
     | "storey_height"
@@ -96,6 +98,36 @@ export const PHASE1_CHECKERS: readonly NormAuditCheckerDef[] = [
     ],
   },
   {
+    checkType: "mgn_room_geometry",
+    title: "МГН: разворот кресла-коляски, коридоры, санузлы",
+    topicHints: [
+      "мгн",
+      "доступ",
+      "инвалид",
+      "коляск",
+      "кресло",
+      "разворот",
+      "accessibility",
+      "мүгедек",
+      "1500",
+      "1,5 м",
+    ],
+  },
+  {
+    checkType: "mgn_door_width",
+    title: "МГН: ширина дверей доступных путей (0,9 м)",
+    topicHints: [
+      "мгн",
+      "доступ",
+      "инвалид",
+      "коляск",
+      "accessibility",
+      "мүгедек",
+      "двер",
+      "0,9",
+    ],
+  },
+  {
     checkType: "room_area_min",
     title: "Мин. площадь помещений",
     topicHints: [
@@ -134,17 +166,8 @@ export const PHASE1_CHECKERS: readonly NormAuditCheckerDef[] = [
 
 /**
  * Known measurable rules without a checker yet — always reported as skipped.
- * door_clear_width now has a v1 checker (nominal DOOR_WIDTH); the «в свету»
- * (clear opening minus frame) refinement stays a documented follow-up.
  */
 export const PHASE2_SKIPPED: readonly NormAuditSkippedRule[] = [
-  {
-    checkType: "door_clear_width",
-    reason:
-      "Ширина двери проверяется по номиналу параметра (DOOR_WIDTH). " +
-      "Ширина «в свету» (за вычетом коробки) — отдельный follow-up (Phase 2).",
-    topics: ["дверь в свету", "clear width", "в свету"],
-  },
   {
     checkType: "egress_opening_width",
     reason:

@@ -240,7 +240,7 @@
     },
     {
       "commandName": "get_door_egress_info",
-      "description": "Extract door width, type, host wall, and egress-path hints",
+      "description": "Extract nominal/clear door width, maneuvering space, egress-path hints, and ramp slopes",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
