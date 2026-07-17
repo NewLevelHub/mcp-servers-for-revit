@@ -357,6 +357,106 @@ export function normalizeTambourSizeFindings(input: {
   return findings;
 }
 
+export interface AccessibilityRoomItemInput {
+  id: number;
+  uniqueId?: string;
+  name: string;
+  level?: string;
+  status: "violation" | "nearLimit" | "compliant";
+  actualMm: number;
+  requiredMm: number;
+  deviationMm: number;
+  note?: string;
+}
+
+/**
+ * МГН room-geometry findings: turning circle / corridor width / WC dimensions.
+ * Sources carry verbatim СП РК 3.06-101-2012* quotes from the accessibility module.
+ */
+export function normalizeAccessibilityRoomFindings(input: {
+  turning: AccessibilityRoomItemInput[];
+  corridors: AccessibilityRoomItemInput[];
+  wc: AccessibilityRoomItemInput[];
+  turningSource: NormAuditSource;
+  corridorSource: NormAuditSource;
+  wcSource: NormAuditSource;
+  includeCompliant: boolean;
+}): NormAuditFinding[] {
+  const findings: NormAuditFinding[] = [];
+
+  const push = (
+    item: AccessibilityRoomItemInput,
+    checkType: Extract<
+      NormAuditCheckType,
+      "mgn_turning_circle" | "mgn_corridor_width" | "mgn_wc_dimensions"
+    >,
+    metric: string,
+    source: NormAuditSource
+  ) => {
+    if (!input.includeCompliant && item.status === "compliant") return;
+    findings.push({
+      checkType,
+      status: item.status,
+      elementId: item.id,
+      uniqueId: item.uniqueId,
+      name: item.name,
+      level: item.level ?? "",
+      metric,
+      actualMm: roundMm(item.actualMm),
+      requiredMm: roundMm(item.requiredMm),
+      deviationMm: roundMm(item.deviationMm),
+      note: item.note,
+      source: toAuditSource(source),
+    });
+  };
+
+  for (const item of input.turning)
+    push(item, "mgn_turning_circle", "зона разворота", input.turningSource);
+  for (const item of input.corridors)
+    push(item, "mgn_corridor_width", "ширина коридора", input.corridorSource);
+  for (const item of input.wc)
+    push(item, "mgn_wc_dimensions", "габарит санузла", input.wcSource);
+
+  return findings;
+}
+
+/** МГН door-width findings (0,9 м) — same door shape as door_clear_width. */
+export function normalizeAccessibilityDoorFindings(input: {
+  violations: DoorWidthItemInput[];
+  nearLimit: DoorWidthItemInput[];
+  compliant: DoorWidthItemInput[];
+  source: NormAuditSource;
+  minWidthMm: number;
+}): NormAuditFinding[] {
+  const source = toAuditSource(
+    input.source,
+    `МГН: минимальная ширина двери ${input.minWidthMm} мм.`
+  );
+  const findings: NormAuditFinding[] = [];
+
+  const push = (item: DoorWidthItemInput) => {
+    findings.push({
+      checkType: "mgn_door_width",
+      status: item.status,
+      elementId: item.id,
+      uniqueId: item.uniqueId,
+      name: doorNameOf(item),
+      level: item.level ?? "",
+      metric: "ширина двери",
+      actualMm: roundMm(item.actualMm),
+      requiredMm: roundMm(item.requiredMm || input.minWidthMm),
+      deviationMm: roundMm(item.deviationMm),
+      note: item.isOnEgressPath ? "на доступном пути эвакуации" : undefined,
+      source,
+    });
+  };
+
+  for (const item of input.violations) push(item);
+  for (const item of input.nearLimit) push(item);
+  for (const item of input.compliant) push(item);
+  return findings;
+}
+
 export function summarizeFindings(
   findings: NormAuditFinding[],
   skippedCount: number

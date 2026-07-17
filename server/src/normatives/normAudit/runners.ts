@@ -26,6 +26,13 @@ import {
   type ClassifiedTambour,
   type TambourRoomInput,
 } from "./tambourSize.js";
+import {
+  classifyAccessibilityRooms,
+  MGN_DOOR_SOURCE,
+  MGN_DOOR_WIDTH_MM,
+  type AccessibilityRoomInput,
+  type ClassifiedAccessibilityRoom,
+} from "./accessibility.js";
 import type { NormAuditFinding, NormAuditSource } from "./types.js";
 import { toAuditSource } from "./types.js";
 
@@ -717,6 +724,194 @@ export async function runTambourSizeCheck(options: {
   };
 }
 
+export interface AccessibilityRoomsRunnerResult {
+  success: boolean;
+  message: string;
+  totalChecked: number;
+  turning: ClassifiedAccessibilityRoom[];
+  corridors: ClassifiedAccessibilityRoom[];
+  wc: ClassifiedAccessibilityRoom[];
+  warnings: string[];
+}
+
+/**
+ * МГН room geometry check (СП РК 3.06-101-2012*): turning circle 1,5 м in
+ * tambours and accessible WCs, corridor width 1,5/1,8 м, accessible WC dims.
+ * Reads the same get_room_geometry_metrics payload as the tambour checker.
+ */
+export async function runAccessibilityRoomsCheck(options: {
+  levelName: string;
+  includeCompliant: boolean;
+  nearLimitToleranceMm?: number;
+}): Promise<AccessibilityRoomsRunnerResult> {
+  const rawResponse = await withRevitConnection(async (revitClient) => {
+    return await revitClient.sendCommand("get_room_geometry_metrics", {
+      levelName: options.levelName,
+      includeUnplacedRooms: false,
+    });
+  });
+
+  const raw = z
+    .object({
+      success: z.boolean(),
+      message: z.string().optional().default(""),
+      rooms: z.array(roomGeometryItemSchema).optional().default([]),
+    })
+    .parse(rawResponse);
+
+  if (!raw.success) {
+    return {
+      success: false,
+      message: raw.message || "get_room_geometry_metrics failed.",
+      totalChecked: 0,
+      turning: [],
+      corridors: [],
+      wc: [],
+      warnings: [],
+    };
+  }
+
+  const rooms: AccessibilityRoomInput[] = raw.rooms.map((room) => ({
+    id: room.id,
+    uniqueId: room.uniqueId || String(room.id),
+    name: room.name,
+    number: room.number,
+    level: room.level,
+    widthMm: room.widthMm,
+    depthMm: room.depthMm,
+  }));
+
+  const classified = classifyAccessibilityRooms(rooms, {
+    nearLimitToleranceMm: options.nearLimitToleranceMm ?? 50,
+  });
+
+  const warnings: string[] = [
+    "v1: сравнивается ограничивающий прямоугольник помещения — фактическая зона " +
+      "разворота с учётом мебели/сантехники может отличаться.",
+  ];
+  if (classified.accessibleWcFound === 0) {
+    warnings.push(
+      "Санузлы с пометкой МГН/доступный/универсальный не найдены — габариты доступных " +
+        "санузлов не проверялись (обычные квартирные санузлы норме 4.3.3.14 не подлежат)."
+    );
+  }
+  if (classified.missingGeometry > 0) {
+    warnings.push(
+      `Помещений без читаемой геометрии: ${classified.missingGeometry} (пропущены).`
+    );
+  }
+
+  const totalChecked =
+    classified.turning.length + classified.corridors.length + classified.wc.length;
+
+  return {
+    success: true,
+    message:
+      `МГН-геометрия: тамбуров ${classified.tamboursFound}, коридоров ${classified.corridorsFound}, ` +
+      `доступных санузлов ${classified.accessibleWcFound}; проверок выполнено ${totalChecked}.`,
+    totalChecked,
+    turning: classified.turning,
+    corridors: classified.corridors,
+    wc: classified.wc,
+    warnings,
+  };
+}
+
+export interface AccessibilityDoorsRunnerResult {
+  success: boolean;
+  message: string;
+  minWidthMm: number;
+  totalChecked: number;
+  violations: ClassifiedDoor[];
+  nearLimit: ClassifiedDoor[];
+  compliant: ClassifiedDoor[];
+  source: NormAuditSource;
+  warnings: string[];
+}
+
+/**
+ * МГН door width (0,9 м, СП РК 3.06-101-2012* п. 4.3.2.14 / 4.2.3).
+ * v1 checks doors on egress (accessible) paths only — внутриквартирные двери
+ * не проверяются, чтобы не плодить ложные нарушения (см. door_clear_width).
+ */
+export async function runAccessibilityDoorsCheck(options: {
+  levelName: string;
+  includeCompliant: boolean;
+  nearLimitToleranceMm?: number;
+}): Promise<AccessibilityDoorsRunnerResult> {
+  const rawResponse = await withRevitConnection(async (revitClient) => {
+    return await revitClient.sendCommand("get_door_egress_info", {
+      levelName: options.levelName,
+    });
+  });
+
+  const raw = z
+    .object({
+      success: z.boolean(),
+      message: z.string().optional().default(""),
+      totalDoors: z.number().optional(),
+      doors: z.array(doorEgressItemSchema).optional().default([]),
+    })
+    .parse(rawResponse);
+
+  if (!raw.success) {
+    return {
+      success: false,
+      message: raw.message || "get_door_egress_info failed.",
+      minWidthMm: MGN_DOOR_WIDTH_MM,
+      totalChecked: 0,
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      source: MGN_DOOR_SOURCE,
+      warnings: [],
+    };
+  }
+
+  const doors: DoorWidthInput[] = raw.doors.map((door) => ({
+    id: door.id,
+    uniqueId: door.uniqueId || String(door.id),
+    family: door.family,
+    type: door.type,
+    level: door.level,
+    openingWidthMm: door.openingWidthMm ?? null,
+    isOnEgressPath: door.isOnEgressPath,
+  }));
+
+  const classified = classifyDoorWidths(doors, {
+    minWidthMm: MGN_DOOR_WIDTH_MM,
+    nearLimitToleranceMm: options.nearLimitToleranceMm ?? 50,
+    egressOnly: true,
+  });
+
+  const warnings: string[] = [
+    "v1: номинальная ширина двери (DOOR_WIDTH); ширина «в свету» — follow-up. " +
+      "Проверяются двери на доступных (эвакуационных) путях; внутриквартирные — нет.",
+  ];
+  if (classified.accessoriesSkipped > 0) {
+    warnings.push(
+      `Откосы/наличники исключены: ${classified.accessoriesSkipped} (REV-41).`
+    );
+  }
+  if (classified.missingWidth > 0) {
+    warnings.push(`Дверей без читаемой ширины: ${classified.missingWidth} (пропущены).`);
+  }
+
+  return {
+    success: true,
+    message:
+      `МГН: проверено дверей на доступных путях ${classified.egressChecked} ` +
+      `(из ${classified.totalDoors} дверных блоков). Норма ≥ ${MGN_DOOR_WIDTH_MM} мм.`,
+    minWidthMm: MGN_DOOR_WIDTH_MM,
+    totalChecked: classified.egressChecked,
+    violations: classified.violations,
+    nearLimit: classified.nearLimit,
+    compliant: classified.compliant,
+    source: MGN_DOOR_SOURCE,
+    warnings,
+  };
+}
+
 export interface HighlightAuditResult {
   highlightedCount: number;
   filledRegionCount: number;
@@ -739,7 +934,8 @@ function paintTargetsFromFindings(findings: NormAuditFinding[]): {
     }
     if (
       finding.checkType === "fire_doors" ||
-      finding.checkType === "door_clear_width"
+      finding.checkType === "door_clear_width" ||
+      finding.checkType === "mgn_door_width"
     ) {
       if (!doorSeen.has(finding.elementId)) {
         doorSeen.add(finding.elementId);

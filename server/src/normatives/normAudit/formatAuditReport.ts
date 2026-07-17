@@ -11,6 +11,13 @@ const CHECK_TITLES: Record<string, string> = {
   tambour_size_min: "Габариты входного тамбура",
   egress_opening_width: "Ширина эвак. выхода",
   passage_width: "Ширина прохода",
+  mgn_room_geometry: "МГН: геометрия помещений",
+  mgn_turning_circle: "МГН: зона разворота кресла-коляски 1,5 м",
+  mgn_corridor_width: "МГН: ширина коридора",
+  mgn_wc_dimensions: "МГН: габариты доступного санузла",
+  mgn_door_width: "МГН: ширина двери 0,9 м",
+  mgn_ramp_slope: "МГН: уклон пандуса",
+  mgn_door_maneuvering: "МГН: зона маневрирования у двери",
 };
 
 function statusBadge(status: NormAuditFinding["status"]): string {

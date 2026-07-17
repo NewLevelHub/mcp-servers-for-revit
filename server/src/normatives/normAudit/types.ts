@@ -9,7 +9,16 @@ export type NormAuditCheckType =
   | "door_clear_width"
   | "tambour_size_min"
   | "egress_opening_width"
-  | "passage_width";
+  | "passage_width"
+  // МГН accessibility (СП РК 3.06-101-2012*): one geometry checker emits
+  // turning/corridor/wc findings; ramp slope & maneuvering are Phase-2 skips.
+  | "mgn_room_geometry"
+  | "mgn_turning_circle"
+  | "mgn_corridor_width"
+  | "mgn_wc_dimensions"
+  | "mgn_door_width"
+  | "mgn_ramp_slope"
+  | "mgn_door_maneuvering";
 
 export type NormAuditFindingStatus =
   | "violation"
