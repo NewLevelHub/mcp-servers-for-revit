@@ -9,7 +9,7 @@ import {
 /**
  * Нормоконтроль доступности МГН (СП РК 3.06-101-2012*) — the МГН subset of
  * run_norm_audit as a standalone tool. Selecting topics=["мгн"] runs only the
- * accessibility checkers and reports the МГН Phase-2 gaps (ramps, maneuvering).
+ * accessibility checkers, including ramps and door maneuvering geometry.
  */
 export function registerCheckAccessibilityTool(server: McpServer) {
   server.tool(
@@ -17,8 +17,9 @@ export function registerCheckAccessibilityTool(server: McpServer) {
     "Нормоконтроль доступности МГН по СП РК 3.06-101-2012*: зона разворота кресла-коляски 1,5 м " +
       "(п. 4.3.2.43) в тамбурах и доступных санузлах, ширина коридоров 1,5/1,8 м (п. 4.3.2.38, 4.2.3), " +
       "ширина дверей доступных путей 0,9 м (п. 4.3.2.14), габариты доступных санузлов (п. 4.3.3.14). " +
-      "Каждая находка содержит цитату пункта нормы. Уклоны пандусов и зоны маневрирования перед дверьми " +
-      "честно отмечаются как skipped (Phase 2 — модель не отдаёт эту геометрию). " +
+      "Проверяет уклоны пандусов 5% (либо 8% при явно отмеченном исключении и подъёме ≤800 мм) и " +
+      "зоны маневрирования перед дверьми 1,2/1,5 × 1,5 м по направлению открывания. " +
+      "Каждая находка содержит цитату пункта нормы; отсутствующие достоверные измерения возвращаются как skipped. " +
       "mode=highlight заливает помещения-нарушители красным (create_filled_regions) и красит двери " +
       "через operate_element SetColor. Санузлы проверяются только с пометкой МГН/доступный/универсальный " +
       "в имени — обычные квартирные санузлы не флагуются. Findings также входят в общий run_norm_audit.",

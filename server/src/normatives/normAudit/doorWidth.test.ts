@@ -107,4 +107,29 @@ describe("classifyDoorWidths (golden fixtures)", () => {
     assert.ok(result.violations.some((d) => d.id === 5));
     assert.equal(result.nonEgressSkipped, 0);
   });
+
+  it("requires trustworthy clear width when requested", () => {
+    const result = classifyDoorWidths(
+      [
+        {
+          id: 10,
+          openingWidthMm: 900,
+          clearWidthMm: 840,
+          widthSource: "parameter:Ширина в свету",
+          isOnEgressPath: true,
+        },
+        {
+          id: 11,
+          openingWidthMm: 900,
+          clearWidthMm: 900,
+          widthSource: "nominal_fallback",
+          isOnEgressPath: true,
+        },
+      ],
+      { minWidthMm: 900, requireClearWidth: true }
+    );
+    assert.equal(result.violations[0].id, 10);
+    assert.deepEqual(result.unmeasured.map((door) => door.id), [11]);
+    assert.equal(result.egressChecked, 1);
+  });
 });

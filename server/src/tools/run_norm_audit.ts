@@ -16,13 +16,14 @@ export function registerRunNormAuditTool(server: McpServer) {
       "One call runs existing checkers: evacuation corridor width, room depth (from norm library), " +
       "balcony/loggia/pier min dimensions, fire doors (parameter + schedule note), " +
       "МГН accessibility per СП РК 3.06-101-2012* (wheelchair turning 1,5 м, corridor 1,5/1,8 м, " +
-      "door 0,9 м, accessible WC dimensions; topics=[\"мгн\"] runs only these — see also check_accessibility). " +
+      "clear door width 0,9 м, maneuvering zones, ramp slopes, accessible WC dimensions; " +
+      "topics=[\"мгн\"] runs only these — see also check_accessibility). " +
       "Returns summary + findings[] with document/clause/quote + actualMm/requiredMm, and skippedRules[] " +
-      "for checks not yet implemented (e.g. door clear width). " +
+      "plus skipped findings when the model lacks a trustworthy measurement. " +
       "Does NOT claim full GOST coverage — only measurable checks with a checker. " +
       "Prefer this over calling multiple check_* when the user says «проверь этаж по нормам». " +
       "mode=highlight runs the same audit then paints violations: rooms via create_filled_regions " +
-      "(Annotate → Цветовая область), fire doors via operate_element SetColor red.",
+      "(Annotate → Цветовая область), doors and ramps via operate_element SetColor red.",
     {
       levelName: z
         .string()
@@ -48,7 +49,7 @@ export function registerRunNormAuditTool(server: McpServer) {
         .optional()
         .default("report")
         .describe(
-          "'report' data only; 'highlight' also paints violations on the active plan (Filled Region for rooms, red Override for fire doors)."
+          "'report' data only; 'highlight' also paints violations on the active plan (Filled Region for rooms, red Override for doors and ramps)."
         ),
       includeCompliant: z
         .boolean()

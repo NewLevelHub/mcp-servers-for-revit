@@ -268,18 +268,17 @@ public class GetScheduleDefinitionEventHandler : IExternalEventHandler, IWaitabl
         if (!field.IsCalculatedField)
             return string.Empty;
 
-#if REVIT2024_OR_GREATER
         try
         {
-            return field.GetFormula() ?? string.Empty;
+            // GetFormula is not present in every Revit API assembly covered by this
+            // multi-target command set. Resolve it at runtime where supported.
+            var getFormula = typeof(ScheduleField).GetMethod("GetFormula", Type.EmptyTypes);
+            return getFormula?.Invoke(field, null) as string ?? string.Empty;
         }
         catch
         {
             return string.Empty;
         }
-#else
-        return string.Empty;
-#endif
     }
 
     private static bool IsGroupSortGroupField(ScheduleSortGroupField sortGroupField)

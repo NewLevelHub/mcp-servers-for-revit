@@ -37,7 +37,7 @@ function mockDeps(overrides: Partial<NormAuditDeps> = {}): NormAuditDeps {
     runRoomDepth: async () => ({
       success: true,
       message: "ok depth",
-      totalChecked: 1,
+      totalChecked: 3,
       violations: [],
       compliant: [],
       maxDepthMm: 6000,
@@ -224,7 +224,7 @@ function mockDeps(overrides: Partial<NormAuditDeps> = {}): NormAuditDeps {
       success: true,
       message: "ok mgn doors",
       minWidthMm: 900,
-      totalChecked: 1,
+      totalChecked: 3,
       violations: [
         {
           id: 901,
@@ -241,6 +241,36 @@ function mockDeps(overrides: Partial<NormAuditDeps> = {}): NormAuditDeps {
       ],
       nearLimit: [],
       compliant: [],
+      ramps: [
+        {
+          id: 902,
+          uniqueId: "902",
+          name: "Пандус",
+          level: "1 этаж",
+          status: "violation" as const,
+          slopePercent: 6,
+          requiredMaxPercent: 5,
+          deviationPercent: 1,
+          slopeSource: "geometry_bbox",
+          exceptionApplied: false,
+        },
+      ],
+      maneuvering: [
+        {
+          id: 901,
+          uniqueId: "901",
+          name: "Дверь 800",
+          level: "1 этаж",
+          status: "violation" as const,
+          actualDepthMm: 1300,
+          actualWidthMm: 1500,
+          requiredDepthMm: 1500,
+          requiredWidthMm: 1500,
+          deviationMm: 200,
+          roomName: "Коридор",
+          approach: "pull/family-facing",
+        },
+      ],
       source: {
         document: "СП РК 3.06-101-2012*",
         clause: "п. 4.3.2.14",
@@ -390,6 +420,20 @@ describe("runNormAudit orchestrator", () => {
     );
     assert.ok(mgnDoor);
     assert.match(mgnDoor!.source.quote, /0,9 м/);
+
+    const ramp = result.findings.find(
+      (f) => f.checkType === "mgn_ramp_slope" && f.elementId === 902
+    );
+    assert.ok(ramp);
+    assert.equal(ramp!.actualMm, 6);
+    assert.equal(ramp!.requiredMm, 5);
+    assert.match(ramp!.source.clause, /4\.3\.2\.30/);
+
+    const maneuvering = result.findings.find(
+      (f) => f.checkType === "mgn_door_maneuvering" && f.elementId === 901
+    );
+    assert.ok(maneuvering);
+    assert.match(maneuvering!.source.clause, /4\.3\.2\.13/);
 
     const narrowDoor = result.findings.find(
       (f) => f.checkType === "door_clear_width" && f.elementId === 401

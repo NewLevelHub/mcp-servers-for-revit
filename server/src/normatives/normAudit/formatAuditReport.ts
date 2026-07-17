@@ -63,7 +63,7 @@ export function formatNormAuditReport(result: NormAuditResult): string {
     `- Нарушений: **${result.summary.violations}**`,
     `- Пограничных: **${result.summary.nearLimit}**`,
     `- Соответствует: **${result.summary.compliant}**`,
-    `- Пропущено правил (нет checker): **${result.summary.skipped}**`,
+    `- Пропущено / нет достоверных данных: **${result.summary.skipped}**`,
     `- Чекеров запущено: **${result.summary.checksRun}**` +
       (result.summary.checksFailed > 0
         ? `, ошибок: **${result.summary.checksFailed}**`
@@ -77,7 +77,13 @@ export function formatNormAuditReport(result: NormAuditResult): string {
         parts.push(`цветовых областей: **${result.filledRegionCount}**`);
       }
       if (result.doorHighlightCount != null && result.doorHighlightCount > 0) {
-        parts.push(`дверей ПД: **${result.doorHighlightCount}**`);
+        parts.push(`дверей: **${result.doorHighlightCount}**`);
+      }
+      if (
+        result.otherElementHighlightCount != null &&
+        result.otherElementHighlightCount > 0
+      ) {
+        parts.push(`прочих элементов: **${result.otherElementHighlightCount}**`);
       }
       lines.push(`- Заливка на плане: ${parts.join(", ") || "—"}`);
     } else {
@@ -96,6 +102,7 @@ export function formatNormAuditReport(result: NormAuditResult): string {
     (f) => f.status === "violation" || f.status === "nearLimit"
   );
   const compliant = result.findings.filter((f) => f.status === "compliant");
+  const skippedFindings = result.findings.filter((f) => f.status === "skipped");
 
   lines.push("", "### Нарушения и пограничные");
   if (violations.length === 0) {
@@ -121,14 +128,25 @@ export function formatNormAuditReport(result: NormAuditResult): string {
     for (const finding of compliant.slice(0, 40)) {
       const title = CHECK_TITLES[finding.checkType] ?? finding.checkType;
       lines.push(
-        `- ✅ **${finding.name}** — ${title}` +
-          (finding.actualMm != null && finding.requiredMm != null
-            ? `: ${finding.actualMm} мм (норма ${finding.requiredMm} мм)`
-            : "")
+        `- ✅ **${finding.name}** — ${title}: ${formatFindingNote(finding)}`
       );
     }
     if (compliant.length > 40) {
       lines.push(`- … и ещё ${compliant.length - 40}`);
+    }
+  }
+
+  if (skippedFindings.length > 0) {
+    lines.push("", "### Пропущенные измерения");
+    for (const finding of skippedFindings) {
+      const title = CHECK_TITLES[finding.checkType] ?? finding.checkType;
+      lines.push(
+        `- ⏭ **${finding.name}**` +
+          (finding.level ? ` (${finding.level})` : "") +
+          ` — ${title}: ${finding.note || "нет достоверных данных"}` +
+          ` · id ${finding.elementId}`
+      );
+      lines.push(`  - ${formatSourceLine(finding)}`);
     }
   }
 

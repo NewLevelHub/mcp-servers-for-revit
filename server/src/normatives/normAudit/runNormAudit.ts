@@ -8,6 +8,8 @@ import {
 import { formatNormAuditReport } from "./formatAuditReport.js";
 import {
   normalizeAccessibilityDoorFindings,
+  normalizeAccessibilityRampFindings,
+  normalizeDoorManeuveringFindings,
   normalizeAccessibilityRoomFindings,
   normalizeDoorWidthFindings,
   normalizeEvacuationFindings,
@@ -22,6 +24,8 @@ import {
 } from "./normalizeFindings.js";
 import {
   MGN_CORRIDOR_SOURCE,
+  MGN_MANEUVERING_SOURCE,
+  MGN_RAMP_SLOPE_SOURCE,
   MGN_TURNING_SOURCE,
   MGN_WC_SOURCE,
 } from "./accessibility.js";
@@ -117,6 +121,7 @@ export interface NormAuditDeps {
     highlightedCount: number;
     filledRegionCount?: number;
     doorCount?: number;
+    otherElementCount?: number;
     message: string;
   }>;
   resolveDepthLimit?: (
@@ -449,6 +454,7 @@ async function runOneChecker(
           violations: result.violations,
           nearLimit: result.nearLimit,
           compliant: ctx.includeCompliant ? result.compliant : [],
+          unmeasured: result.unmeasured ?? [],
           source: result.source,
           minWidthMm: result.minWidthMm,
         });
@@ -587,14 +593,29 @@ async function runOneChecker(
             warnings,
           };
         }
-        return {
-          findings: normalizeAccessibilityDoorFindings({
+        const findings = normalizeAccessibilityDoorFindings({
             violations: result.violations,
             nearLimit: result.nearLimit,
             compliant: ctx.includeCompliant ? result.compliant : [],
+            unmeasured: result.unmeasuredDoors ?? [],
             source: result.source,
             minWidthMm: result.minWidthMm,
+          });
+        findings.push(
+          ...normalizeAccessibilityRampFindings({
+            items: result.ramps ?? [],
+            source: MGN_RAMP_SLOPE_SOURCE,
+            includeCompliant: ctx.includeCompliant,
           }),
+          ...normalizeDoorManeuveringFindings({
+            items: result.maneuvering ?? [],
+            unmeasured: result.unmeasuredManeuvering ?? [],
+            source: MGN_MANEUVERING_SOURCE,
+            includeCompliant: ctx.includeCompliant,
+          })
+        );
+        return {
+          findings,
           check: {
             checkType: checker.checkType,
             status: "ok",
@@ -910,6 +931,7 @@ export async function runNormAudit(
   let highlightedCount: number | undefined;
   let filledRegionCount: number | undefined;
   let doorHighlightCount: number | undefined;
+  let otherElementHighlightCount: number | undefined;
   if (mode === "highlight") {
     try {
       const painted = await resolvedDeps.highlight({
@@ -918,6 +940,7 @@ export async function runNormAudit(
       highlightedCount = painted.highlightedCount;
       filledRegionCount = painted.filledRegionCount;
       doorHighlightCount = painted.doorCount;
+      otherElementHighlightCount = painted.otherElementCount;
       if (painted.message) uniqueWarnings.push(painted.message);
     } catch (error) {
       uniqueWarnings.push(
@@ -955,6 +978,7 @@ export async function runNormAudit(
     highlightedCount,
     filledRegionCount,
     doorHighlightCount,
+    otherElementHighlightCount,
     warnings: uniqueWarnings,
   };
 

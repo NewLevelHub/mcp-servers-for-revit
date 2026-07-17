@@ -166,17 +166,8 @@ export const PHASE1_CHECKERS: readonly NormAuditCheckerDef[] = [
 
 /**
  * Known measurable rules without a checker yet — always reported as skipped.
- * door_clear_width now has a v1 checker (nominal DOOR_WIDTH); the «в свету»
- * (clear opening minus frame) refinement stays a documented follow-up.
  */
 export const PHASE2_SKIPPED: readonly NormAuditSkippedRule[] = [
-  {
-    checkType: "door_clear_width",
-    reason:
-      "Ширина двери проверяется по номиналу параметра (DOOR_WIDTH). " +
-      "Ширина «в свету» (за вычетом коробки) — отдельный follow-up (Phase 2).",
-    topics: ["дверь в свету", "clear width", "в свету"],
-  },
   {
     checkType: "egress_opening_width",
     reason:
@@ -188,22 +179,6 @@ export const PHASE2_SKIPPED: readonly NormAuditSkippedRule[] = [
     reason:
       "Отдельный checker мин. ширины прохода (если не покрыто коридором) ещё не реализован (Phase 2).",
     topics: ["ширина прохода"],
-  },
-  {
-    checkType: "mgn_ramp_slope",
-    reason:
-      "Уклоны пандусов пока не читаются из модели (нет MCP-команды для пандусов) — Phase 2. " +
-      "Норма: СП РК 3.06-101-2012*, п. 4.3.2.30 — «Продольный уклон пандуса не должен превышать 5 %, (1:20). " +
-      "В исключительных случаях в затесненных местах максимальная высота подъема (марша) не должна превышать 0,8 м при уклоне не более 8% (1:12)».",
-    topics: ["пандус", "уклон", "ramp", "мгн", "доступ"],
-  },
-  {
-    checkType: "mgn_door_maneuvering",
-    reason:
-      "Зоны маневрирования перед дверьми требуют анализа свободного пространства у двери — Phase 2. " +
-      "Норма: СП РК 3.06-101-2012*, п. 4.3.2.13 — «Глубина пространства для маневрирования кресло-коляски перед дверью " +
-      "при открывании „от себя“ должна быть не менее 1,2 м, а при открывании „к себе“ - не менее 1,5 м при ширине не менее 1,5 м».",
-    topics: ["маневр", "зона перед дверью", "мгн", "доступ"],
   },
 ] as const;
 

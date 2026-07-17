@@ -5,7 +5,7 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerGetDoorEgressInfoTool(server: McpServer) {
   server.tool(
     "get_door_egress_info",
-    "Extract door opening width, family/type, host wall, and egress-path hint flags for normative checks.",
+    "Extract door nominal/clear width, maneuvering space, egress-path hints, and ramp slopes for accessibility checks.",
     {
       levelName: z
         .string()

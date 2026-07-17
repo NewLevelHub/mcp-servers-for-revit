@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   classifyAccessibilityRooms,
+  classifyAccessibilityRamps,
+  classifyDoorManeuvering,
   isAccessibleSanitaryRoom,
   isCorridorRoom,
   isEvacuationCorridor,
@@ -16,6 +18,7 @@ import {
 } from "./accessibility.js";
 import { classifyDoorWidths } from "./doorWidth.js";
 import { selectPhase1Checkers, selectSkippedRules } from "./checklist.js";
+import { paintTargetsFromFindings } from "./runners.js";
 
 describe("accessibility room matchers", () => {
   it("recognizes corridors, evacuation corridors, accessible WCs", () => {
@@ -119,7 +122,7 @@ describe("norm sources carry verbatim СП РК 3.06-101-2012* quotes", () => {
 });
 
 describe("checklist integration", () => {
-  it("topics=['мгн'] selects only МГН checkers and skips", () => {
+  it("topics=['мгн'] selects implemented МГН checkers without МГН skips", () => {
     const checkers = selectPhase1Checkers(["мгн"]);
     assert.deepEqual(
       checkers.map((checker) => checker.checkType).sort(),
@@ -127,8 +130,8 @@ describe("checklist integration", () => {
     );
     const skipped = selectSkippedRules(["мгн"]);
     const skippedTypes = skipped.map((rule) => rule.checkType);
-    assert.ok(skippedTypes.includes("mgn_ramp_slope"));
-    assert.ok(skippedTypes.includes("mgn_door_maneuvering"));
+    assert.equal(skippedTypes.includes("mgn_ramp_slope"), false);
+    assert.equal(skippedTypes.includes("mgn_door_maneuvering"), false);
   });
 
   it("full audit (no topics) includes МГН checkers", () => {
@@ -136,5 +139,120 @@ describe("checklist integration", () => {
     const types = checkers.map((checker) => checker.checkType);
     assert.ok(types.includes("mgn_room_geometry"));
     assert.ok(types.includes("mgn_door_width"));
+  });
+});
+
+describe("measurable ramp and door maneuvering checks", () => {
+  it("checks actual ramp slope against 5 percent", () => {
+    const result = classifyAccessibilityRamps([
+      { id: 1, name: "Пандус 1", slopePercent: 4.8, slopeSource: "geometry_bbox" },
+      { id: 2, name: "Пандус 2", slopePercent: 6.0, slopeSource: "parameter:Slope" },
+    ]);
+    assert.equal(result.findings[0].status, "compliant");
+    assert.equal(result.findings[1].status, "violation");
+    assert.equal(result.findings[1].requiredMaxPercent, 5);
+  });
+
+  it("applies the 8 percent ramp exception only when marked and rise is at most 800 mm", () => {
+    const result = classifyAccessibilityRamps([
+      { id: 1, slopePercent: 7, riseMm: 700, isExceptionAllowed: false },
+      { id: 2, slopePercent: 7, riseMm: 700, isExceptionAllowed: true },
+      { id: 3, slopePercent: 7, riseMm: 900, isExceptionAllowed: true },
+    ]);
+    assert.equal(result.findings[0].status, "violation");
+    assert.equal(result.findings[1].status, "compliant");
+    assert.equal(result.findings[1].requiredMaxPercent, 8);
+    assert.equal(result.findings[1].exceptionApplied, true);
+    assert.equal(result.findings[2].status, "violation");
+  });
+
+  it("routes MGN rooms, doors, and ramps to the correct highlight mechanism", () => {
+    const source = { document: "СП", clause: "1", quote: "норма" };
+    const targets = paintTargetsFromFindings([
+      {
+        checkType: "mgn_turning_circle",
+        status: "violation",
+        elementId: 10,
+        name: "Тамбур",
+        level: "1",
+        source,
+      },
+      {
+        checkType: "mgn_door_width",
+        status: "violation",
+        elementId: 20,
+        name: "Дверь",
+        level: "1",
+        source,
+      },
+      {
+        checkType: "mgn_door_maneuvering",
+        status: "nearLimit",
+        elementId: 20,
+        name: "Дверь",
+        level: "1",
+        source,
+      },
+      {
+        checkType: "mgn_ramp_slope",
+        status: "violation",
+        elementId: 30,
+        name: "Пандус",
+        level: "1",
+        source,
+      },
+    ]);
+    assert.deepEqual(targets.roomIds, [10]);
+    assert.deepEqual(targets.doorIds, [20]);
+    assert.deepEqual(targets.otherElementIds, [30]);
+  });
+
+  it("checks the limiting maneuvering rectangle and ignores non-egress doors", () => {
+    const result = classifyDoorManeuvering([
+      {
+        id: 1,
+        family: "Дверь",
+        type: "900",
+        isOnEgressPath: true,
+        maneuveringDepthMm: 1400,
+        maneuveringWidthMm: 1600,
+      },
+      {
+        id: 2,
+        isOnEgressPath: false,
+        maneuveringDepthMm: 1000,
+        maneuveringWidthMm: 1000,
+      },
+    ]);
+    assert.equal(result.findings.length, 1);
+    assert.equal(result.findings[0].status, "violation");
+    assert.equal(result.findings[0].deviationMm, 100);
+    assert.equal(result.nonEgressSkipped, 1);
+  });
+
+  it("uses 1200 mm for push-side maneuvering and reports missing geometry", () => {
+    const result = classifyDoorManeuvering([
+      {
+        id: 1,
+        isOnEgressPath: true,
+        maneuveringDepthMm: 1200,
+        maneuveringWidthMm: 1500,
+        maneuveringRequiredDepthMm: 1200,
+        maneuveringApproach: "push/opposite-facing",
+      },
+      { id: 2, isOnEgressPath: true },
+    ]);
+    assert.equal(result.findings[0].status, "compliant");
+    assert.equal(result.findings[0].requiredDepthMm, 1200);
+    assert.equal(result.findings[0].approach, "push/opposite-facing");
+    assert.deepEqual(result.unmeasured.map((door) => door.id), [2]);
+  });
+
+  it("treats exact limits with conversion noise as compliant", () => {
+    const result = classifyAccessibilityRooms(
+      [{ id: 1, name: "Тамбур", widthMm: 1499.999999, depthMm: 2000 }],
+      { nearLimitToleranceMm: 50 }
+    );
+    assert.equal(result.turning[0].status, "compliant");
   });
 });

@@ -27,11 +27,16 @@ import {
   type TambourRoomInput,
 } from "./tambourSize.js";
 import {
+  classifyAccessibilityRamps,
+  classifyDoorManeuvering,
   classifyAccessibilityRooms,
   MGN_DOOR_SOURCE,
   MGN_DOOR_WIDTH_MM,
   type AccessibilityRoomInput,
+  type AccessibilityDoorManeuveringInput,
+  type ClassifiedAccessibilityRamp,
   type ClassifiedAccessibilityRoom,
+  type ClassifiedDoorManeuvering,
 } from "./accessibility.js";
 import {
   classifyRoomAreas,
@@ -500,7 +505,25 @@ const doorEgressItemSchema = z.object({
   type: z.string().optional().default(""),
   level: z.string().optional().default(""),
   openingWidthMm: z.number().nullable().optional(),
+  clearWidthMm: z.number().nullable().optional(),
+  widthSource: z.string().optional().default(""),
   isOnEgressPath: z.boolean().optional().default(false),
+  maneuveringDepthMm: z.number().nullable().optional(),
+  maneuveringWidthMm: z.number().nullable().optional(),
+  maneuveringRoom: z.string().optional().default(""),
+  maneuveringRequiredDepthMm: z.number().nullable().optional(),
+  maneuveringApproach: z.string().optional().default(""),
+});
+
+const rampAccessibilityItemSchema = z.object({
+  id: z.number(),
+  uniqueId: z.string().optional().default(""),
+  name: z.string().optional().default(""),
+  level: z.string().optional().default(""),
+  slopePercent: z.number().nullable().optional(),
+  slopeSource: z.string().optional().default(""),
+  riseMm: z.number().nullable().optional(),
+  isExceptionAllowed: z.boolean().optional().default(false),
 });
 
 export interface DoorWidthRunnerResult {
@@ -512,12 +535,13 @@ export interface DoorWidthRunnerResult {
   violations: ClassifiedDoor[];
   nearLimit: ClassifiedDoor[];
   compliant: ClassifiedDoor[];
+  unmeasured?: DoorWidthInput[];
   source: NormAuditSource;
   warnings: string[];
 }
 
 /**
- * Door clear-width check (REV-56, v1 = nominal DOOR_WIDTH).
+ * Door clear-width check (REV-56).
  * Reads widths via get_door_egress_info, drops откосы (REV-41), and compares
  * only doors on an egress path against the resolved minimum.
  */
@@ -539,6 +563,7 @@ export async function runDoorWidthCheck(options: {
       violations: [],
       nearLimit: [],
       compliant: [],
+      unmeasured: [],
       source: options.source,
       warnings: [],
     };
@@ -580,6 +605,8 @@ export async function runDoorWidthCheck(options: {
     type: door.type,
     level: door.level,
     openingWidthMm: door.openingWidthMm ?? null,
+    clearWidthMm: door.clearWidthMm ?? null,
+    widthSource: door.widthSource,
     isOnEgressPath: door.isOnEgressPath,
   }));
 
@@ -587,11 +614,12 @@ export async function runDoorWidthCheck(options: {
     minWidthMm: options.minWidthMm,
     nearLimitToleranceMm: options.nearLimitToleranceMm ?? 50,
     egressOnly: options.egressOnly ?? true,
+    requireClearWidth: true,
   });
 
   const warnings: string[] = [
-    "v1: сравнивается номинальная ширина параметра двери (DOOR_WIDTH). " +
-      "Ширина «в свету» (за вычетом коробки) — отдельный follow-up.",
+    "Сравнивается параметр ширины «в свету» семейства; для старых семейств без " +
+      "такого параметра результат явно помечается как nominal_fallback.",
   ];
   if (classified.accessoriesSkipped > 0) {
     warnings.push(
@@ -619,6 +647,7 @@ export async function runDoorWidthCheck(options: {
     violations: classified.violations,
     nearLimit: classified.nearLimit,
     compliant: classified.compliant,
+    unmeasured: classified.unmeasured,
     source: options.source,
     warnings,
   };
@@ -846,6 +875,10 @@ export interface AccessibilityDoorsRunnerResult {
   violations: ClassifiedDoor[];
   nearLimit: ClassifiedDoor[];
   compliant: ClassifiedDoor[];
+  unmeasuredDoors?: DoorWidthInput[];
+  ramps?: ClassifiedAccessibilityRamp[];
+  maneuvering?: ClassifiedDoorManeuvering[];
+  unmeasuredManeuvering?: AccessibilityDoorManeuveringInput[];
   source: NormAuditSource;
   warnings: string[];
 }
@@ -866,6 +899,7 @@ export async function runAccessibilityDoorsCheck(options: {
       message: z.string().optional().default(""),
       totalDoors: z.number().optional(),
       doors: z.array(doorEgressItemSchema).optional().default([]),
+      ramps: z.array(rampAccessibilityItemSchema).optional().default([]),
     })
     .parse(rawResponse);
 
@@ -878,6 +912,10 @@ export async function runAccessibilityDoorsCheck(options: {
       violations: [],
       nearLimit: [],
       compliant: [],
+      unmeasuredDoors: [],
+      ramps: [],
+      maneuvering: [],
+      unmeasuredManeuvering: [],
       source: MGN_DOOR_SOURCE,
       warnings: [],
     };
@@ -890,17 +928,51 @@ export async function runAccessibilityDoorsCheck(options: {
     type: door.type,
     level: door.level,
     openingWidthMm: door.openingWidthMm ?? null,
+    clearWidthMm: door.clearWidthMm ?? null,
+    widthSource: door.widthSource,
     isOnEgressPath: door.isOnEgressPath,
   }));
   const classified = classifyDoorWidths(doors, {
     minWidthMm: MGN_DOOR_WIDTH_MM,
     nearLimitToleranceMm: options.nearLimitToleranceMm ?? 50,
     egressOnly: true,
+    requireClearWidth: true,
   });
+  const ramps = classifyAccessibilityRamps(
+    raw.ramps.map((ramp) => ({
+      ...ramp,
+      riseMm: ramp.riseMm,
+      isExceptionAllowed: ramp.isExceptionAllowed,
+    }))
+  );
+  const maneuveringInputs: AccessibilityDoorManeuveringInput[] = raw.doors.map((door) => ({
+      id: door.id,
+      uniqueId: door.uniqueId || String(door.id),
+      family: door.family,
+      type: door.type,
+      level: door.level,
+      isOnEgressPath: door.isOnEgressPath,
+      maneuveringDepthMm: door.maneuveringDepthMm,
+      maneuveringWidthMm: door.maneuveringWidthMm,
+      maneuveringRoom: door.maneuveringRoom,
+      maneuveringRequiredDepthMm: door.maneuveringRequiredDepthMm,
+      maneuveringApproach: door.maneuveringApproach,
+    }));
+  const maneuvering = classifyDoorManeuvering(
+    maneuveringInputs,
+    options.nearLimitToleranceMm ?? 50
+  );
+  const nominalFallbackCount = classified.unmeasured.length;
   const warnings: string[] = [
-    "v1: номинальная ширина двери (DOOR_WIDTH); ширина «в свету» — follow-up. " +
-      "Проверяются двери на доступных (эвакуационных) путях; внутриквартирные — нет.",
+    "Ширина «в свету» читается из параметра семейства; при его отсутствии явно " +
+      "помечается номинальный fallback. Зона маневрирования измеряется до границ " +
+      "помещений без учёта мебели и оборудования.",
   ];
+  if (nominalFallbackCount > 0) {
+    warnings.push(
+      `Дверей без достоверной ширины «в свету»: ${nominalFallbackCount}; отмечены skipped, номинал не принят за факт.`
+    );
+  }
   if (classified.accessoriesSkipped > 0) {
     warnings.push(
       `Откосы/наличники исключены: ${classified.accessoriesSkipped} (REV-41).`
@@ -911,17 +983,31 @@ export async function runAccessibilityDoorsCheck(options: {
       `Дверей без читаемой ширины: ${classified.missingWidth} (пропущены).`
     );
   }
+  if (ramps.missingGeometry > 0) {
+    warnings.push(`Пандусов без читаемого уклона: ${ramps.missingGeometry} (пропущены).`);
+  }
+  if (maneuvering.missingGeometry > 0) {
+    warnings.push(
+      `Дверей доступного пути без измеримой зоны маневрирования: ${maneuvering.missingGeometry} (пропущены).`
+    );
+  }
 
   return {
     success: true,
     message:
       `МГН: проверено дверей на доступных путях ${classified.egressChecked} ` +
-      `(из ${classified.totalDoors} дверных блоков). Норма ≥ ${MGN_DOOR_WIDTH_MM} мм.`,
+      `(из ${classified.totalDoors} дверных блоков), пандусов ${ramps.findings.length}, ` +
+      `зон маневрирования ${maneuvering.findings.length}.`,
     minWidthMm: MGN_DOOR_WIDTH_MM,
-    totalChecked: classified.egressChecked,
+    totalChecked:
+      classified.egressChecked + ramps.findings.length + maneuvering.findings.length,
     violations: classified.violations,
     nearLimit: classified.nearLimit,
     compliant: classified.compliant,
+    unmeasuredDoors: classified.unmeasured,
+    ramps: ramps.findings,
+    maneuvering: maneuvering.findings,
+    unmeasuredManeuvering: maneuvering.unmeasured,
     source: MGN_DOOR_SOURCE,
     warnings,
   };
@@ -1308,17 +1394,21 @@ export interface HighlightAuditResult {
   highlightedCount: number;
   filledRegionCount: number;
   doorCount: number;
+  otherElementCount: number;
   message: string;
 }
 
-function paintTargetsFromFindings(findings: NormAuditFinding[]): {
+export function paintTargetsFromFindings(findings: NormAuditFinding[]): {
   roomIds: number[];
   doorIds: number[];
+  otherElementIds: number[];
 } {
   const roomSeen = new Set<number>();
   const doorSeen = new Set<number>();
   const roomIds: number[] = [];
   const doorIds: number[] = [];
+  const otherElementIds: number[] = [];
+  const otherSeen = new Set<number>();
 
   for (const finding of findings) {
     if (finding.status !== "violation" && finding.status !== "nearLimit") {
@@ -1326,11 +1416,20 @@ function paintTargetsFromFindings(findings: NormAuditFinding[]): {
     }
     if (
       finding.checkType === "fire_doors" ||
-      finding.checkType === "door_clear_width"
+      finding.checkType === "door_clear_width" ||
+      finding.checkType === "mgn_door_width" ||
+      finding.checkType === "mgn_door_maneuvering"
     ) {
       if (!doorSeen.has(finding.elementId)) {
         doorSeen.add(finding.elementId);
         doorIds.push(finding.elementId);
+      }
+      continue;
+    }
+    if (finding.checkType === "mgn_ramp_slope") {
+      if (!otherSeen.has(finding.elementId)) {
+        otherSeen.add(finding.elementId);
+        otherElementIds.push(finding.elementId);
       }
       continue;
     }
@@ -1343,7 +1442,7 @@ function paintTargetsFromFindings(findings: NormAuditFinding[]): {
     }
   }
 
-  return { roomIds, doorIds };
+  return { roomIds, doorIds, otherElementIds };
 }
 
 /**
@@ -1353,19 +1452,21 @@ function paintTargetsFromFindings(findings: NormAuditFinding[]): {
 export async function highlightAuditViolations(options: {
   findings: NormAuditFinding[];
 }): Promise<HighlightAuditResult> {
-  const { roomIds, doorIds } = paintTargetsFromFindings(options.findings);
+  const { roomIds, doorIds, otherElementIds } = paintTargetsFromFindings(options.findings);
 
-  if (roomIds.length === 0 && doorIds.length === 0) {
+  if (roomIds.length === 0 && doorIds.length === 0 && otherElementIds.length === 0) {
     return {
       highlightedCount: 0,
       filledRegionCount: 0,
       doorCount: 0,
+      otherElementCount: 0,
       message: "Нет нарушений для заливки.",
     };
   }
 
   let filledRegionCount = 0;
   let doorCount = 0;
+  let otherElementCount = 0;
 
   await withRevitConnection(async (revitClient) => {
     if (roomIds.length > 0) {
@@ -1397,21 +1498,35 @@ export async function highlightAuditViolations(options: {
       });
       doorCount = doorIds.length;
     }
+    if (otherElementIds.length > 0) {
+      await revitClient.sendCommand("operate_element", {
+        data: {
+          elementIds: otherElementIds,
+          action: "SetColor",
+          colorValue: [255, 0, 0],
+        },
+      });
+      otherElementCount = otherElementIds.length;
+    }
   });
 
-  const highlightedCount = filledRegionCount + doorCount;
+  const highlightedCount = filledRegionCount + doorCount + otherElementCount;
   const parts: string[] = [];
   if (filledRegionCount > 0) {
     parts.push(`цветовых областей: ${filledRegionCount}`);
   }
   if (doorCount > 0) {
-    parts.push(`дверей ПД: ${doorCount}`);
+    parts.push(`дверей: ${doorCount}`);
+  }
+  if (otherElementCount > 0) {
+    parts.push(`прочих элементов: ${otherElementCount}`);
   }
 
   return {
     highlightedCount,
     filledRegionCount,
     doorCount,
+    otherElementCount,
     message:
       parts.length > 0
         ? `Заливка нарушений — ${parts.join(", ")}.`

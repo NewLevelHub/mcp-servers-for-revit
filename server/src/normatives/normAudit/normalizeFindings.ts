@@ -259,6 +259,18 @@ export interface DoorWidthItemInput {
   requiredMm: number;
   deviationMm: number;
   isOnEgressPath?: boolean;
+  widthSource?: string;
+}
+
+export interface UnmeasuredDoorWidthInput {
+  id: number;
+  uniqueId?: string;
+  family?: string;
+  type?: string;
+  level?: string;
+  openingWidthMm?: number | null;
+  widthSource?: string;
+  isOnEgressPath?: boolean;
 }
 
 function doorNameOf(item: {
@@ -277,6 +289,7 @@ export function normalizeDoorWidthFindings(input: {
   violations: DoorWidthItemInput[];
   nearLimit: DoorWidthItemInput[];
   compliant: DoorWidthItemInput[];
+  unmeasured?: UnmeasuredDoorWidthInput[];
   source: NormAuditSource | null | undefined;
   minWidthMm: number;
 }): NormAuditFinding[] {
@@ -306,6 +319,23 @@ export function normalizeDoorWidthFindings(input: {
   for (const item of input.violations) push(item);
   for (const item of input.nearLimit) push(item);
   for (const item of input.compliant) push(item);
+  for (const item of input.unmeasured ?? []) {
+    findings.push({
+      checkType: "door_clear_width",
+      status: "skipped",
+      elementId: item.id,
+      uniqueId: item.uniqueId,
+      name: doorNameOf(item),
+      level: item.level ?? "",
+      metric: "ширина в свету",
+      actualMm: item.openingWidthMm == null ? null : roundMm(item.openingWidthMm),
+      requiredMm: roundMm(input.minWidthMm),
+      note:
+        "Нет достоверного параметра/расчёта ширины «в свету»; " +
+        `номинал ${item.openingWidthMm ?? "не задан"} мм не использован для вывода.`,
+      source,
+    });
+  }
   return findings;
 }
 
@@ -429,6 +459,7 @@ export function normalizeAccessibilityDoorFindings(input: {
   violations: DoorWidthItemInput[];
   nearLimit: DoorWidthItemInput[];
   compliant: DoorWidthItemInput[];
+  unmeasured?: UnmeasuredDoorWidthInput[];
   source: NormAuditSource;
   minWidthMm: number;
 }): NormAuditFinding[] {
@@ -450,7 +481,9 @@ export function normalizeAccessibilityDoorFindings(input: {
       actualMm: roundMm(item.actualMm),
       requiredMm: roundMm(item.requiredMm || input.minWidthMm),
       deviationMm: roundMm(item.deviationMm),
-      note: item.isOnEgressPath ? "на доступном пути эвакуации" : undefined,
+      note:
+        `${item.isOnEgressPath ? "на доступном пути эвакуации" : "доступная дверь"}` +
+        (item.widthSource ? `; источник ширины: ${item.widthSource}` : ""),
       source,
     });
   };
@@ -458,7 +491,125 @@ export function normalizeAccessibilityDoorFindings(input: {
   for (const item of input.violations) push(item);
   for (const item of input.nearLimit) push(item);
   for (const item of input.compliant) push(item);
+  for (const item of input.unmeasured ?? []) {
+    findings.push({
+      checkType: "mgn_door_width",
+      status: "skipped",
+      elementId: item.id,
+      uniqueId: item.uniqueId,
+      name: doorNameOf(item),
+      level: item.level ?? "",
+      metric: "ширина двери в свету",
+      actualMm: item.openingWidthMm == null ? null : roundMm(item.openingWidthMm),
+      requiredMm: roundMm(input.minWidthMm),
+      note:
+        "Нет достоверной ширины «в свету»; " +
+        `номинал ${item.openingWidthMm ?? "не задан"} мм показан справочно.`,
+      source,
+    });
+  }
   return findings;
+}
+
+export function normalizeAccessibilityRampFindings(input: {
+  items: Array<{
+    id: number;
+    uniqueId?: string;
+    name: string;
+    level?: string;
+    status: "violation" | "nearLimit" | "compliant";
+    slopePercent: number;
+    requiredMaxPercent: number;
+    deviationPercent: number;
+    slopeSource: string;
+    riseMm?: number;
+    exceptionApplied?: boolean;
+  }>;
+  source: NormAuditSource;
+  includeCompliant: boolean;
+}): NormAuditFinding[] {
+  return input.items
+    .filter((item) => input.includeCompliant || item.status !== "compliant")
+    .map((item) => ({
+      checkType: "mgn_ramp_slope" as const,
+      status: item.status,
+      elementId: item.id,
+      uniqueId: item.uniqueId,
+      name: item.name,
+      level: item.level ?? "",
+      metric: "продольный уклон",
+      unit: "percent" as const,
+      actualMm: Math.round(item.slopePercent * 100) / 100,
+      requiredMm: item.requiredMaxPercent,
+      deviationMm: Math.round(item.deviationPercent * 100) / 100,
+      note:
+        `источник измерения: ${item.slopeSource || "не указан"}` +
+        (item.riseMm != null ? `; подъём ${roundMm(item.riseMm)} мм` : "") +
+        (item.exceptionApplied ? "; применено исключение для стеснённых условий" : ""),
+      source: toAuditSource(input.source),
+    }));
+}
+
+export function normalizeDoorManeuveringFindings(input: {
+  items: Array<{
+    id: number;
+    uniqueId?: string;
+    name: string;
+    level?: string;
+    status: "violation" | "nearLimit" | "compliant";
+    actualDepthMm: number;
+    actualWidthMm: number;
+    requiredDepthMm: number;
+    requiredWidthMm: number;
+    deviationMm: number;
+    roomName: string;
+    approach?: string;
+  }>;
+  unmeasured?: Array<{
+    id: number;
+    uniqueId?: string;
+    family?: string;
+    type?: string;
+    level?: string;
+    maneuveringRoom?: string;
+  }>;
+  source: NormAuditSource;
+  includeCompliant: boolean;
+}): NormAuditFinding[] {
+  const findings: NormAuditFinding[] = input.items
+    .filter((item) => input.includeCompliant || item.status !== "compliant")
+    .map((item) => ({
+      checkType: "mgn_door_maneuvering" as const,
+      status: item.status,
+      elementId: item.id,
+      uniqueId: item.uniqueId,
+      name: item.name,
+      level: item.level ?? "",
+      metric: "зона маневрирования",
+      actualMm: roundMm(Math.min(item.actualDepthMm, item.actualWidthMm)),
+      requiredMm: roundMm(Math.min(item.requiredDepthMm, item.requiredWidthMm)),
+      deviationMm: roundMm(item.deviationMm),
+      note:
+        `${item.roomName ? `${item.roomName}: ` : ""}` +
+        `${roundMm(item.actualWidthMm)} × ${roundMm(item.actualDepthMm)} мм ` +
+        `(норма ≥ ${roundMm(item.requiredWidthMm)} × ${roundMm(item.requiredDepthMm)} мм)` +
+        (item.approach ? `; сторона: ${item.approach}` : ""),
+      source: toAuditSource(input.source),
+    }));
+  const skipped: NormAuditFinding[] = (input.unmeasured ?? []).map((item) => ({
+    checkType: "mgn_door_maneuvering",
+    status: "skipped",
+    elementId: item.id,
+    uniqueId: item.uniqueId,
+    name: doorNameOf(item),
+    level: item.level ?? "",
+    metric: "зона маневрирования",
+    note:
+      "Не удалось определить смежное помещение или свободный габарит у двери; " +
+      "проверка не считается выполненной.",
+    source: toAuditSource(input.source),
+  }));
+  return [...findings, ...skipped];
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -610,12 +761,19 @@ export function summarizeFindings(
   let violations = 0;
   let nearLimit = 0;
   let compliant = 0;
+  let skippedFindings = 0;
   for (const finding of findings) {
     if (finding.status === "violation") violations += 1;
     else if (finding.status === "nearLimit") nearLimit += 1;
     else if (finding.status === "compliant") compliant += 1;
+    else if (finding.status === "skipped") skippedFindings += 1;
   }
-  return { violations, nearLimit, compliant, skipped: skippedCount };
+  return {
+    violations,
+    nearLimit,
+    compliant,
+    skipped: skippedCount + skippedFindings,
+  };
 }
 
 export function findingsForHighlight(
@@ -638,6 +796,9 @@ export function formatFindingNote(finding: NormAuditFinding): string {
   }
   if (finding.checkType === "room_area_min" && finding.actualMm != null && finding.requiredMm != null) {
     return `${metric}${finding.actualMm} м² vs норма ${finding.requiredMm} м²`;
+  }
+  if (finding.unit === "percent" && finding.actualMm != null && finding.requiredMm != null) {
+    return `${metric}${finding.actualMm}% vs максимум ${finding.requiredMm}%`;
   }
   if (finding.actualMm != null && finding.requiredMm != null) {
     return `${metric}${finding.actualMm} мм vs норма ${finding.requiredMm} мм`;

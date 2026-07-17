@@ -4,9 +4,9 @@
  * для маломобильных групп населения».
  *
  * Quotes below are extracted verbatim from normatives/SP_RK_3.06-101-2012_27.11.2019.pdf.
- * v1 measures room bounding geometry (get_room_geometry_metrics) and nominal door
- * widths (get_door_egress_info); ramp slopes and door maneuvering zones are
- * declared as skipped rules until the model exposes that geometry.
+ * Room geometry comes from get_room_geometry_metrics; clear door widths,
+ * door-side maneuvering spaces, and ramp slopes come from get_door_egress_info.
+ * Missing trustworthy measurements are emitted as explicit skipped findings.
  */
 
 import { isTambourRoom } from "./tambourSize.js";
@@ -67,7 +67,7 @@ export const MGN_WC_SOURCE: NormAuditSource = {
     "рукомойником 1,6 × 2,2; туалетной без умывальника 1,2 × 1,6.",
 };
 
-/** Пандусы — Phase-2 (нет данных о пандусах в модели), но норма цитируется. */
+/** Пандусы: основной предел 5%; 8% только для явно отмеченного исключения. */
 export const MGN_RAMP_SLOPE_SOURCE: NormAuditSource = {
   document: MGN_DOCUMENT,
   clause: "п. 4.3.2.30",
@@ -77,7 +77,7 @@ export const MGN_RAMP_SLOPE_SOURCE: NormAuditSource = {
     "превышать 0,8 м при уклоне не более 8% (1:12).",
 };
 
-/** Зоны маневрирования перед дверью — Phase-2, норма цитируется. */
+/** Зоны маневрирования перед дверью. */
 export const MGN_MANEUVERING_SOURCE: NormAuditSource = {
   document: MGN_DOCUMENT,
   clause: "п. 4.3.2.13",
@@ -226,7 +226,8 @@ function statusFor(
   deviationMm: number,
   toleranceMm: number
 ): AccessibilityStatus {
-  if (deviationMm <= 0) return "compliant";
+  // Revit feet→mm conversion can leave sub-micrometre noise at an exact limit.
+  if (deviationMm <= 0.01) return "compliant";
   if (deviationMm <= toleranceMm) return "nearLimit";
   return "violation";
 }
@@ -334,4 +335,167 @@ export function classifyAccessibilityRooms(
     accessibleWcFound,
     missingGeometry,
   };
+}
+
+export const MGN_RAMP_MAX_SLOPE_PERCENT = 5;
+export const MGN_RAMP_EXCEPTION_MAX_SLOPE_PERCENT = 8;
+export const MGN_RAMP_EXCEPTION_MAX_RISE_MM = 800;
+export const MGN_MANEUVERING_WIDTH_MM = 1500;
+export const MGN_MANEUVERING_PULL_DEPTH_MM = 1500;
+export const MGN_MANEUVERING_PUSH_DEPTH_MM = 1200;
+
+export interface AccessibilityRampInput {
+  id: number;
+  uniqueId?: string;
+  name?: string;
+  level?: string;
+  slopePercent?: number | null;
+  slopeSource?: string;
+  riseMm?: number | null;
+  isExceptionAllowed?: boolean;
+}
+
+export interface AccessibilityDoorManeuveringInput {
+  id: number;
+  uniqueId?: string;
+  family?: string;
+  type?: string;
+  level?: string;
+  isOnEgressPath?: boolean;
+  maneuveringDepthMm?: number | null;
+  maneuveringWidthMm?: number | null;
+  maneuveringRoom?: string;
+  maneuveringRequiredDepthMm?: number | null;
+  maneuveringApproach?: string;
+}
+
+export interface ClassifiedAccessibilityRamp {
+  id: number;
+  uniqueId?: string;
+  name: string;
+  level: string;
+  status: AccessibilityStatus;
+  slopePercent: number;
+  requiredMaxPercent: number;
+  deviationPercent: number;
+  slopeSource: string;
+  riseMm?: number;
+  exceptionApplied: boolean;
+}
+
+export interface ClassifiedDoorManeuvering {
+  id: number;
+  uniqueId?: string;
+  name: string;
+  level: string;
+  status: AccessibilityStatus;
+  actualDepthMm: number;
+  actualWidthMm: number;
+  requiredDepthMm: number;
+  requiredWidthMm: number;
+  deviationMm: number;
+  roomName: string;
+  approach: string;
+}
+
+export function classifyAccessibilityRamps(
+  ramps: AccessibilityRampInput[],
+  nearLimitTolerancePercent = 0.25
+): {
+  findings: ClassifiedAccessibilityRamp[];
+  missingGeometry: number;
+} {
+  const findings: ClassifiedAccessibilityRamp[] = [];
+  let missingGeometry = 0;
+  for (const ramp of ramps) {
+    const slope = ramp.slopePercent;
+    if (slope == null || !Number.isFinite(slope) || slope <= 0) {
+      missingGeometry += 1;
+      continue;
+    }
+    const exceptionApplied =
+      Boolean(ramp.isExceptionAllowed) &&
+      ramp.riseMm != null &&
+      ramp.riseMm <= MGN_RAMP_EXCEPTION_MAX_RISE_MM;
+    const requiredMaxPercent = exceptionApplied
+      ? MGN_RAMP_EXCEPTION_MAX_SLOPE_PERCENT
+      : MGN_RAMP_MAX_SLOPE_PERCENT;
+    const excess = slope - requiredMaxPercent;
+    const status: AccessibilityStatus =
+      excess <= 0.0001
+        ? "compliant"
+        : excess <= nearLimitTolerancePercent
+          ? "nearLimit"
+          : "violation";
+    findings.push({
+      id: ramp.id,
+      uniqueId: ramp.uniqueId,
+      name: ramp.name?.trim() || `пандус ${ramp.id}`,
+      level: ramp.level ?? "",
+      status,
+      slopePercent: slope,
+      requiredMaxPercent,
+      deviationPercent: excess > 0 ? excess : 0,
+      slopeSource: ramp.slopeSource ?? "",
+      ...(ramp.riseMm != null ? { riseMm: ramp.riseMm } : {}),
+      exceptionApplied,
+    });
+  }
+  return { findings, missingGeometry };
+}
+
+export function classifyDoorManeuvering(
+  doors: AccessibilityDoorManeuveringInput[],
+  nearLimitToleranceMm = 50
+): {
+  findings: ClassifiedDoorManeuvering[];
+  unmeasured: AccessibilityDoorManeuveringInput[];
+  missingGeometry: number;
+  nonEgressSkipped: number;
+} {
+  const findings: ClassifiedDoorManeuvering[] = [];
+  const unmeasured: AccessibilityDoorManeuveringInput[] = [];
+  let missingGeometry = 0;
+  let nonEgressSkipped = 0;
+  for (const door of doors) {
+    if (!door.isOnEgressPath) {
+      nonEgressSkipped += 1;
+      continue;
+    }
+    const depth = door.maneuveringDepthMm;
+    const width = door.maneuveringWidthMm;
+    if (
+      depth == null ||
+      width == null ||
+      !Number.isFinite(depth) ||
+      !Number.isFinite(width) ||
+      depth <= 0 ||
+      width <= 0
+    ) {
+      missingGeometry += 1;
+      unmeasured.push(door);
+      continue;
+    }
+    const requiredDepth =
+      door.maneuveringRequiredDepthMm ?? MGN_MANEUVERING_PULL_DEPTH_MM;
+    const deviation = Math.max(
+      requiredDepth - depth,
+      MGN_MANEUVERING_WIDTH_MM - width
+    );
+    findings.push({
+      id: door.id,
+      uniqueId: door.uniqueId,
+      name: `${door.family ?? ""} ${door.type ?? ""}`.trim() || `дверь ${door.id}`,
+      level: door.level ?? "",
+      status: statusFor(deviation, nearLimitToleranceMm),
+      actualDepthMm: depth,
+      actualWidthMm: width,
+      requiredDepthMm: requiredDepth,
+      requiredWidthMm: MGN_MANEUVERING_WIDTH_MM,
+      deviationMm: deviation > 0 ? deviation : 0,
+      roomName: door.maneuveringRoom ?? "",
+      approach: door.maneuveringApproach ?? "",
+    });
+  }
+  return { findings, unmeasured, missingGeometry, nonEgressSkipped };
 }
