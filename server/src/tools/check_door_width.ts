@@ -10,10 +10,9 @@ import type { NormAuditSource } from "../normatives/normAudit/types.js";
 
 /**
  * REV-56 — door / opening width vs norm.
- * v1 compares the nominal DOOR_WIDTH parameter (from get_door_egress_info)
- * against a minimum resolved from the norm library, for doors on egress paths.
- * Accessories (откосы) are excluded (REV-41). Clear opening «в свету» is a
- * documented follow-up.
+ * Compares a trustworthy clear-opening parameter/calculation from
+ * get_door_egress_info against a minimum for doors on egress paths.
+ * Accessories are excluded; nominal-only families are explicit skipped results.
  */
 function formatDoorWidthReport(result: DoorWidthRunnerResult): string {
   const lines: string[] = [
@@ -25,6 +24,7 @@ function formatDoorWidthReport(result: DoorWidthRunnerResult): string {
     `- Проверено (на путях эвакуации): **${result.totalChecked}**`,
     `- Нарушений: **${result.violations.length}**`,
     `- Пограничных: **${result.nearLimit.length}**`,
+    `- Пропущено без ширины «в свету»: **${result.unmeasured?.length ?? 0}**`,
   ];
 
   if (result.source.document && result.source.document !== "—") {
@@ -85,9 +85,9 @@ function formatDoorWidthReport(result: DoorWidthRunnerResult): string {
 export function registerCheckDoorWidthTool(server: McpServer) {
   server.tool(
     "check_door_width",
-    "Check door / opening width against a norm (REV-56). v1 uses the NOMINAL " +
-      "door parameter width (DOOR_WIDTH / openingWidthMm from get_door_egress_info), " +
-      "not clear opening «в свету». Resolves the minimum from the local norm library " +
+    "Check clear door / opening width against a norm (REV-56). Uses a trustworthy " +
+      "clear-opening parameter/calculation; nominal-only families are reported as skipped. " +
+      "Resolves the minimum from the local norm library " +
       "(e.g. СП РК 3.02-101-2012 п.4.6.11 ≥ 0.9 м) unless minWidthMm is passed. " +
       "By default checks only doors on an egress path (interior apartment doors have no " +
       "single applicable minimum). Excludes откосы/наличники (REV-41). " +

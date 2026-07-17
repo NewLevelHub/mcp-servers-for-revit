@@ -7,6 +7,10 @@ import {
 } from "./checklist.js";
 import { formatNormAuditReport } from "./formatAuditReport.js";
 import {
+  normalizeAccessibilityDoorFindings,
+  normalizeAccessibilityRampFindings,
+  normalizeDoorManeuveringFindings,
+  normalizeAccessibilityRoomFindings,
   normalizeDoorWidthFindings,
   normalizeEvacuationFindings,
   normalizeFireDoorFindings,
@@ -24,6 +28,13 @@ import {
   normalizeRailingHeightFindings,
   summarizeFindings,
 } from "./normalizeFindings.js";
+import {
+  MGN_CORRIDOR_SOURCE,
+  MGN_MANEUVERING_SOURCE,
+  MGN_RAMP_SLOPE_SOURCE,
+  MGN_TURNING_SOURCE,
+  MGN_WC_SOURCE,
+} from "./accessibility.js";
 import { resolveRoomDepthLimitFromLibrary } from "./resolveDepthLimit.js";
 import { resolveDoorWidthLimitFromLibrary } from "./resolveDoorWidth.js";
 import { resolveRoomAreaLimitsFromLibrary } from "./resolveRoomAreaLimits.js";
@@ -41,6 +52,8 @@ import {
 import {
   highlightAuditViolations,
   resolveLevelNameFromView,
+  runAccessibilityDoorsCheck,
+  runAccessibilityRoomsCheck,
   runDoorWidthCheck,
   runEvacuationWidthCheck,
   runFireDoorsCheck,
@@ -56,6 +69,8 @@ import {
   runStoreyHeightCheck,
   runTambourSizeCheck,
   runWindowSillCheck,
+  type AccessibilityDoorsRunnerResult,
+  type AccessibilityRoomsRunnerResult,
   type DoorWidthRunnerResult,
   type EvacuationWidthRunnerResult,
   type FireDoorsRunnerResult,
@@ -116,12 +131,23 @@ export interface NormAuditDeps {
     source: NormAuditSource;
     nearLimitToleranceMm?: number;
   }) => Promise<TambourSizeRunnerResult>;
+  runAccessibilityRooms?: (opts: {
+    levelName: string;
+    includeCompliant: boolean;
+    nearLimitToleranceMm?: number;
+  }) => Promise<AccessibilityRoomsRunnerResult>;
+  runAccessibilityDoors?: (opts: {
+    levelName: string;
+    includeCompliant: boolean;
+    nearLimitToleranceMm?: number;
+  }) => Promise<AccessibilityDoorsRunnerResult>;
   highlight?: (opts: {
     findings: NormAuditFinding[];
   }) => Promise<{
     highlightedCount: number;
     filledRegionCount?: number;
     doorCount?: number;
+    otherElementCount?: number;
     message: string;
   }>;
   resolveDepthLimit?: (
@@ -267,6 +293,8 @@ async function runOneChecker(
         | "runFireDoors"
         | "runDoorWidth"
         | "runTambourSize"
+        | "runAccessibilityRooms"
+        | "runAccessibilityDoors"
         | "runRoomArea"
         | "runRoomHeight"
         | "runStoreyHeight"
@@ -523,6 +551,7 @@ async function runOneChecker(
           violations: result.violations,
           nearLimit: result.nearLimit,
           compliant: ctx.includeCompliant ? result.compliant : [],
+          unmeasured: result.unmeasured ?? [],
           source: result.source,
           minWidthMm: result.minWidthMm,
         });
@@ -593,6 +622,95 @@ async function runOneChecker(
           source: result.source,
           minSideMm: result.minSideMm,
         });
+        return {
+          findings,
+          check: {
+            checkType: checker.checkType,
+            status: "ok",
+            checkedCount: result.totalChecked,
+            message: result.message,
+          },
+          warnings,
+        };
+      }
+      case "mgn_room_geometry": {
+        const result = await ctx.deps.runAccessibilityRooms({
+          levelName: ctx.levelName,
+          includeCompliant: ctx.includeCompliant,
+          nearLimitToleranceMm: 50,
+        });
+        warnings.push(...result.warnings);
+        if (!result.success) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "error",
+              checkedCount: 0,
+              message: result.message,
+            },
+            warnings,
+          };
+        }
+        return {
+          findings: normalizeAccessibilityRoomFindings({
+            turning: result.turning,
+            corridors: result.corridors,
+            wc: result.wc,
+            turningSource: MGN_TURNING_SOURCE,
+            corridorSource: MGN_CORRIDOR_SOURCE,
+            wcSource: MGN_WC_SOURCE,
+            includeCompliant: ctx.includeCompliant,
+          }),
+          check: {
+            checkType: checker.checkType,
+            status: "ok",
+            checkedCount: result.totalChecked,
+            message: result.message,
+          },
+          warnings,
+        };
+      }
+      case "mgn_door_width": {
+        const result = await ctx.deps.runAccessibilityDoors({
+          levelName: ctx.levelName,
+          includeCompliant: ctx.includeCompliant,
+          nearLimitToleranceMm: 50,
+        });
+        warnings.push(...result.warnings);
+        if (!result.success) {
+          return {
+            findings: [],
+            check: {
+              checkType: checker.checkType,
+              status: "error",
+              checkedCount: 0,
+              message: result.message,
+            },
+            warnings,
+          };
+        }
+        const findings = normalizeAccessibilityDoorFindings({
+            violations: result.violations,
+            nearLimit: result.nearLimit,
+            compliant: ctx.includeCompliant ? result.compliant : [],
+            unmeasured: result.unmeasuredDoors ?? [],
+            source: result.source,
+            minWidthMm: result.minWidthMm,
+          });
+        findings.push(
+          ...normalizeAccessibilityRampFindings({
+            items: result.ramps ?? [],
+            source: MGN_RAMP_SLOPE_SOURCE,
+            includeCompliant: ctx.includeCompliant,
+          }),
+          ...normalizeDoorManeuveringFindings({
+            items: result.maneuvering ?? [],
+            unmeasured: result.unmeasuredManeuvering ?? [],
+            source: MGN_MANEUVERING_SOURCE,
+            includeCompliant: ctx.includeCompliant,
+          })
+        );
         return {
           findings,
           check: {
@@ -1273,6 +1391,10 @@ export async function runNormAudit(
     runFireDoors: deps.runFireDoors ?? runFireDoorsCheck,
     runDoorWidth: deps.runDoorWidth ?? runDoorWidthCheck,
     runTambourSize: deps.runTambourSize ?? runTambourSizeCheck,
+    runAccessibilityRooms:
+      deps.runAccessibilityRooms ?? runAccessibilityRoomsCheck,
+    runAccessibilityDoors:
+      deps.runAccessibilityDoors ?? runAccessibilityDoorsCheck,
     runRoomArea: deps.runRoomArea ?? runRoomAreaCheck,
     runRoomHeight: deps.runRoomHeight ?? runRoomHeightCheck,
     runStoreyHeight: deps.runStoreyHeight ?? runStoreyHeightCheck,
@@ -1334,6 +1456,7 @@ export async function runNormAudit(
   let highlightedCount: number | undefined;
   let filledRegionCount: number | undefined;
   let doorHighlightCount: number | undefined;
+  let otherElementHighlightCount: number | undefined;
   if (mode === "highlight") {
     try {
       const painted = await resolvedDeps.highlight({
@@ -1342,6 +1465,7 @@ export async function runNormAudit(
       highlightedCount = painted.highlightedCount;
       filledRegionCount = painted.filledRegionCount;
       doorHighlightCount = painted.doorCount;
+      otherElementHighlightCount = painted.otherElementCount;
       if (painted.message) uniqueWarnings.push(painted.message);
     } catch (error) {
       uniqueWarnings.push(
@@ -1379,6 +1503,7 @@ export async function runNormAudit(
     highlightedCount,
     filledRegionCount,
     doorHighlightCount,
+    otherElementHighlightCount,
     warnings: uniqueWarnings,
   };
 

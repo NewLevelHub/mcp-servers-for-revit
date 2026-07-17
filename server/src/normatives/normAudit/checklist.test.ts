@@ -9,7 +9,7 @@ import {
 describe("normAudit checklist", () => {
   it("runs all Phase-1 checkers when topics omitted", () => {
     const selected = selectPhase1Checkers();
-    assert.equal(selected.length, 15);
+    assert.equal(selected.length, 17);
     assert.deepEqual(
       selected.map((c) => c.checkType),
       [
@@ -19,6 +19,8 @@ describe("normAudit checklist", () => {
         "fire_doors",
         "door_clear_width",
         "tambour_size_min",
+        "mgn_room_geometry",
+        "mgn_door_width",
         "room_area_min",
         "room_height_min",
         "storey_height",
@@ -44,7 +46,7 @@ describe("normAudit checklist", () => {
 
   it("surfaces Phase-2 skipped on full audit", () => {
     const skipped = selectSkippedRules();
-    assert.ok(skipped.some((s) => s.checkType === "door_clear_width"));
+    assert.ok(skipped.some((s) => s.checkType === "egress_opening_width"));
   });
 
   it("runs the door-width checker when user asks about doors", () => {
@@ -55,9 +57,9 @@ describe("normAudit checklist", () => {
     assert.ok(!skipped.some((s) => s.checkType === "door_clear_width"));
   });
 
-  it("still surfaces the clear-opening «в свету» follow-up as skipped", () => {
+  it("does not mark clear-opening «в свету» as skipped", () => {
     const skipped = selectSkippedRules(["дверь в свету"]);
-    assert.ok(skipped.some((s) => s.checkType === "door_clear_width"));
+    assert.ok(!skipped.some((s) => s.checkType === "door_clear_width"));
   });
 
   it("runs the tambour checker when user asks about тамбур size", () => {

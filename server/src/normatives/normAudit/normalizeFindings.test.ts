@@ -5,6 +5,7 @@ import {
   formatFindingNote,
   normalizeEvacuationFindings,
   normalizeFireDoorFindings,
+  normalizeAccessibilityDoorFindings,
   summarizeFindings,
 } from "./normalizeFindings.js";
 import { formatNormAuditReport } from "./formatAuditReport.js";
@@ -121,6 +122,14 @@ describe("normAudit normalizeFindings", () => {
           level: "",
           source: { document: "D", clause: "1", quote: "q" },
         },
+        {
+          checkType: "mgn_door_width",
+          status: "skipped",
+          elementId: 4,
+          name: "D",
+          level: "",
+          source: { document: "D", clause: "1", quote: "q" },
+        },
       ],
       2
     );
@@ -128,8 +137,34 @@ describe("normAudit normalizeFindings", () => {
       violations: 1,
       nearLimit: 1,
       compliant: 1,
-      skipped: 2,
+      skipped: 3,
     });
+  });
+
+  it("emits explicit skipped finding for nominal-only MGN door width", () => {
+    const findings = normalizeAccessibilityDoorFindings({
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      unmeasured: [
+        {
+          id: 20,
+          type: "Дверь 900",
+          openingWidthMm: 900,
+          widthSource: "nominal_fallback",
+          isOnEgressPath: true,
+        },
+      ],
+      source: {
+        document: "СП РК 3.06-101-2012*",
+        clause: "п. 4.3.2.14",
+        quote: "не менее 0,9 м",
+      },
+      minWidthMm: 900,
+    });
+    assert.equal(findings[0].status, "skipped");
+    assert.equal(findings[0].actualMm, 900);
+    assert.match(findings[0].note ?? "", /номинал/);
   });
 
   it("findingsForHighlight only takes violations and nearLimit", () => {

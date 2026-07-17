@@ -37,7 +37,7 @@ function mockDeps(overrides: Partial<NormAuditDeps> = {}): NormAuditDeps {
     runRoomDepth: async () => ({
       success: true,
       message: "ok depth",
-      totalChecked: 1,
+      totalChecked: 3,
       violations: [],
       compliant: [],
       maxDepthMm: 6000,
@@ -196,6 +196,87 @@ function mockDeps(overrides: Partial<NormAuditDeps> = {}): NormAuditDeps {
         quote: "Тамбур не менее 1,65 м × 1,65 м.",
       },
       rule: { id: "tambour-1" } as never,
+    }),
+    runAccessibilityRooms: async () => ({
+      success: true,
+      message: "ok mgn rooms",
+      totalChecked: 1,
+      turning: [
+        {
+          id: 801,
+          uniqueId: "801",
+          name: "Тамбур МГН",
+          level: "1 этаж",
+          status: "violation" as const,
+          widthMm: 1300,
+          depthMm: 2000,
+          actualMm: 1300,
+          requiredMm: 1500,
+          deviationMm: 200,
+          note: "min сторона 1300 мм (зона разворота ⌀ 1500 мм)",
+        },
+      ],
+      corridors: [],
+      wc: [],
+      warnings: [],
+    }),
+    runAccessibilityDoors: async () => ({
+      success: true,
+      message: "ok mgn doors",
+      minWidthMm: 900,
+      totalChecked: 3,
+      violations: [
+        {
+          id: 901,
+          uniqueId: "901",
+          family: "Дверь",
+          type: "800",
+          level: "1 этаж",
+          status: "violation" as const,
+          actualMm: 800,
+          requiredMm: 900,
+          deviationMm: 100,
+          isOnEgressPath: true,
+        },
+      ],
+      nearLimit: [],
+      compliant: [],
+      ramps: [
+        {
+          id: 902,
+          uniqueId: "902",
+          name: "Пандус",
+          level: "1 этаж",
+          status: "violation" as const,
+          slopePercent: 6,
+          requiredMaxPercent: 5,
+          deviationPercent: 1,
+          slopeSource: "geometry_bbox",
+          exceptionApplied: false,
+        },
+      ],
+      maneuvering: [
+        {
+          id: 901,
+          uniqueId: "901",
+          name: "Дверь 800",
+          level: "1 этаж",
+          status: "violation" as const,
+          actualDepthMm: 1300,
+          actualWidthMm: 1500,
+          requiredDepthMm: 1500,
+          requiredWidthMm: 1500,
+          deviationMm: 200,
+          roomName: "Коридор",
+          approach: "pull/family-facing",
+        },
+      ],
+      source: {
+        document: "СП РК 3.06-101-2012*",
+        clause: "п. 4.3.2.14",
+        quote: "Ширина двери в помещении должна быть не менее 0,9 м.",
+      },
+      warnings: [],
     }),
     runRoomArea: async () => ({
       success: true,
@@ -531,8 +612,35 @@ describe("runNormAudit orchestrator", () => {
 
     assert.equal(result.success, true);
     assert.equal(result.levelName, "1 этаж");
-    assert.equal(result.summary.checksRun, 15);
+    assert.equal(result.summary.checksRun, 17);
     assert.ok(result.summary.violations >= 9);
+
+    const mgnTambour = result.findings.find(
+      (f) => f.checkType === "mgn_turning_circle" && f.elementId === 801
+    );
+    assert.ok(mgnTambour);
+    assert.equal(mgnTambour!.requiredMm, 1500);
+    assert.match(mgnTambour!.source.document, /3\.06-101-2012/);
+
+    const mgnDoor = result.findings.find(
+      (f) => f.checkType === "mgn_door_width" && f.elementId === 901
+    );
+    assert.ok(mgnDoor);
+    assert.match(mgnDoor!.source.quote, /0,9 м/);
+
+    const ramp = result.findings.find(
+      (f) => f.checkType === "mgn_ramp_slope" && f.elementId === 902
+    );
+    assert.ok(ramp);
+    assert.equal(ramp!.actualMm, 6);
+    assert.equal(ramp!.requiredMm, 5);
+    assert.match(ramp!.source.clause, /4\.3\.2\.30/);
+
+    const maneuvering = result.findings.find(
+      (f) => f.checkType === "mgn_door_maneuvering" && f.elementId === 901
+    );
+    assert.ok(maneuvering);
+    assert.match(maneuvering!.source.clause, /4\.3\.2\.13/);
 
     const narrowDoor = result.findings.find(
       (f) => f.checkType === "door_clear_width" && f.elementId === 401
@@ -706,6 +814,26 @@ describe("runNormAudit orchestrator", () => {
           source,
           warnings: [],
         }),
+        runAccessibilityRooms: async () => ({
+          success: false,
+          message: "fail",
+          totalChecked: 0,
+          turning: [],
+          corridors: [],
+          wc: [],
+          warnings: [],
+        }),
+        runAccessibilityDoors: async () => ({
+          success: false,
+          message: "fail",
+          minWidthMm: 900,
+          totalChecked: 0,
+          violations: [],
+          nearLimit: [],
+          compliant: [],
+          source,
+          warnings: [],
+        }),
         runRoomArea: async () => ({
           success: false,
           message: "fail",
@@ -805,6 +933,6 @@ describe("runNormAudit orchestrator", () => {
       })
     );
     assert.equal(result.success, false);
-    assert.equal(result.summary.checksFailed, 15);
+    assert.equal(result.summary.checksFailed, 17);
   });
 });

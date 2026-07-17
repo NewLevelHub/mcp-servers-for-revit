@@ -35,6 +35,8 @@ export interface DoorWidthInput {
   type?: string;
   level?: string;
   openingWidthMm?: number | null;
+  clearWidthMm?: number | null;
+  widthSource?: string;
   isOnEgressPath?: boolean;
 }
 
@@ -52,12 +54,15 @@ export interface ClassifiedDoor {
   /** Positive shortfall in mm (0 for compliant). */
   deviationMm: number;
   isOnEgressPath: boolean;
+  widthSource?: string;
 }
 
 export interface DoorWidthClassification {
   violations: ClassifiedDoor[];
   nearLimit: ClassifiedDoor[];
   compliant: ClassifiedDoor[];
+  /** Applicable doors lacking a trustworthy clear-opening measurement. */
+  unmeasured: DoorWidthInput[];
   /** Door blocks after the accessory (откос) filter. */
   totalDoors: number;
   /** Doors actually compared against the norm (egress + width present). */
@@ -80,6 +85,8 @@ export interface ClassifyDoorWidthOptions {
    * must NOT be flagged (avoids REV-54-style false positives).
    */
   egressOnly?: boolean;
+  /** Reject nominal fallbacks and require an explicit/calculated clear width. */
+  requireClearWidth?: boolean;
 }
 
 /**
@@ -97,6 +104,7 @@ export function classifyDoorWidths(
   const violations: ClassifiedDoor[] = [];
   const nearLimit: ClassifiedDoor[] = [];
   const compliant: ClassifiedDoor[] = [];
+  const unmeasured: DoorWidthInput[] = [];
 
   let totalDoors = 0;
   let accessoriesSkipped = 0;
@@ -115,7 +123,19 @@ export function classifyDoorWidths(
       continue;
     }
 
-    const width = door.openingWidthMm;
+    const hasTrustworthyClearWidth =
+      door.clearWidthMm != null &&
+      door.widthSource !== "nominal_fallback" &&
+      door.widthSource !== "missing";
+    if (options.requireClearWidth && !hasTrustworthyClearWidth) {
+      missingWidth += 1;
+      unmeasured.push(door);
+      continue;
+    }
+
+    const width = hasTrustworthyClearWidth
+      ? door.clearWidthMm
+      : door.openingWidthMm;
     if (width == null || !Number.isFinite(width) || width <= 0) {
       missingWidth += 1;
       continue;
@@ -133,6 +153,10 @@ export function classifyDoorWidths(
       requiredMm: minWidthMm,
       deviationMm: deviationMm > 0 ? deviationMm : 0,
       isOnEgressPath: Boolean(door.isOnEgressPath),
+      widthSource:
+        door.clearWidthMm != null
+          ? door.widthSource || "clear_width"
+          : door.widthSource || "nominal_fallback",
     };
 
     if (deviationMm <= 0) {
@@ -151,6 +175,7 @@ export function classifyDoorWidths(
     violations,
     nearLimit,
     compliant,
+    unmeasured,
     totalDoors,
     egressChecked: violations.length + nearLimit.length + compliant.length,
     accessoriesSkipped,

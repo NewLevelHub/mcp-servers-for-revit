@@ -18,7 +18,15 @@ export type NormAuditCheckType =
   | "ramp_slope_width"
   | "railing_height"
   | "egress_opening_width"
-  | "passage_width";
+  | "passage_width"
+  // МГН accessibility (СП РК 3.06-101-2012*).
+  | "mgn_room_geometry"
+  | "mgn_turning_circle"
+  | "mgn_corridor_width"
+  | "mgn_wc_dimensions"
+  | "mgn_door_width"
+  | "mgn_ramp_slope"
+  | "mgn_door_maneuvering";
 
 export type NormAuditFindingStatus =
   | "violation"
@@ -42,6 +50,8 @@ export interface NormAuditFinding {
   level: string;
   /** Human metric label, e.g. «ширина», «глубина», «ПД». */
   metric?: string;
+  /** Unit used by actual/required values; defaults to millimetres. */
+  unit?: "mm" | "m2" | "percent";
   actualMm?: number | null;
   requiredMm?: number | null;
   deviationMm?: number | null;
@@ -89,6 +99,8 @@ export interface NormAuditResult {
   filledRegionCount?: number;
   /** Fire doors painted with Override when mode=highlight. */
   doorHighlightCount?: number;
+  /** Ramps and other non-Room/non-door elements painted with Override. */
+  otherElementHighlightCount?: number;
   warnings: string[];
 }
 
