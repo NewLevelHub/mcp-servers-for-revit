@@ -27,33 +27,38 @@ describe("check_min_dimensions compliance helpers", () => {
     assert.equal(isCompliant(1600, 1600), true);
   });
 
-  it("wraps norm limits in response shape", () => {
+  it("wraps ordinary norm limits in response shape (REV-50)", () => {
     const payload = {
       norm: {
         limits: {
-          minBalconyWidthMm: 1400,
+          housingType: "ordinary",
+          minBalconyWidthMm: undefined as number | undefined,
+          minFirePathOutdoorWidthMm: 1200,
           minFirePierToOpeningMm: 1200,
+          widthMeasurementBasis: "bounding_box",
           appliedRules: [
             {
               object: "балкон",
               metric: "width",
-              minValueMm: 1400,
+              minValueMm: 1200,
               source: {
-                document: "СП РК 3.06-101-2012",
-                clause: "п. 4.3.2.40",
-                quote: "Ширина балконов и лоджий должна быть не менее 1,4 м в свету.",
+                document: "СП РК 3.02-101-2012",
+                clause: "п. 4.2.30",
+                quote:
+                  "Балконы и лоджии или галереи, ведущие к незадымляемой лестничной клетке 1-го типа, должны иметь ширину не менее 1,2 м.",
               },
             },
           ],
         },
       },
       success: true,
-      violationCount: 1,
-      violations: [{ id: 42, metric: "width", actualValueMm: 1300, deviationMm: 100 }],
+      violationCount: 0,
+      violations: [] as Array<{ id: number }>,
     };
 
-    assert.equal(payload.norm.limits.minBalconyWidthMm, 1400);
+    assert.equal(payload.norm.limits.minBalconyWidthMm, undefined);
+    assert.equal(payload.norm.limits.minFirePathOutdoorWidthMm, 1200);
+    assert.equal(payload.norm.limits.housingType, "ordinary");
     assert.equal(payload.norm.limits.minFirePierToOpeningMm, 1200);
-    assert.equal(payload.violations[0].id, 42);
   });
 });

@@ -4,6 +4,7 @@ import {
   extractMinDimensionRulesFromText,
   inferMinDimensionRule,
   inferMinDimensionRules,
+  inferWidthMeasurementBasis,
   isMgnOrSpecialHousingRule,
   pickPrimaryMinDimensionRules,
   resolveMinDimensionLimits,
@@ -21,6 +22,7 @@ describe("minDimensionsRules", () => {
     assert.ok(widthRule);
     assert.equal(widthRule!.minValueMm, 1400);
     assert.equal(isMgnOrSpecialHousingRule(widthRule!), true);
+    assert.equal(inferWidthMeasurementBasis(widthRule), "clear_width");
   });
 
   it("extracts fire pier rules from SP RK 3.02-101", () => {
@@ -50,10 +52,10 @@ describe("minDimensionsRules", () => {
     assert.equal(isMgnOrSpecialHousingRule(rule!), true);
   });
 
-  it("ordinary housing ignores MGN 1.4 m width; keeps fire piers", () => {
+  it("ordinary housing: no private balcony width; 1.2 m only as fire-path (REV-50)", () => {
     const rules = [
       ...inferMinDimensionRules(
-        "4.6.5 В квартирах для престарелых и семей с инвалидами ширина балконов и лоджий должна быть не менее 1,4 м.",
+        "4.6.5 В квартирах для престарелых и семей с инвалидами ширина балконов и лоджий должна быть не менее 1,4 м (от наружной стены до ограждения балкона).",
         "СП РК 3.02-101-2012",
         "SP_RK_3.02-101-2012_27.04.2021.pdf"
       ),
@@ -61,6 +63,11 @@ describe("minDimensionsRules", () => {
         "4.3.2.40 Ширина балконов и лоджий должна быть, как правило, не менее 1,4 м в свету.",
         "СП РК 3.06-101-2012",
         "SP_RK_3.06-101-2012_27.11.2019.pdf"
+      ),
+      ...inferMinDimensionRules(
+        "4.2.30 Балконы и лоджии или галереи, ведущие к незадымляемой лестничной клетке 1-го типа, должны иметь ширину не менее 1,2 м с высотой ограждения не менее 1,2 м.",
+        "СП РК 3.02-101-2012",
+        "SP_RK_3.02-101-2012_27.04.2021.pdf"
       ),
       ...extractMinDimensionRulesFromText(
         "простенком не менее 1,2 м от торца балкона до оконного проема. " +
@@ -74,9 +81,11 @@ describe("minDimensionsRules", () => {
     assert.equal(ordinary.minBalconyWidthMm, undefined);
     assert.equal(ordinary.minLoggiaWidthMm, undefined);
     assert.equal(ordinary.minLoggiaDepthMm, undefined);
+    assert.equal(ordinary.minFirePathOutdoorWidthMm, 1200);
     assert.ok(ordinary.skippedMgnRules >= 1);
     assert.equal(ordinary.minFirePierToOpeningMm, 1200);
     assert.equal(ordinary.minFirePierBetweenOpeningsMm, 1600);
+    assert.equal(ordinary.housingType, "ordinary");
 
     const mgn = resolveMinDimensionLimits(rules, { housingType: "mgn" });
     assert.equal(mgn.minBalconyWidthMm, 1400);
@@ -116,5 +125,16 @@ describe("minDimensionsRules", () => {
     assert.equal(limits.minBalconyWidthMm, 1500);
     assert.equal(limits.minFirePierToOpeningMm, 1200);
     assert.equal(limits.minFirePierBetweenOpeningsMm, 1600);
+  });
+
+  it("infers wall_to_rail measurement basis for п. 4.6.5", () => {
+    const rules = inferMinDimensionRules(
+      "4.6.5 В квартирах для престарелых ширина балконов и лоджий должна быть не менее 1,4 м (от наружной стены до ограждения балкона).",
+      "СП РК 3.02-101-2012",
+      "SP_RK_3.02-101-2012_27.04.2021.pdf"
+    );
+    const width = rules.find((r) => r.metric === "width");
+    assert.ok(width);
+    assert.equal(inferWidthMeasurementBasis(width), "wall_to_rail");
   });
 });

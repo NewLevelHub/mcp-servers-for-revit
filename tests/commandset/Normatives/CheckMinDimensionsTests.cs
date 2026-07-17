@@ -66,9 +66,20 @@ public class CheckMinDimensionsTests : RevitApiTest
     {
         await Assert.That(BalconyLoggiaClassifier.IsBalconyOrLoggia("Лоджия")).IsTrue();
         await Assert.That(BalconyLoggiaClassifier.IsBalconyOrLoggia("Балкон")).IsTrue();
+        await Assert.That(BalconyLoggiaClassifier.IsBalconyOrLoggia("Летнее помещение")).IsTrue();
         await Assert.That(BalconyLoggiaClassifier.IsBalconyOrLoggia("Жилая комната")).IsFalse();
         await Assert.That(BalconyLoggiaClassifier.Classify("Лоджия кухни")).IsEqualTo(
             BalconyLoggiaClassifier.OutdoorSpaceKind.Loggia);
+    }
+
+    [Test]
+    public async Task FirePathOutdoor_IsВоздушнаяЗона_NotPrivateLoggia()
+    {
+        await Assert.That(BalconyLoggiaClassifier.IsFirePathOutdoor("Воздушная зона")).IsTrue();
+        await Assert.That(BalconyLoggiaClassifier.IsFirePathOutdoor("Лоджия")).IsFalse();
+        await Assert.That(BalconyLoggiaClassifier.IsFirePathOutdoor("Балкон")).IsFalse();
+        await Assert.That(BalconyLoggiaClassifier.Classify("Воздушная зона")).IsEqualTo(
+            BalconyLoggiaClassifier.OutdoorSpaceKind.FirePathOutdoor);
     }
 
     [Test]

@@ -12,11 +12,18 @@ namespace RevitMCPCommandSet.Services.Normatives
         public const string ModeReport = "report";
         public const string ModeHighlight = "highlight";
 
+        /// <summary>Only жилые комнаты (п. 4.4.10.22) — default for living-room depth norms.</summary>
+        public const string RoomScopeLiving = "living";
+
+        /// <summary>All rooms with Area &gt; 0 (legacy / explicit override).</summary>
+        public const string RoomScopeAll = "all";
+
         private double? _minDepthMm;
         private double? _maxDepthMm;
         private string _mode = ModeReport;
         private string _levelNameFilter = string.Empty;
         private string _roomNameFilter = string.Empty;
+        private string _roomScope = RoomScopeLiving;
         private bool _includeCompliant;
         private int[] _highlightColor = { 255, 0, 0 };
 
@@ -31,7 +38,8 @@ namespace RevitMCPCommandSet.Services.Normatives
             string levelName = "",
             string roomNameFilter = "",
             bool includeCompliant = false,
-            int[] highlightColor = null)
+            int[] highlightColor = null,
+            string roomScope = RoomScopeLiving)
         {
             _minDepthMm = minDepthMm;
             _maxDepthMm = maxDepthMm;
@@ -40,6 +48,12 @@ namespace RevitMCPCommandSet.Services.Normatives
                 : ModeReport;
             _levelNameFilter = levelName ?? string.Empty;
             _roomNameFilter = roomNameFilter ?? string.Empty;
+            _roomScope = NormalizeRoomScope(roomScope, _roomNameFilter);
+            // «жилая» as filter = semantic living scope, not substring (REV-50).
+            if (LivingRoomDepthClassifier.IsLivingScopeAlias(_roomNameFilter))
+            {
+                _roomNameFilter = string.Empty;
+            }
             _includeCompliant = includeCompliant;
             if (highlightColor is { Length: 3 })
             {
@@ -47,6 +61,18 @@ namespace RevitMCPCommandSet.Services.Normatives
             }
             TaskCompleted = false;
             _resetEvent.Reset();
+        }
+
+        internal static string NormalizeRoomScope(string roomScope, string roomNameFilter)
+        {
+            if (LivingRoomDepthClassifier.IsLivingScopeAlias(roomNameFilter))
+                return RoomScopeLiving;
+
+            if (string.Equals(roomScope, RoomScopeAll, StringComparison.OrdinalIgnoreCase))
+                return RoomScopeAll;
+
+            // Default: living — depth max 6 m applies only to жилые комнаты.
+            return RoomScopeLiving;
         }
 
         public bool WaitForCompletion(int timeoutMilliseconds = 10000)
@@ -91,8 +117,17 @@ namespace RevitMCPCommandSet.Services.Normatives
                     }
 
                     var roomName = room.get_Parameter(BuiltInParameter.ROOM_NAME)?.AsString() ?? string.Empty;
+                    var roomPurpose = CorridorClassifier.ReadRoomPurpose(room);
+
+                    if (_roomScope == RoomScopeLiving &&
+                        !LivingRoomDepthClassifier.IsLivingRoomForDepth(roomName, roomPurpose))
+                    {
+                        continue;
+                    }
+
                     if (!string.IsNullOrWhiteSpace(_roomNameFilter) &&
-                        roomName.IndexOf(_roomNameFilter, StringComparison.OrdinalIgnoreCase) < 0)
+                        roomName.IndexOf(_roomNameFilter, StringComparison.OrdinalIgnoreCase) < 0 &&
+                        roomPurpose.IndexOf(_roomNameFilter, StringComparison.OrdinalIgnoreCase) < 0)
                     {
                         continue;
                     }
@@ -136,10 +171,13 @@ namespace RevitMCPCommandSet.Services.Normatives
                 ResultInfo = new CheckRoomDepthResult
                 {
                     Success = true,
-                    Message = $"Checked {checkedCount} rooms: {violations.Count} violate the depth requirement.",
+                    Message = _roomScope == RoomScopeLiving
+                        ? $"Checked {checkedCount} living rooms (п. 4.4.10.22 scope): {violations.Count} violate the depth requirement."
+                        : $"Checked {checkedCount} rooms: {violations.Count} violate the depth requirement.",
                     Mode = _mode,
                     MinDepthMm = _minDepthMm,
                     MaxDepthMm = _maxDepthMm,
+                    RoomScope = _roomScope,
                     TotalRoomsChecked = checkedCount,
                     ViolationCount = violations.Count,
                     Violations = violations,

@@ -166,16 +166,35 @@ export function isMgnOrSpecialHousingRule(rule: MinDimensionNormRule): boolean {
 }
 
 /**
- * Ширина балкона/галереи к незадымляемой ЛК (Н1) — не габарит летнего
- * помещения обычной квартиры.
+ * Ширина балкона/галереи к незадымляемой ЛК (Н1) — п. 4.2.30.
+ * Применяется только к путям эвакуации (воздушная зона / галерея к Н1),
+ * НЕ к квартирным лоджиям и балконам (REV-50 follow-up).
  */
 export function isFirePathBalconyWidthRule(rule: MinDimensionNormRule): boolean {
   if (rule.metric !== "width") return false;
   if (rule.object !== "балкон" && rule.object !== "лоджия") return false;
   const blob = `${rule.source.quote} ${rule.applicability ?? ""}`.toLowerCase();
-  return /түтіндет|незадымл|лестничн|баспалдақ\s+тор|галереялард|типті\s+түтін|типа\s+н\s*1|\bh1\b/i.test(
+  return /түтіндет|незадымл|лестничн|баспалдақ\s+тор|галереялард|типті\s+түтін|типа\s+н\s*1|\bh1\b|ведущ\w*\s+к\s+незадымл/i.test(
     blob
   );
+}
+
+/** «В свету» / clear width (СП РК 3.06-101) vs габарит «от стены до ограждения». */
+export type WidthMeasurementBasis =
+  | "bounding_box"
+  | "wall_to_rail"
+  | "clear_width";
+
+export function inferWidthMeasurementBasis(
+  rule: MinDimensionNormRule | undefined
+): WidthMeasurementBasis {
+  if (!rule) return "bounding_box";
+  const blob = `${rule.source.quote} ${rule.applicability ?? ""}`.toLowerCase();
+  if (/в\s+свету|жарықта|clear/i.test(blob)) return "clear_width";
+  if (/от\s+наружн|до\s+огражден|сыртқы\s+қабырғадан|қоршауына/i.test(blob)) {
+    return "wall_to_rail";
+  }
+  return "bounding_box";
 }
 
 export type MinDimensionsHousingType = "ordinary" | "mgn";
@@ -185,25 +204,25 @@ export function filterMinDimensionRulesForHousing(
   housingType: MinDimensionsHousingType = "ordinary"
 ): MinDimensionNormRule[] {
   return rules.filter((rule) => {
-    if (isFirePathBalconyWidthRule(rule)) return false;
-
     const isSummerRoom =
       rule.object === "балкон" || rule.object === "лоджия";
     const isSummerSize =
       isSummerRoom && (rule.metric === "width" || rule.metric === "depth");
+    const mgn = isMgnOrSpecialHousingRule(rule);
+    const firePath = isFirePathBalconyWidthRule(rule);
 
     if (housingType === "ordinary") {
-      // В normatives/ нет общей мин. ширины/глубины лоджии для массового жилья —
-      // только МГН (1,4 м) и спецжильё (глубина 1,6 м). Не применяем.
+      // Квартирные лоджии/балконы: в СП нет общей мин. ширины для ordinary.
+      // п. 4.2.30 — только путь к Н1 → отдельное поле minFirePathOutdoorWidthMm.
+      // п. 4.6.5 / 3.06 — только МГН.
       if (isSummerSize) return false;
       return true;
     }
 
-    // housingType === "mgn": предпочитаем МГН/спецправила, простенки тоже ок.
-    if (isSummerSize && !isMgnOrSpecialHousingRule(rule)) {
-      // Общие/пожарные ширины галерей к ЛК уже отсечены; остальное без МГН-метки
-      // для режима mgn не берём как замену п. 4.6.5.
-      if (rule.metric === "width" && rule.minValueMm !== 1400) return false;
+    // housingType === "mgn": МГН 1,4 м; пожарный путь 1,2 м не подменяет п. 4.6.5.
+    if (isSummerSize && firePath) return false;
+    if (isSummerSize && !mgn && rule.metric === "width" && rule.minValueMm !== 1400) {
+      return false;
     }
     return true;
   });
@@ -412,7 +431,13 @@ function scoreRule(
   if (rule.metric === "pier_between_openings" && rule.minValueMm === 1200) score += 5;
 
   const mgn = isMgnOrSpecialHousingRule(rule);
-  if (housingType === "ordinary" && mgn) score -= 100;
+  const firePath = isFirePathBalconyWidthRule(rule);
+
+  if (housingType === "ordinary") {
+    if (mgn) score -= 100;
+    if (firePath) score -= 50;
+  }
+
   if (housingType === "mgn" && mgn && rule.metric === "width" && rule.minValueMm === 1400) {
     score += 40;
   }
@@ -454,11 +479,22 @@ export interface ResolvedMinDimensionLimits {
   minBalconyWidthMm?: number;
   minLoggiaWidthMm?: number;
   minLoggiaDepthMm?: number;
+  /** п. 4.2.30 — только воздушная зона / галерея к Н1, не квартирные лоджии. */
+  minFirePathOutdoorWidthMm?: number;
   minFirePierToOpeningMm?: number;
   minFirePierBetweenOpeningsMm?: number;
   appliedRules: MinDimensionNormRule[];
   housingType: MinDimensionsHousingType;
+  /** How width is measured in Revit vs the cited norm. */
+  widthMeasurementBasis: WidthMeasurementBasis;
+  /**
+   * v1 compares bounding-box footprint (smaller span) to the limit.
+   * True «в свету» / clear width is not computed separately yet.
+   */
+  measurementNote: string;
   skippedMgnRules: number;
+  /** How many fire-path (п. 4.2.30) width rules were kept for Н1-path only. */
+  firePathWidthRules: number;
 }
 
 export function resolveMinDimensionLimits(
@@ -472,10 +508,18 @@ export function resolveMinDimensionLimits(
     housingType === "ordinary"
       ? rules.filter(
           (r) =>
+            isMgnOrSpecialHousingRule(r) &&
             (r.object === "балкон" || r.object === "лоджия") &&
             (r.metric === "width" || r.metric === "depth")
         ).length
       : 0;
+
+  const firePathRules = rules
+    .filter((r) => isFirePathBalconyWidthRule(r))
+    .sort((a, b) => scoreRule(b, "ordinary") - scoreRule(a, "ordinary"));
+  // Prefer 1200 mm п. 4.2.30 among fire-path rules.
+  const bestFirePath =
+    firePathRules.find((r) => r.minValueMm === 1200) ?? firePathRules[0];
 
   const primary = pickPrimaryMinDimensionRules(rules, { housingType });
   const applied: MinDimensionNormRule[] = [];
@@ -495,10 +539,31 @@ export function resolveMinDimensionLimits(
     return undefined;
   };
 
+  const minBalconyWidthMm = pick("балкон", "width", "minBalconyWidthMm");
+  const minLoggiaWidthMm = pick("лоджия", "width", "minLoggiaWidthMm");
+
+  let minFirePathOutdoorWidthMm: number | undefined =
+    typeof overrides?.minFirePathOutdoorWidthMm === "number" &&
+    overrides.minFirePathOutdoorWidthMm > 0
+      ? overrides.minFirePathOutdoorWidthMm
+      : undefined;
+  if (minFirePathOutdoorWidthMm === undefined && bestFirePath) {
+    minFirePathOutdoorWidthMm = bestFirePath.minValueMm;
+    applied.push(bestFirePath);
+  }
+
+  const widthRule =
+    primary["балкон:width"] ??
+    primary["лоджия:width"] ??
+    bestFirePath ??
+    applied.find((r) => r.metric === "width");
+  const widthMeasurementBasis = inferWidthMeasurementBasis(widthRule);
+
   return {
-    minBalconyWidthMm: pick("балкон", "width", "minBalconyWidthMm"),
-    minLoggiaWidthMm: pick("лоджия", "width", "minLoggiaWidthMm"),
+    minBalconyWidthMm,
+    minLoggiaWidthMm,
     minLoggiaDepthMm: pick("лоджия", "depth", "minLoggiaDepthMm"),
+    minFirePathOutdoorWidthMm,
     minFirePierToOpeningMm: pick(
       "противопожарный простенок",
       "pier_to_opening",
@@ -511,7 +576,16 @@ export function resolveMinDimensionLimits(
     ),
     appliedRules: applied,
     housingType,
+    widthMeasurementBasis,
+    measurementNote:
+      housingType === "ordinary"
+        ? "Обычное жильё: мин. ширина квартирных лоджий/балконов по СП не нормируется " +
+          "(п. 4.6.5 — только МГН). п. 4.2.30 (1,2 м) — только воздушная зона / путь к Н1. " +
+          "Факт — меньший пролёт bounding box; «в свету» отдельно не считается."
+        : "МГН: ширина лоджий/балконов ≥ 1,4 м (п. 4.6.5 / 3.06-101). " +
+          "Факт — bounding box; норма может быть «в свету» / от стены до ограждения.",
     skippedMgnRules,
+    firePathWidthRules: firePathRules.length,
   };
 }
 

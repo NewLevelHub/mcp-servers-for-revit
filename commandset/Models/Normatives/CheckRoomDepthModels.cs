@@ -53,6 +53,10 @@ namespace RevitMCPCommandSet.Models.Normatives
         [JsonProperty("maxDepthMm")]
         public double? MaxDepthMm { get; set; }
 
+        /// <summary>"living" (default) or "all" — which rooms were in scope.</summary>
+        [JsonProperty("roomScope")]
+        public string RoomScope { get; set; } = "living";
+
         [JsonProperty("totalRoomsChecked")]
         public int TotalRoomsChecked { get; set; }
 

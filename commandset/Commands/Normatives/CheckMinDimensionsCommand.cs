@@ -23,6 +23,8 @@ namespace RevitMCPCommandSet.Commands.Normatives
                 double? minBalconyWidthMm = parameters?["minBalconyWidthMm"]?.Value<double?>();
                 double? minLoggiaWidthMm = parameters?["minLoggiaWidthMm"]?.Value<double?>();
                 double? minLoggiaDepthMm = parameters?["minLoggiaDepthMm"]?.Value<double?>();
+                double? minFirePathOutdoorWidthMm =
+                    parameters?["minFirePathOutdoorWidthMm"]?.Value<double?>();
                 double? minFirePierToOpeningMm = parameters?["minFirePierToOpeningMm"]?.Value<double?>();
                 double? minFirePierBetweenOpeningsMm =
                     parameters?["minFirePierBetweenOpeningsMm"]?.Value<double?>();
@@ -56,7 +58,8 @@ namespace RevitMCPCommandSet.Commands.Normatives
                     roomNameFilter,
                     includeCompliant,
                     checkFirePiers,
-                    highlightColor);
+                    highlightColor,
+                    minFirePathOutdoorWidthMm);
 
                 if (RaiseAndWaitForCompletion(120000))
                 {

@@ -49,6 +49,8 @@ export {
 export {
   classifyResidentialRoom,
   isResidentialRoomForHeight,
+  isLivingRoomForDepth,
+  isLivingScopeAlias,
   type ResidentialRoomCategory,
 } from "./roomPurpose.js";
 export {

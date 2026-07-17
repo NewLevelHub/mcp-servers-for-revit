@@ -225,6 +225,7 @@ export async function runRoomDepthCheck(options: {
       maxDepthMm: options.maxDepthMm,
       mode: "report",
       levelName: options.levelName,
+      roomScope: "living",
       roomNameFilter: "",
       includeCompliant: options.includeCompliant,
     });
@@ -295,19 +296,26 @@ export interface MinDimensionsRunnerResult {
 export async function runMinDimensionsCheck(options: {
   levelName: string;
   includeCompliant: boolean;
+  housingType?: "ordinary" | "mgn";
 }): Promise<MinDimensionsRunnerResult> {
+  const housingType = options.housingType ?? "ordinary";
   const { rules, warnings } = await loadMinDimensionRulesFromNormatives({});
-  const limits = resolveMinDimensionLimits(rules, { housingType: "ordinary" });
+  const limits = resolveMinDimensionLimits(rules, { housingType });
   const allWarnings = [...(warnings ?? [])];
-  if (limits.skippedMgnRules > 0) {
+  if (limits.skippedMgnRules > 0 && housingType === "ordinary") {
     allWarnings.push(
-      `Обычное жильё: не применялись ${limits.skippedMgnRules} правил(а) ширины/глубины лоджий/балконов (в PDF есть только нормы МГН/спецжилья, напр. 1,4 м по п. 4.6.5).`
+      `Обычное жильё: не применялись ${limits.skippedMgnRules} правил(а) МГН/престарелых (1,4 м п. 4.6.5 / 3.06-101) к квартирным лоджиям. ` +
+        `п. 4.2.30 (1,2 м) — только воздушная зона / путь к Н1. Для МГН: housingType=mgn.`
     );
+  }
+  if (limits.measurementNote) {
+    allWarnings.push(limits.measurementNote);
   }
   const hasLimit =
     limits.minBalconyWidthMm !== undefined ||
     limits.minLoggiaWidthMm !== undefined ||
     limits.minLoggiaDepthMm !== undefined ||
+    limits.minFirePathOutdoorWidthMm !== undefined ||
     limits.minFirePierToOpeningMm !== undefined ||
     limits.minFirePierBetweenOpeningsMm !== undefined;
 
@@ -315,7 +323,7 @@ export async function runMinDimensionsCheck(options: {
     return {
       success: true,
       message:
-        "Для обычного жилья нет применимой мин. ширины/глубины лоджий-балконов в normatives/; простенки и прочие лимиты тоже не извлечены.",
+        "Для обычного жилья нет применимой мин. ширины квартирных лоджий; простенки и путь к Н1 тоже не извлечены.",
       totalChecked: 0,
       violations: [],
       compliant: [],
@@ -330,6 +338,7 @@ export async function runMinDimensionsCheck(options: {
       minBalconyWidthMm: limits.minBalconyWidthMm,
       minLoggiaWidthMm: limits.minLoggiaWidthMm,
       minLoggiaDepthMm: limits.minLoggiaDepthMm,
+      minFirePathOutdoorWidthMm: limits.minFirePathOutdoorWidthMm,
       minFirePierToOpeningMm: limits.minFirePierToOpeningMm,
       minFirePierBetweenOpeningsMm: limits.minFirePierBetweenOpeningsMm,
       mode: "report",

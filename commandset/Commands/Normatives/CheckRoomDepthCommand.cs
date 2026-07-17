@@ -25,6 +25,8 @@ namespace RevitMCPCommandSet.Commands.Normatives
                 string mode = parameters?["mode"]?.Value<string>() ?? CheckRoomDepthEventHandler.ModeReport;
                 string levelName = parameters?["levelName"]?.Value<string>() ?? string.Empty;
                 string roomNameFilter = parameters?["roomNameFilter"]?.Value<string>() ?? string.Empty;
+                string roomScope = parameters?["roomScope"]?.Value<string>()
+                    ?? CheckRoomDepthEventHandler.RoomScopeLiving;
                 bool includeCompliant = parameters?["includeCompliant"]?.Value<bool>() ?? false;
 
                 int[] highlightColor = null;
@@ -46,7 +48,8 @@ namespace RevitMCPCommandSet.Commands.Normatives
                     levelName,
                     roomNameFilter,
                     includeCompliant,
-                    highlightColor);
+                    highlightColor,
+                    roomScope);
 
                 if (RaiseAndWaitForCompletion(60000))
                 {
