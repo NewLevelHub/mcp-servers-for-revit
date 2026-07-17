@@ -154,6 +154,7 @@ const MUTATING_COMMANDS = new Set([
   "create_finish_schedule",
   "create_dimensions",
   "dimension_room_walls",
+  "dimension_grids",
   "create_structural_framing_system",
   "delete_element",
   "operate_element",

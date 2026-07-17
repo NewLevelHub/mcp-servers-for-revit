@@ -5,7 +5,7 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerDimensionRoomWallsTool(server: McpServer) {
   server.tool(
     "dimension_room_walls",
-    "Create chained wall dimensions (width + depth) for a room on the active floor plan. By default the chains are placed INSIDE the room (placement 'interior') — this is the standard for room dimensions. Use placement 'exterior' ONLY when the user explicitly asks for outside chains (axes/facade workflows). Uses room boundary walls, project DimensionType (by name or ID), and offset in millimeters.",
+    "Create chained wall dimensions (width + depth) for a room on the active floor plan — matches working-doc practice: interior finish-face chains inside the room. Default placement 'interior'. Prefer dimensionType 'ADSK_Основной_2.5 мм' from the project template; empty name auto-picks that style when present. Use placement 'exterior' ONLY on explicit request (axes/facade). Offset in mm.",
     {
       roomId: z
         .number()
@@ -32,7 +32,7 @@ export function registerDimensionRoomWallsTool(server: McpServer) {
         .optional()
         .default("")
         .describe(
-          "DimensionType name from the project (e.g. 'Linear'). Empty uses the first linear type."
+          "DimensionType name from the project (prefer 'ADSK_Основной_2.5 мм'). Empty auto-picks ADSK main linear type."
         ),
       dimensionStyleId: z
         .number()

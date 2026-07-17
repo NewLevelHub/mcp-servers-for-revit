@@ -52,10 +52,36 @@ public static class DimensionAnnotationHelper
                 return partial;
         }
 
-        return new FilteredElementCollector(doc)
+        // Prefer project working-drawing styles (ADSK) over the first arbitrary linear type.
+        var linearTypes = new FilteredElementCollector(doc)
             .OfClass(typeof(DimensionType))
             .Cast<DimensionType>()
-            .FirstOrDefault(type => type.StyleType == DimensionStyleType.Linear);
+            .Where(type => type.StyleType == DimensionStyleType.Linear)
+            .ToList();
+
+        string[] preferredNames =
+        {
+            "ADSK_Основной_2.5 мм",
+            "ADSK_Основной_2 мм",
+            "ADSK_Основной_3.5 мм"
+        };
+
+        foreach (var preferred in preferredNames)
+        {
+            var match = linearTypes.FirstOrDefault(
+                type => type.Name.Equals(preferred, StringComparison.OrdinalIgnoreCase));
+            if (match != null)
+                return match;
+        }
+
+        var adskMain = linearTypes.FirstOrDefault(
+            type => type.Name.IndexOf("ADSK_Основной", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                    type.Name.IndexOf("Выноска", StringComparison.OrdinalIgnoreCase) < 0 &&
+                    type.Name.IndexOf("Округление", StringComparison.OrdinalIgnoreCase) < 0);
+        if (adskMain != null)
+            return adskMain;
+
+        return linearTypes.FirstOrDefault();
     }
 
     public static void ApplyDimensionType(
@@ -64,9 +90,7 @@ public static class DimensionAnnotationHelper
         string dimensionTypeName,
         int dimensionStyleId)
     {
-        if (dimensionStyleId <= 0 && string.IsNullOrWhiteSpace(dimensionTypeName))
-            return;
-
+        // Always resolve — empty name picks ADSK working-drawing linear type when present.
         var dimensionType = ResolveDimensionType(doc, dimensionTypeName, dimensionStyleId);
         if (dimensionType == null || dimensionType.StyleType != DimensionStyleType.Linear)
             return;

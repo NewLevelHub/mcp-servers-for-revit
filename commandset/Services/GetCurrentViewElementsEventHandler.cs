@@ -206,14 +206,21 @@ namespace RevitMCPCommandSet.Services
 #else
                 properties.Add("ElementId", element.Id.IntegerValue.ToString());
 #endif
+                // Coordinates for AI agents are always millimeters (never raw Revit feet).
+                const double ftToMm = 304.8;
                 if (element.Location != null)
                 {
                     if (element.Location is LocationPoint locationPoint)
                     {
                         var point = locationPoint.Point;
-                        properties.Add("LocationX", point.X.ToString("F2"));
-                        properties.Add("LocationY", point.Y.ToString("F2"));
-                        properties.Add("LocationZ", point.Z.ToString("F2"));
+                        properties.Add("LocationXMm", (point.X * ftToMm).ToString("F1"));
+                        properties.Add("LocationYMm", (point.Y * ftToMm).ToString("F1"));
+                        properties.Add("LocationZMm", (point.Z * ftToMm).ToString("F1"));
+                        // Legacy keys kept but converted to mm so callers are not misled.
+                        properties.Add("LocationX", (point.X * ftToMm).ToString("F1"));
+                        properties.Add("LocationY", (point.Y * ftToMm).ToString("F1"));
+                        properties.Add("LocationZ", (point.Z * ftToMm).ToString("F1"));
+                        properties.Add("Units", "mm");
                     }
                     else if (element.Location is LocationCurve locationCurve)
                     {
@@ -222,9 +229,23 @@ namespace RevitMCPCommandSet.Services
                         {
                             if (curve.IsBound)
                             {
-                                properties.Add("Start", $"{curve.GetEndPoint(0).X:F2}, {curve.GetEndPoint(0).Y:F2}, {curve.GetEndPoint(0).Z:F2}");
-                                properties.Add("End", $"{curve.GetEndPoint(1).X:F2}, {curve.GetEndPoint(1).Y:F2}, {curve.GetEndPoint(1).Z:F2}");
-                                properties.Add("Length", curve.Length.ToString("F2"));
+                                var p0 = curve.GetEndPoint(0);
+                                var p1 = curve.GetEndPoint(1);
+                                properties.Add(
+                                    "StartMm",
+                                    $"{p0.X * ftToMm:F1}, {p0.Y * ftToMm:F1}, {p0.Z * ftToMm:F1}");
+                                properties.Add(
+                                    "EndMm",
+                                    $"{p1.X * ftToMm:F1}, {p1.Y * ftToMm:F1}, {p1.Z * ftToMm:F1}");
+                                properties.Add("LengthMm", (curve.Length * ftToMm).ToString("F1"));
+                                properties.Add(
+                                    "Start",
+                                    $"{p0.X * ftToMm:F1}, {p0.Y * ftToMm:F1}, {p0.Z * ftToMm:F1}");
+                                properties.Add(
+                                    "End",
+                                    $"{p1.X * ftToMm:F1}, {p1.Y * ftToMm:F1}, {p1.Z * ftToMm:F1}");
+                                properties.Add("Length", (curve.Length * ftToMm).ToString("F1"));
+                                properties.Add("Units", "mm");
                             }
                             else
                             {
