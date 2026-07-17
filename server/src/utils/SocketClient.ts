@@ -24,6 +24,8 @@ const HEAVY_COMMANDS = new Set([
   "create_floor_explication",
   "check_min_dimensions",
   "check_fire_doors",
+  // A full batch (20 sub-commands, e.g. fill_title_block writes) can exceed 120 s.
+  "batch_execute",
 ]);
 
 export class RevitClientConnection {
