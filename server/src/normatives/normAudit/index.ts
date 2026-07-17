@@ -1,6 +1,10 @@
 export { AUDIT_SCOPE_NOTE, PHASE1_CHECKERS, PHASE2_SKIPPED } from "./checklist.js";
 export { formatNormAuditReport } from "./formatAuditReport.js";
 export {
+  formatFindingAnnotation,
+  findingsToAnnotationNotes,
+} from "./formatFindingAnnotation.js";
+export {
   findingsForHighlight,
   formatFindingNote,
   normalizeDoorWidthFindings,

@@ -159,6 +159,7 @@ const MUTATING_COMMANDS = new Set([
   "operate_element",
   "color_splash",
   "create_filled_regions",
+  "create_text_notes",
   "tag_walls",
   "tag_rooms",
   "place_view_on_sheet",
