@@ -13,6 +13,15 @@ namespace RevitMCPCommandSet.Utils
 #endif
         }
 
+        public static double FromMillimeters(double millimeters)
+        {
+#if REVIT2022_OR_GREATER
+            return UnitUtils.ConvertToInternalUnits(millimeters, UnitTypeId.Millimeters);
+#else
+            return UnitUtils.ConvertToInternalUnits(millimeters, DisplayUnitType.DUT_MILLIMETERS);
+#endif
+        }
+
         public static double ToSquareMeters(double internalArea)
         {
 #if REVIT2022_OR_GREATER

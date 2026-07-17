@@ -244,6 +244,16 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "export_egress_graph",
+      "description": "Export the egress walkability graph of a floor: room boundary polygons (mm) and doors with from/to room links for evacuation distance tracing",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "create_detail_lines",
+      "description": "Draw polylines as detail curves on the active plan view (mm coordinates) — used to visualize evacuation routes",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "get_opening_geometry_info",
       "description": "Extract window sill height and door/window opening height for norm checks (REV-58)",
       "assemblyPath": "RevitMCPCommandSet.dll"
