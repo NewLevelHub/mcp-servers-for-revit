@@ -11,6 +11,7 @@ const HEAVY_COMMANDS = new Set([
   "analyze_model_statistics",
   "export_room_finish_data",
   "export_apartment_data",
+  "export_egress_graph",
   "create_door_schedule",
   "create_window_schedule",
   "create_floor_schedule",

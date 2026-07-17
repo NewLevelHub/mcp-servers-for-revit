@@ -14,6 +14,7 @@ const PRIORITY_TOOL_FILES = [
   "query_norm_rules",
   "save_norm_rule",
   "check_evacuation_width",
+  "check_evacuation_distance",
   "check_fire_doors",
   "check_room_depth",
   "check_min_dimensions",
