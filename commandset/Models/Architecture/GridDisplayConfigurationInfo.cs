@@ -50,10 +50,17 @@ public class GridDisplayConfigurationInfo
     public double? YExtentMax { get; set; }
 
     /// <summary>
-    ///     Show bubbles at both grid ends on floor plans.
+    ///     Show bubbles on floor plans. Combined with BubbleEnd to control which end.
     /// </summary>
     [JsonProperty("showBubbles")]
     public bool ShowBubbles { get; set; } = true;
+
+    /// <summary>
+    ///     Which end shows the bubble. Default "bottomLeft" = numbers below, letters left.
+    ///     "both" only when explicitly requested; "end"/"topRight" = opposite side.
+    /// </summary>
+    [JsonProperty("bubbleEnd")]
+    public string BubbleEnd { get; set; } = "bottomLeft";
 
     /// <summary>
     ///     Apply 2D extents to all non-template floor plans.

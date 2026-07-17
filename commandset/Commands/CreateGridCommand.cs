@@ -43,8 +43,9 @@ namespace RevitMCPCommandSet.Commands
                 // Set parameters and trigger event
                 _handler.SetParameters(data);
 
-                // Wait for completion with 10 second timeout
-                if (RaiseAndWaitForCompletion(10000))
+                // Wall scan + multi-plan display can exceed 10s on large models
+                int timeoutMs = data.AutoFromWalls ? 60000 : 30000;
+                if (RaiseAndWaitForCompletion(timeoutMs))
                 {
                     return _handler.Result;
                 }

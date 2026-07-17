@@ -5,70 +5,122 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerCreateGridTool(server: McpServer) {
   server.tool(
     "create_grid",
-    "Create a grid system in Revit with smart spacing generation. Supports both X-axis (vertical) and Y-axis (horizontal) grids with customizable naming styles (alphabetic A,B,C or numeric 1,2,3). All units are in millimeters (mm).",
+    "Create coordination grids in Revit. PREFERRED: autoFromWalls=true — places grids on load-bearing wall centerlines with extents beyond the building. Bubbles DEFAULT bottomLeft (numbers below, letters left — one end only). After grids exist, use dimension_grids for exterior axial chains offset from the full building envelope. Naming: numeric (1,2,3), cyrillic (А,Б,В…). All units mm.",
     {
+      autoFromWalls: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "PREFERRED: place grids on structural/bearing wall centerlines of the active (or levelName) floor. Ignores count/spacing. Use this for working documentation."
+        ),
+      wallFilter: z
+        .enum(["structural", "exterior", "all"])
+        .optional()
+        .default("structural")
+        .describe("Wall filter for autoFromWalls. Default structural = concrete/bearing/thick walls."),
+      levelName: z
+        .string()
+        .optional()
+        .default("")
+        .describe("Level for autoFromWalls. Empty = active floor plan level."),
+      minWallThicknessMm: z
+        .number()
+        .optional()
+        .default(400)
+        .describe("Min wall thickness (mm) for autoFromWalls. Default 400 — keeps ~500 mm concrete cores, skips t=200."),
+      clusterToleranceMm: z
+        .number()
+        .optional()
+        .default(280)
+        .describe("Merge wall centerlines closer than this (mm). Default 280 merges face/center location-line duplicates."),
+      extentOvershootMm: z
+        .number()
+        .optional()
+        .default(4000)
+        .describe(
+          "How far grid lines extend beyond the wall bbox (mm). Default 4000 — room for 2 exterior dimension tiers + bubbles outside."
+        ),
+      autoComputeExtents: z
+        .boolean()
+        .optional()
+        .describe("Recompute extents from walls/positions. Defaults true for autoFromWalls."),
+      xPositionsMm: z
+        .array(z.number())
+        .optional()
+        .default([])
+        .describe("Explicit X positions (mm) for vertical grids. Overrides xCount/xSpacing when set."),
+      yPositionsMm: z
+        .array(z.number())
+        .optional()
+        .default([])
+        .describe("Explicit Y positions (mm) for horizontal grids. Overrides yCount/ySpacing when set."),
       xCount: z
         .number()
         .int()
         .positive()
-        .describe("Number of grid lines along X-axis (vertical grids)"),
+        .optional()
+        .describe("Number of X (vertical) grids — only when not using autoFromWalls / xPositionsMm"),
       xSpacing: z
         .number()
         .positive()
-        .describe("Spacing between X-axis grid lines in millimeters"),
+        .optional()
+        .describe("Spacing between X grids in mm — only for uniform spacing mode"),
       xStartLabel: z
         .string()
-        .default("A")
-        .describe("Starting label for X-axis grids (e.g., 'A' or '1')"),
+        .default("1")
+        .describe("Starting label for X-axis grids (e.g. '1' or 'А')"),
       xNamingStyle: z
-        .enum(["alphabetic", "numeric"])
-        .default("alphabetic")
-        .describe("Naming style for X-axis: 'alphabetic' (A,B,C...) or 'numeric' (1,2,3...)"),
+        .enum(["alphabetic", "numeric", "cyrillic"])
+        .default("numeric")
+        .describe("X naming: numeric (1,2,3), cyrillic (А,Б,В), alphabetic (A,B,C). RU projects: numeric for X."),
       yCount: z
         .number()
         .int()
         .positive()
-        .describe("Number of grid lines along Y-axis (horizontal grids)"),
+        .optional()
+        .describe("Number of Y (horizontal) grids — only when not using autoFromWalls / yPositionsMm"),
       ySpacing: z
         .number()
         .positive()
-        .describe("Spacing between Y-axis grid lines in millimeters"),
+        .optional()
+        .describe("Spacing between Y grids in mm — only for uniform spacing mode"),
       yStartLabel: z
         .string()
-        .default("1")
-        .describe("Starting label for Y-axis grids (e.g., '1' or 'A')"),
+        .default("А")
+        .describe("Starting label for Y-axis grids (e.g. 'А' or 'A')"),
       yNamingStyle: z
-        .enum(["alphabetic", "numeric"])
-        .default("numeric")
-        .describe("Naming style for Y-axis: 'alphabetic' (A,B,C...) or 'numeric' (1,2,3...)"),
+        .enum(["alphabetic", "numeric", "cyrillic"])
+        .default("cyrillic")
+        .describe("Y naming. RU projects: cyrillic (А,Б,В,Г,Д…)."),
       xExtentMin: z
         .number()
         .default(0)
-        .describe("Minimum extent along X-axis in mm (where Y-axis grids start)"),
+        .describe("Min X extent mm (auto-filled when autoFromWalls)"),
       xExtentMax: z
         .number()
         .default(50000)
-        .describe("Maximum extent along X-axis in mm (where Y-axis grids end)"),
+        .describe("Max X extent mm (auto-filled when autoFromWalls)"),
       yExtentMin: z
         .number()
         .default(0)
-        .describe("Minimum extent along Y-axis in mm (where X-axis grids start)"),
+        .describe("Min Y extent mm (auto-filled when autoFromWalls)"),
       yExtentMax: z
         .number()
         .default(50000)
-        .describe("Maximum extent along Y-axis in mm (where X-axis grids end)"),
+        .describe("Max Y extent mm (auto-filled when autoFromWalls)"),
       elevation: z
         .number()
         .default(0)
-        .describe("Elevation for grid lines in mm (Z-coordinate)"),
+        .describe("Elevation for grid lines in mm (Z)"),
       xStartPosition: z
         .number()
         .default(0)
-        .describe("Starting position for first X-axis grid in mm"),
+        .describe("Start X for uniform spacing mode (mm)"),
       yStartPosition: z
         .number()
         .default(0)
-        .describe("Starting position for first Y-axis grid in mm"),
+        .describe("Start Y for uniform spacing mode (mm)"),
       gridTypeName: z
         .string()
         .optional()
@@ -89,9 +141,25 @@ export function registerCreateGridTool(server: McpServer) {
         .optional()
         .default(true)
         .describe("Show grid bubbles when display is configured"),
+      bubbleEnd: z
+        .enum(["both", "start", "end", "bottomLeft", "topRight"])
+        .optional()
+        .default("bottomLeft")
+        .describe(
+          "Which end shows the bubble. DEFAULT bottomLeft = numbers below, letters to the left (one end only). Use 'both' only if explicitly requested."
+        ),
     },
     async (args, extra) => {
       const params = {
+        autoFromWalls: args.autoFromWalls,
+        wallFilter: args.wallFilter,
+        levelName: args.levelName,
+        minWallThicknessMm: args.minWallThicknessMm,
+        clusterToleranceMm: args.clusterToleranceMm,
+        extentOvershootMm: args.extentOvershootMm,
+        autoComputeExtents: args.autoComputeExtents,
+        xPositionsMm: args.xPositionsMm ?? [],
+        yPositionsMm: args.yPositionsMm ?? [],
         xCount: args.xCount,
         xSpacing: args.xSpacing,
         xStartLabel: args.xStartLabel,
@@ -111,6 +179,7 @@ export function registerCreateGridTool(server: McpServer) {
         gridTypeId: args.gridTypeId,
         configureDisplayOnAllPlans: args.configureDisplayOnAllPlans,
         showBubbles: args.showBubbles,
+        bubbleEnd: args.bubbleEnd,
       };
 
       try {

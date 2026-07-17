@@ -42,7 +42,14 @@ export function registerConfigureGridDisplayTool(server: McpServer) {
         .boolean()
         .optional()
         .default(true)
-        .describe("Show bubbles at both grid ends on floor plans"),
+        .describe("Show bubbles on floor plans (combined with bubbleEnd)"),
+      bubbleEnd: z
+        .enum(["both", "start", "end", "bottomLeft", "topRight"])
+        .optional()
+        .default("bottomLeft")
+        .describe(
+          "Which end shows the bubble. DEFAULT bottomLeft = numbers below, letters to the left. Use 'both' only if explicitly requested."
+        ),
       applyToAllFloorPlans: z
         .boolean()
         .optional()
@@ -59,6 +66,7 @@ export function registerConfigureGridDisplayTool(server: McpServer) {
         yExtentMin: args.yExtentMin,
         yExtentMax: args.yExtentMax,
         showBubbles: args.showBubbles,
+        bubbleEnd: args.bubbleEnd,
         applyToAllFloorPlans: args.applyToAllFloorPlans,
       };
 

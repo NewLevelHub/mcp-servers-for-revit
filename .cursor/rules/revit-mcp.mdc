@@ -98,7 +98,8 @@ MCP **не создаёт** новый проект. Сообщи пользов
 | Стены, балки | `create_line_based_element` |
 | Полы, потолки, крыши | `create_surface_based_element` |
 | Двери, окна | `create_point_based_element` |
-| Уровни, оси, помещения | `create_level`, `create_grid`, `create_room` |
+| Уровни, оси, помещения | `create_level`, `create_grid` (**`autoFromWalls: true`**, пузырь `bottomLeft` = цифры снизу / буквы слева), `create_room` |
+| Осевые размеры (внешние цепочки) | **`dimension_grids`** — отступ от габарита всего здания (не от линии оси); межосевой + габаритный ярус; цифры снизу, буквы слева |
 | Разделители помещений (гибрид) | `analyze_room_boundaries` → агент выбирает линии/имена → `create_room_separators` (разделители + помещения + марки). Не `send_code_to_revit`. |
 | Удаление / видимость | `delete_element`, `operate_element` |
 | Маркировка | `tag_all_rooms`, `tag_all_walls` |

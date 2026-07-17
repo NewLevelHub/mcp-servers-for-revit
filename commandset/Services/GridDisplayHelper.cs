@@ -19,7 +19,8 @@ public static class GridDisplayHelper
     public static GridDisplayConfigurationResult ConfigureGrids(
         Document doc,
         IEnumerable<Grid> grids,
-        GridDisplayConfigurationInfo options)
+        GridDisplayConfigurationInfo options,
+        ViewPlan activeFloorPlan = null)
     {
         var warnings = new List<string>();
         var gridList = grids.Where(grid => grid != null).ToList();
@@ -30,12 +31,7 @@ public static class GridDisplayHelper
         if (gridType == null)
             warnings.Add("No GridType was resolved; bubble style was not changed.");
 
-        var views = options.ApplyToAllFloorPlans
-            ? GetFloorPlans(doc)
-            : new List<ViewPlan>();
-
-        if (views.Count == 0)
-            warnings.Add("No floor plan views were found.");
+        var views = ResolveViews(doc, options, activeFloorPlan, warnings);
 
         var bounds = ComputeExtentBounds(gridList, options);
         var gridViewUpdates = 0;
@@ -73,17 +69,7 @@ public static class GridDisplayHelper
 
                 try
                 {
-                    if (options.ShowBubbles)
-                    {
-                        grid.ShowBubbleInView(DatumEnds.End0, view);
-                        grid.ShowBubbleInView(DatumEnds.End1, view);
-                    }
-                    else
-                    {
-                        grid.HideBubbleInView(DatumEnds.End0, view);
-                        grid.HideBubbleInView(DatumEnds.End1, view);
-                    }
-
+                    ApplyBubbles(grid, view, options.ShowBubbles, options.BubbleEnd);
                     viewUpdated = true;
                 }
                 catch (Exception ex)
@@ -106,6 +92,41 @@ public static class GridDisplayHelper
         };
     }
 
+    private static List<ViewPlan> ResolveViews(
+        Document doc,
+        GridDisplayConfigurationInfo options,
+        ViewPlan activeFloorPlan,
+        List<string> warnings)
+    {
+        if (options.ApplyToAllFloorPlans)
+        {
+            var all = GetFloorPlans(doc);
+            if (all.Count == 0)
+                warnings.Add("No floor plan views were found.");
+            return all.ToList();
+        }
+
+        // Even when not applying to all plans, always configure the active floor plan
+        // so bubbles (bottomLeft) and extents take effect on the view the user is looking at.
+        if (activeFloorPlan != null &&
+            !activeFloorPlan.IsTemplate &&
+            activeFloorPlan.ViewType == ViewType.FloorPlan)
+        {
+            return new List<ViewPlan> { activeFloorPlan };
+        }
+
+        var fallback = doc.ActiveView as ViewPlan;
+        if (fallback != null &&
+            !fallback.IsTemplate &&
+            fallback.ViewType == ViewType.FloorPlan)
+        {
+            return new List<ViewPlan> { fallback };
+        }
+
+        warnings.Add("No active floor plan to configure grid display on.");
+        return new List<ViewPlan>();
+    }
+
     public static GridDisplayConfigurationInfo FromCreationInfo(GridCreationInfo creationInfo)
     {
         return new GridDisplayConfigurationInfo
@@ -117,6 +138,7 @@ public static class GridDisplayHelper
             YExtentMin = creationInfo.YExtentMin,
             YExtentMax = creationInfo.YExtentMax,
             ShowBubbles = creationInfo.ShowBubbles,
+            BubbleEnd = creationInfo.BubbleEnd,
             ApplyToAllFloorPlans = creationInfo.ConfigureDisplayOnAllPlans
         };
     }
@@ -268,6 +290,73 @@ public static class GridDisplayHelper
         const double paddingFeet = 10.0;
 
         grid.SetVerticalExtents(bottom - paddingFeet, top + paddingFeet);
+    }
+
+    /// <summary>
+    /// Show/hide bubbles per working-drawing practice. "start"/"bottomLeft" keeps the bubble
+    /// at the min X/Y end (numbers below, letters to the left); "end"/"topRight" the opposite.
+    /// </summary>
+    private static void ApplyBubbles(Grid grid, ViewPlan view, bool showBubbles, string bubbleEnd)
+    {
+        if (!showBubbles)
+        {
+            grid.HideBubbleInView(DatumEnds.End0, view);
+            grid.HideBubbleInView(DatumEnds.End1, view);
+            return;
+        }
+
+        var mode = (bubbleEnd ?? "both").Trim().ToLowerInvariant();
+        if (mode == "both" || string.IsNullOrEmpty(mode))
+        {
+            grid.ShowBubbleInView(DatumEnds.End0, view);
+            grid.ShowBubbleInView(DatumEnds.End1, view);
+            return;
+        }
+
+        // Determine which datum end sits at the min (bottom/left) side in this view.
+        var minEnd = ResolveMinEnd(grid, view);
+        var maxEnd = minEnd == DatumEnds.End0 ? DatumEnds.End1 : DatumEnds.End0;
+
+        var wantMin = mode is "start" or "min" or "bottomleft" or "bottom" or "left";
+
+        if (wantMin)
+        {
+            grid.ShowBubbleInView(minEnd, view);
+            grid.HideBubbleInView(maxEnd, view);
+        }
+        else
+        {
+            grid.ShowBubbleInView(maxEnd, view);
+            grid.HideBubbleInView(minEnd, view);
+        }
+    }
+
+    private static DatumEnds ResolveMinEnd(Grid grid, ViewPlan view)
+    {
+        Curve curve = null;
+        try
+        {
+            var viewCurves = grid.GetCurvesInView(DatumExtentType.ViewSpecific, view);
+            curve = viewCurves?.FirstOrDefault();
+        }
+        catch
+        {
+            // ignore, fall back to model curve
+        }
+
+        curve ??= grid.Curve;
+        if (curve == null)
+            return DatumEnds.End0;
+
+        var p0 = curve.GetEndPoint(0);
+        var p1 = curve.GetEndPoint(1);
+
+        // Vertical grid (constant X) → compare Y (bottom = min). Otherwise compare X (left = min).
+        bool vertical = Math.Abs(p1.X - p0.X) < Math.Abs(p1.Y - p0.Y);
+        double c0 = vertical ? p0.Y : p0.X;
+        double c1 = vertical ? p1.Y : p1.X;
+
+        return c0 <= c1 ? DatumEnds.End0 : DatumEnds.End1;
     }
 
     private static bool ApplyGridExtentInView(Grid grid, ViewPlan view, ExtentBounds bounds)

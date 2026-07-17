@@ -1,3 +1,4 @@
+using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using RevitMCPCommandSet.Models.Architecture;
 using RevitMCPCommandSet.Models.Common;
@@ -31,7 +32,11 @@ public class ConfigureGridDisplayEventHandler : IExternalEventHandler, IWaitable
             using (var transaction = new Transaction(doc, "Configure Grid Display"))
             {
                 transaction.Start();
-                configurationResult = GridDisplayHelper.ConfigureGrids(doc, grids, _options);
+                configurationResult = GridDisplayHelper.ConfigureGrids(
+                    doc,
+                    grids,
+                    _options,
+                    doc.ActiveView as ViewPlan);
                 transaction.Commit();
             }
 
