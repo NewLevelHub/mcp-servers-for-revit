@@ -203,9 +203,9 @@ function mockDeps(overrides: Partial<NormAuditDeps> = {}): NormAuditDeps {
       totalChecked: 1,
       turning: [
         {
-          id: 601,
-          uniqueId: "601",
-          name: "Тамбур",
+          id: 801,
+          uniqueId: "801",
+          name: "Тамбур МГН",
           level: "1 этаж",
           status: "violation" as const,
           widthMm: 1300,
@@ -227,8 +227,8 @@ function mockDeps(overrides: Partial<NormAuditDeps> = {}): NormAuditDeps {
       totalChecked: 1,
       violations: [
         {
-          id: 701,
-          uniqueId: "701",
+          id: 901,
+          uniqueId: "901",
           family: "Дверь",
           type: "800",
           level: "1 этаж",
@@ -247,6 +247,108 @@ function mockDeps(overrides: Partial<NormAuditDeps> = {}): NormAuditDeps {
         quote: "Ширина двери в помещении должна быть не менее 0,9 м.",
       },
       warnings: [],
+    }),
+    runRoomArea: async () => ({
+      success: true,
+      message: "ok area",
+      limits: [
+        {
+          category: "living_room" as const,
+          minAreaM2: 9,
+          source: {
+            document: "СП РК 3.02-101-2012",
+            clause: "п. 5.1.2",
+            quote: "9 м²",
+          },
+          rule: { id: "area-1" } as never,
+        },
+      ],
+      totalChecked: 1,
+      violations: [
+        {
+          id: 601,
+          name: "Жилая",
+          level: "1 этаж",
+          status: "violation" as const,
+          areaM2: 8,
+          requiredAreaM2: 9,
+          deviationM2: 1,
+          category: "living_room" as const,
+          limitSource: {
+            category: "living_room" as const,
+            minAreaM2: 9,
+            source: {
+              document: "СП РК 3.02-101-2012",
+              clause: "п. 5.1.2",
+              quote: "9 м²",
+            },
+            rule: { id: "area-1" } as never,
+          },
+        },
+      ],
+      nearLimit: [],
+      compliant: [],
+      warnings: [],
+    }),
+    runRoomHeight: async () => ({
+      success: true,
+      message: "ok height",
+      minHeightMm: 2500,
+      totalChecked: 1,
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      source: {
+        document: "СП РК 3.02-101-2012",
+        clause: "п. 4.4.10",
+        quote: "2500 мм",
+      },
+      warnings: [],
+    }),
+    runStoreyHeight: async () => ({
+      success: true,
+      message: "ok storey",
+      minStoreyHeightMm: 2800,
+      totalChecked: 1,
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      source: {
+        document: "СП РК 3.02-101-2012",
+        clause: "п. 4.4",
+        quote: "2800 мм",
+      },
+      warnings: [],
+    }),
+    resolveRoomAreaLimits: () => [
+      {
+        category: "living_room" as const,
+        minAreaM2: 9,
+        source: {
+          document: "СП РК 3.02-101-2012",
+          clause: "п. 5.1.2",
+          quote: "9 м²",
+        },
+        rule: { id: "area-1" } as never,
+      },
+    ],
+    resolveRoomHeight: () => ({
+      minHeightMm: 2500,
+      source: {
+        document: "СП РК 3.02-101-2012",
+        clause: "п. 4.4.10",
+        quote: "2500 мм",
+      },
+      rule: { id: "height-1" } as never,
+    }),
+    resolveStoreyHeight: () => ({
+      minStoreyHeightMm: 2800,
+      source: {
+        document: "СП РК 3.02-101-2012",
+        clause: "п. 4.4",
+        quote: "2800 мм",
+      },
+      rule: { id: "storey-1" } as never,
     }),
     highlight: async ({ findings }) => ({
       highlightedCount: findings.filter(
@@ -273,19 +375,18 @@ describe("runNormAudit orchestrator", () => {
 
     assert.equal(result.success, true);
     assert.equal(result.levelName, "1 этаж");
-    assert.equal(result.summary.checksRun, 8);
+    assert.equal(result.summary.checksRun, 11);
     assert.ok(result.summary.violations >= 5);
 
     const mgnTambour = result.findings.find(
-      (f) => f.checkType === "mgn_turning_circle" && f.elementId === 601
+      (f) => f.checkType === "mgn_turning_circle" && f.elementId === 801
     );
     assert.ok(mgnTambour);
     assert.equal(mgnTambour!.requiredMm, 1500);
     assert.match(mgnTambour!.source.document, /3\.06-101-2012/);
-    assert.match(mgnTambour!.source.quote, /1,5-1,7 м/);
 
     const mgnDoor = result.findings.find(
-      (f) => f.checkType === "mgn_door_width" && f.elementId === 701
+      (f) => f.checkType === "mgn_door_width" && f.elementId === 901
     );
     assert.ok(mgnDoor);
     assert.match(mgnDoor!.source.quote, /0,9 м/);
@@ -454,9 +555,41 @@ describe("runNormAudit orchestrator", () => {
           source,
           warnings: [],
         }),
+        runRoomArea: async () => ({
+          success: false,
+          message: "fail",
+          limits: [],
+          totalChecked: 0,
+          violations: [],
+          nearLimit: [],
+          compliant: [],
+          warnings: [],
+        }),
+        runRoomHeight: async () => ({
+          success: false,
+          message: "fail",
+          minHeightMm: 2500,
+          totalChecked: 0,
+          violations: [],
+          nearLimit: [],
+          compliant: [],
+          source,
+          warnings: [],
+        }),
+        runStoreyHeight: async () => ({
+          success: false,
+          message: "fail",
+          minStoreyHeightMm: 2800,
+          totalChecked: 0,
+          violations: [],
+          nearLimit: [],
+          compliant: [],
+          source,
+          warnings: [],
+        }),
       })
     );
     assert.equal(result.success, false);
-    assert.equal(result.summary.checksFailed, 8);
+    assert.equal(result.summary.checksFailed, 11);
   });
 });

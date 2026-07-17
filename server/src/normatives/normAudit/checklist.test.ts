@@ -9,7 +9,7 @@ import {
 describe("normAudit checklist", () => {
   it("runs all Phase-1 checkers when topics omitted", () => {
     const selected = selectPhase1Checkers();
-    assert.equal(selected.length, 8);
+    assert.equal(selected.length, 11);
     assert.deepEqual(
       selected.map((c) => c.checkType),
       [
@@ -21,6 +21,9 @@ describe("normAudit checklist", () => {
         "tambour_size_min",
         "mgn_room_geometry",
         "mgn_door_width",
+        "room_area_min",
+        "room_height_min",
+        "storey_height",
       ]
     );
   });

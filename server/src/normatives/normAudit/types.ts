@@ -8,6 +8,9 @@ export type NormAuditCheckType =
   | "fire_doors"
   | "door_clear_width"
   | "tambour_size_min"
+  | "room_area_min"
+  | "room_height_min"
+  | "storey_height"
   | "egress_opening_width"
   | "passage_width"
   // МГН accessibility (СП РК 3.06-101-2012*): one geometry checker emits

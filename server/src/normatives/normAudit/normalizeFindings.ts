@@ -10,6 +10,10 @@ function roundMm(value: number | null | undefined): number | undefined {
   return Math.round(value);
 }
 
+function roundAreaM2(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
 function nameOf(item: {
   name?: string;
   number?: string;
@@ -457,6 +461,143 @@ export function normalizeAccessibilityDoorFindings(input: {
   return findings;
 }
 
+const CATEGORY_LABELS: Record<string, string> = {
+  living_room: "жилая",
+  kitchen: "кухня",
+  bathroom: "санузел",
+  bedroom: "спальня",
+};
+
+export function normalizeRoomAreaFindings(input: {
+  violations: Array<{
+    id: number;
+    uniqueId?: string;
+    name: string;
+    level?: string;
+    status: "violation" | "nearLimit" | "compliant";
+    areaM2: number;
+    requiredAreaM2: number;
+    deviationM2: number;
+    category: string;
+    limitSource: { source: NormAuditSource };
+  }>;
+  nearLimit: typeof input.violations;
+  compliant: typeof input.violations;
+}): NormAuditFinding[] {
+  const findings: NormAuditFinding[] = [];
+
+  const push = (item: (typeof input.violations)[number]) => {
+    const cat = CATEGORY_LABELS[item.category] ?? item.category;
+    findings.push({
+      checkType: "room_area_min",
+      status: item.status,
+      elementId: item.id,
+      uniqueId: item.uniqueId,
+      name: item.name,
+      level: item.level ?? "",
+      metric: "площадь",
+      actualMm: roundAreaM2(item.areaM2),
+      requiredMm: roundAreaM2(item.requiredAreaM2),
+      deviationMm: roundMm(item.deviationM2 * 1000),
+      note: `${cat}: ${roundAreaM2(item.areaM2)} м² (норма ≥ ${roundAreaM2(item.requiredAreaM2)} м²)`,
+      source: toAuditSource(item.limitSource.source),
+    });
+  };
+
+  for (const item of input.violations) push(item);
+  for (const item of input.nearLimit) push(item);
+  for (const item of input.compliant) push(item);
+  return findings;
+}
+
+export function normalizeRoomHeightFindings(input: {
+  violations: Array<{
+    id: number;
+    uniqueId?: string;
+    name: string;
+    level?: string;
+    status: "violation" | "nearLimit" | "compliant";
+    actualHeightMm: number;
+    requiredHeightMm: number;
+    deviationMm: number;
+  }>;
+  nearLimit: typeof input.violations;
+  compliant: typeof input.violations;
+  source: NormAuditSource | null | undefined;
+  minHeightMm: number;
+}): NormAuditFinding[] {
+  const source = toAuditSource(
+    input.source,
+    `Минимальная высота помещения: ${input.minHeightMm} мм.`
+  );
+  const findings: NormAuditFinding[] = [];
+
+  const push = (item: (typeof input.violations)[number]) => {
+    findings.push({
+      checkType: "room_height_min",
+      status: item.status,
+      elementId: item.id,
+      uniqueId: item.uniqueId,
+      name: item.name,
+      level: item.level ?? "",
+      metric: "высота",
+      actualMm: roundMm(item.actualHeightMm),
+      requiredMm: roundMm(item.requiredHeightMm),
+      deviationMm: roundMm(item.deviationMm),
+      source,
+    });
+  };
+
+  for (const item of input.violations) push(item);
+  for (const item of input.nearLimit) push(item);
+  for (const item of input.compliant) push(item);
+  return findings;
+}
+
+export function normalizeStoreyHeightFindings(input: {
+  violations: Array<{
+    id: number;
+    name: string;
+    lowerLevel: string;
+    upperLevel: string;
+    status: "violation" | "nearLimit" | "compliant";
+    actualHeightMm: number;
+    requiredHeightMm: number;
+    deviationMm: number;
+  }>;
+  nearLimit: typeof input.violations;
+  compliant: typeof input.violations;
+  source: NormAuditSource | null | undefined;
+  minStoreyHeightMm: number;
+}): NormAuditFinding[] {
+  const source = toAuditSource(
+    input.source,
+    `Минимальная высота этажа: ${input.minStoreyHeightMm} мм.`
+  );
+  const findings: NormAuditFinding[] = [];
+
+  const push = (item: (typeof input.violations)[number]) => {
+    findings.push({
+      checkType: "storey_height",
+      status: item.status,
+      elementId: item.id,
+      name: item.name,
+      level: item.lowerLevel,
+      metric: "высота этажа",
+      actualMm: roundMm(item.actualHeightMm),
+      requiredMm: roundMm(item.requiredHeightMm),
+      deviationMm: roundMm(item.deviationMm),
+      note: `${item.lowerLevel} → ${item.upperLevel}`,
+      source,
+    });
+  };
+
+  for (const item of input.violations) push(item);
+  for (const item of input.nearLimit) push(item);
+  for (const item of input.compliant) push(item);
+  return findings;
+}
+
 export function summarizeFindings(
   findings: NormAuditFinding[],
   skippedCount: number
@@ -494,6 +635,9 @@ export function formatFindingNote(finding: NormAuditFinding): string {
   const metric = finding.metric ? `${finding.metric}: ` : "";
   if (finding.checkType === "fire_doors") {
     return finding.note || "Требуется противопожарная дверь";
+  }
+  if (finding.checkType === "room_area_min" && finding.actualMm != null && finding.requiredMm != null) {
+    return `${metric}${finding.actualMm} м² vs норма ${finding.requiredMm} м²`;
   }
   if (finding.actualMm != null && finding.requiredMm != null) {
     return `${metric}${finding.actualMm} мм vs норма ${finding.requiredMm} мм`;

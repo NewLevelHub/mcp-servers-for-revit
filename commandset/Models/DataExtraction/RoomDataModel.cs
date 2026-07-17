@@ -32,7 +32,35 @@ namespace RevitMCPCommandSet.Models.DataExtraction
         public double Perimeter { get; set; } // Millimeters
 
         [JsonProperty("unboundedHeight")]
-        public double UnboundedHeight { get; set; } // Millimeters
+        public double UnboundedHeight { get; set; } // Millimeters — Room.UnboundedHeight (often wrong if Limit Offset = 8')
+
+        /// <summary>
+        /// Floor-to-floor height to the next level above (mm).
+        /// </summary>
+        [JsonProperty("storeyHeight")]
+        public double StoreyHeight { get; set; }
+
+        /// <summary>
+        /// Median thickness of floors hosted on the upper level (mm). 0 if none found.
+        /// </summary>
+        [JsonProperty("floorThickness")]
+        public double FloorThickness { get; set; }
+
+        /// <summary>
+        /// Clear height estimate: storeyHeight − floorThickness when storey known;
+        /// otherwise UnboundedHeight (mm). Prefer this for norms «от пола до низа потолков».
+        /// </summary>
+        [JsonProperty("clearHeight")]
+        public double ClearHeight { get; set; }
+
+        [JsonProperty("heightSource")]
+        public string HeightSource { get; set; }
+
+        [JsonProperty("upperLimitLevel")]
+        public string UpperLimitLevel { get; set; }
+
+        [JsonProperty("limitOffset")]
+        public double LimitOffset { get; set; } // Millimeters
 
         [JsonProperty("department")]
         public string Department { get; set; }

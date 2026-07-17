@@ -11,6 +11,9 @@ export interface NormAuditCheckerDef {
     | "tambour_size_min"
     | "mgn_room_geometry"
     | "mgn_door_width"
+    | "room_area_min"
+    | "room_height_min"
+    | "storey_height"
   >;
   title: string;
   /** Substrings matched against user topics (lowercase). Empty topics → all. */
@@ -122,6 +125,41 @@ export const PHASE1_CHECKERS: readonly NormAuditCheckerDef[] = [
       "мүгедек",
       "двер",
       "0,9",
+    ],
+  },
+  {
+    checkType: "room_area_min",
+    title: "Мин. площадь помещений",
+    topicHints: [
+      "площад",
+      "area",
+      "жилая",
+      "кухня",
+      "санузел",
+      "спальня",
+      "комнат",
+    ],
+  },
+  {
+    checkType: "room_height_min",
+    title: "Мин. высота помещений",
+    topicHints: [
+      "высота помещ",
+      "высота потолка",
+      "room height",
+      "unbounded",
+      "биіктік",
+    ],
+  },
+  {
+    checkType: "storey_height",
+    title: "Высота этажа",
+    topicHints: [
+      "высота этажа",
+      "storey",
+      "этажность",
+      "қабат биіктігі",
+      "перепад уровней",
     ],
   },
 ] as const;
