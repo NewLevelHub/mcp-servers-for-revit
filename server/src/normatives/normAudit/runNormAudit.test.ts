@@ -380,6 +380,213 @@ function mockDeps(overrides: Partial<NormAuditDeps> = {}): NormAuditDeps {
       },
       rule: { id: "storey-1" } as never,
     }),
+    runWindowSill: async () => ({
+      success: true,
+      message: "ok sill",
+      minSillHeightMm: 900,
+      totalChecked: 1,
+      violations: [
+        {
+          id: 701,
+          uniqueId: "701",
+          family: "Окно",
+          type: "низкий",
+          level: "1 этаж",
+          status: "violation" as const,
+          actualMm: 600,
+          requiredMm: 900,
+          deviationMm: 300,
+        },
+      ],
+      nearLimit: [],
+      compliant: [],
+      source: {
+        document: "СП РК 3.06-101",
+        clause: "п. test",
+        quote: "Высота подоконника не менее 0,9 м.",
+      },
+      warnings: [],
+    }),
+    runOpeningHeight: async () => ({
+      success: true,
+      message: "ok opening",
+      minHeightMm: 1900,
+      totalChecked: 1,
+      violations: [
+        {
+          id: 801,
+          uniqueId: "801",
+          family: "Дверь",
+          type: "1800",
+          level: "1 этаж",
+          category: "door",
+          status: "violation" as const,
+          actualMm: 1800,
+          requiredMm: 1900,
+          deviationMm: 100,
+          isOnEgressPath: true,
+        },
+      ],
+      nearLimit: [],
+      compliant: [],
+      source: {
+        document: "SP RK 3.06-31-2005",
+        clause: "п. 9.14",
+        quote: "Высота эвакуационных выходов в свету должна быть не менее 1,9 м.",
+      },
+      warnings: [],
+    }),
+    resolveWindowSill: () => ({
+      minSillHeightMm: 900,
+      source: {
+        document: "СП РК 3.06-101",
+        clause: "п. test",
+        quote: "Высота подоконника не менее 0,9 м.",
+      },
+      rule: { id: "sill-1" } as never,
+    }),
+    resolveOpeningHeight: () => ({
+      minHeightMm: 1900,
+      source: {
+        document: "SP RK 3.06-31-2005",
+        clause: "п. 9.14",
+        quote: "Высота эвакуационных выходов в свету должна быть не менее 1,9 м.",
+      },
+      rule: { id: "opening-1" } as never,
+    }),
+    runStairWidth: async () => ({
+      success: true,
+      message: "ok stair",
+      minWidthMm: 1050,
+      totalChecked: 1,
+      violations: [
+        {
+          id: 901,
+          uniqueId: "901",
+          name: "узкий марш",
+          type: "Stairs",
+          level: "1 этаж",
+          status: "violation" as const,
+          actualMm: 800,
+          requiredMm: 1050,
+          deviationMm: 250,
+        },
+      ],
+      nearLimit: [],
+      compliant: [],
+      source: {
+        document: "СП РК 3.02-101",
+        clause: "табл. 6",
+        quote: "Ширина марша не менее 1,05 м.",
+      },
+      warnings: [],
+    }),
+    runStairRiserTread: async () => ({
+      success: true,
+      message: "ok riser",
+      maxRiserMm: 190,
+      minTreadMm: 250,
+      totalChecked: 1,
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      source: {
+        document: "СП РК 3.06-31",
+        clause: "п. test",
+        quote: "Подступенок не более 0,19 м.",
+      },
+      warnings: [],
+    }),
+    runRamp: async () => ({
+      success: true,
+      message: "ok ramp",
+      minWidthMm: 1200,
+      maxSlopePercent: 5,
+      totalChecked: 1,
+      violations: [
+        {
+          id: 911,
+          uniqueId: "911",
+          name: "крутой пандус",
+          type: "Ramp",
+          level: "1 этаж",
+          metric: "уклон" as const,
+          status: "violation" as const,
+          actualMm: 12,
+          requiredMm: 5,
+          deviationMm: 7,
+        },
+      ],
+      nearLimit: [],
+      compliant: [],
+      source: {
+        document: "СП РК 3.06-31",
+        clause: "п. ramp",
+        quote: "Уклон пандуса не более 5%.",
+      },
+      warnings: [],
+    }),
+    runRailingHeight: async () => ({
+      success: true,
+      message: "ok rail",
+      minHeightMm: 1200,
+      totalChecked: 1,
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      source: {
+        document: "СП РК 3.02-101",
+        clause: "п. rail",
+        quote: "Высота ограждения не менее 1,2 м.",
+      },
+      warnings: [],
+    }),
+    resolveStairWidth: () => ({
+      minWidthMm: 1050,
+      source: {
+        document: "СП РК 3.02-101",
+        clause: "табл. 6",
+        quote: "Ширина марша не менее 1,05 м.",
+      },
+      rule: { id: "stair-w-1" } as never,
+    }),
+    resolveStairRiserTread: () => ({
+      maxRiserMm: 190,
+      minTreadMm: 250,
+      riserSource: {
+        document: "СП РК 3.06-31",
+        clause: "п. test",
+        quote: "Подступенок не более 0,19 м.",
+      },
+      treadSource: {
+        document: "СП РК 3.06-31",
+        clause: "п. test",
+        quote: "Проступь не менее 0,25 м.",
+      },
+    }),
+    resolveRamp: () => ({
+      minWidthMm: 1200,
+      maxSlopePercent: 5,
+      widthSource: {
+        document: "СП РК 3.06-31",
+        clause: "п. ramp",
+        quote: "Ширина пандуса не менее 1,2 м.",
+      },
+      slopeSource: {
+        document: "СП РК 3.06-31",
+        clause: "п. ramp",
+        quote: "Уклон пандуса не более 5%.",
+      },
+    }),
+    resolveRailingHeight: () => ({
+      minHeightMm: 1200,
+      source: {
+        document: "СП РК 3.02-101",
+        clause: "п. rail",
+        quote: "Высота ограждения не менее 1,2 м.",
+      },
+      rule: { id: "rail-1" } as never,
+    }),
     highlight: async ({ findings }) => ({
       highlightedCount: findings.filter(
         (f) => f.status === "violation" || f.status === "nearLimit"
@@ -405,8 +612,8 @@ describe("runNormAudit orchestrator", () => {
 
     assert.equal(result.success, true);
     assert.equal(result.levelName, "1 этаж");
-    assert.equal(result.summary.checksRun, 11);
-    assert.ok(result.summary.violations >= 5);
+    assert.equal(result.summary.checksRun, 17);
+    assert.ok(result.summary.violations >= 9);
 
     const mgnTambour = result.findings.find(
       (f) => f.checkType === "mgn_turning_circle" && f.elementId === 801
@@ -443,6 +650,34 @@ describe("runNormAudit orchestrator", () => {
     assert.equal(narrowDoor!.actualMm, 700);
     assert.equal(narrowDoor!.requiredMm, 900);
     assert.match(narrowDoor!.source.clause, /4\.6\.11/);
+
+    const lowSill = result.findings.find(
+      (f) => f.checkType === "window_sill_height" && f.elementId === 701
+    );
+    assert.ok(lowSill);
+    assert.equal(lowSill!.actualMm, 600);
+    assert.equal(lowSill!.requiredMm, 900);
+
+    const shortOpening = result.findings.find(
+      (f) => f.checkType === "opening_height" && f.elementId === 801
+    );
+    assert.ok(shortOpening);
+    assert.equal(shortOpening!.actualMm, 1800);
+    assert.equal(shortOpening!.requiredMm, 1900);
+
+    const narrowStair = result.findings.find(
+      (f) => f.checkType === "stair_width" && f.elementId === 901
+    );
+    assert.ok(narrowStair);
+    assert.equal(narrowStair!.actualMm, 800);
+    assert.equal(narrowStair!.requiredMm, 1050);
+
+    const steepRamp = result.findings.find(
+      (f) => f.checkType === "ramp_slope_width" && f.elementId === 911
+    );
+    assert.ok(steepRamp);
+    assert.equal(steepRamp!.actualMm, 12);
+    assert.equal(steepRamp!.requiredMm, 5);
 
     const tambour = result.findings.find((f) => f.name === "Тамбур");
     assert.ok(tambour);
@@ -631,9 +866,73 @@ describe("runNormAudit orchestrator", () => {
           source,
           warnings: [],
         }),
+        runWindowSill: async () => ({
+          success: false,
+          message: "fail",
+          minSillHeightMm: 900,
+          totalChecked: 0,
+          violations: [],
+          nearLimit: [],
+          compliant: [],
+          source,
+          warnings: [],
+        }),
+        runOpeningHeight: async () => ({
+          success: false,
+          message: "fail",
+          minHeightMm: 1900,
+          totalChecked: 0,
+          violations: [],
+          nearLimit: [],
+          compliant: [],
+          source,
+          warnings: [],
+        }),
+        runStairWidth: async () => ({
+          success: false,
+          message: "fail",
+          minWidthMm: 1050,
+          totalChecked: 0,
+          violations: [],
+          nearLimit: [],
+          compliant: [],
+          source,
+          warnings: [],
+        }),
+        runStairRiserTread: async () => ({
+          success: false,
+          message: "fail",
+          totalChecked: 0,
+          violations: [],
+          nearLimit: [],
+          compliant: [],
+          source,
+          warnings: [],
+        }),
+        runRamp: async () => ({
+          success: false,
+          message: "fail",
+          totalChecked: 0,
+          violations: [],
+          nearLimit: [],
+          compliant: [],
+          source,
+          warnings: [],
+        }),
+        runRailingHeight: async () => ({
+          success: false,
+          message: "fail",
+          minHeightMm: 1200,
+          totalChecked: 0,
+          violations: [],
+          nearLimit: [],
+          compliant: [],
+          source,
+          warnings: [],
+        }),
       })
     );
     assert.equal(result.success, false);
-    assert.equal(result.summary.checksFailed, 11);
+    assert.equal(result.summary.checksFailed, 17);
   });
 });

@@ -22,6 +22,26 @@ import {
   type DoorWidthInput,
 } from "./doorWidth.js";
 import {
+  classifyWindowSills,
+  type ClassifiedWindowSill,
+  type WindowSillInput,
+} from "./windowSill.js";
+import {
+  classifyOpeningHeights,
+  type ClassifiedOpeningHeight,
+  type OpeningHeightInput,
+} from "./openingHeight.js";
+import {
+  classifyRamps,
+  classifyRailingHeights,
+  classifyStairRiserTreads,
+  classifyStairWidths,
+  type ClassifiedRamp,
+  type ClassifiedRailing,
+  type ClassifiedStairRiserTread,
+  type ClassifiedStairWidth,
+} from "./verticalCirculation.js";
+import {
   classifyTambourSizes,
   type ClassifiedTambour,
   type TambourRoomInput,
@@ -1452,6 +1472,547 @@ export function paintTargetsFromFindings(findings: NormAuditFinding[]): {
   }
 
   return { roomIds, doorIds, otherElementIds };
+}
+
+const openingGeometryItemSchema = z.object({
+  id: z.number(),
+  uniqueId: z.string().optional().default(""),
+  category: z.string().optional().default(""),
+  family: z.string().optional().default(""),
+  type: z.string().optional().default(""),
+  level: z.string().optional().default(""),
+  sillHeightMm: z.number().nullable().optional(),
+  openingHeightMm: z.number().nullable().optional(),
+  isOnEgressPath: z.boolean().optional().default(false),
+});
+
+export interface WindowSillRunnerResult {
+  success: boolean;
+  message: string;
+  minSillHeightMm: number;
+  totalChecked: number;
+  violations: ClassifiedWindowSill[];
+  nearLimit: ClassifiedWindowSill[];
+  compliant: ClassifiedWindowSill[];
+  source: NormAuditSource;
+  warnings: string[];
+}
+
+export interface OpeningHeightRunnerResult {
+  success: boolean;
+  message: string;
+  minHeightMm: number;
+  totalChecked: number;
+  violations: ClassifiedOpeningHeight[];
+  nearLimit: ClassifiedOpeningHeight[];
+  compliant: ClassifiedOpeningHeight[];
+  source: NormAuditSource;
+  warnings: string[];
+}
+
+async function fetchOpeningGeometry(levelName: string) {
+  const rawResponse = await withRevitConnection(async (revitClient) => {
+    return await revitClient.sendCommand("get_opening_geometry_info", {
+      levelName,
+    });
+  });
+
+  return z
+    .object({
+      success: z.boolean(),
+      message: z.string().optional().default(""),
+      totalOpenings: z.number().optional(),
+      openings: z.array(openingGeometryItemSchema).optional().default([]),
+    })
+    .parse(rawResponse);
+}
+
+/**
+ * Window sill height check (REV-58).
+ * Reads sillHeightMm via get_opening_geometry_info and compares against min.
+ */
+export async function runWindowSillCheck(options: {
+  levelName: string;
+  includeCompliant: boolean;
+  minSillHeightMm: number;
+  source: NormAuditSource;
+  nearLimitToleranceMm?: number;
+}): Promise<WindowSillRunnerResult> {
+  if (!(options.minSillHeightMm > 0)) {
+    return {
+      success: false,
+      message:
+        "Нет числовой нормы высоты подоконника. Сделайте seed / query «высота подоконника».",
+      minSillHeightMm: 0,
+      totalChecked: 0,
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      source: options.source,
+      warnings: [],
+    };
+  }
+
+  const raw = await fetchOpeningGeometry(options.levelName);
+  if (!raw.success) {
+    return {
+      success: false,
+      message: raw.message || "get_opening_geometry_info failed.",
+      minSillHeightMm: options.minSillHeightMm,
+      totalChecked: 0,
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      source: options.source,
+      warnings: [],
+    };
+  }
+
+  const openings: WindowSillInput[] = raw.openings.map((item) => ({
+    id: item.id,
+    uniqueId: item.uniqueId || String(item.id),
+    family: item.family,
+    type: item.type,
+    level: item.level,
+    category: item.category || "window",
+    sillHeightMm: item.sillHeightMm ?? null,
+  }));
+
+  const classified = classifyWindowSills(openings, {
+    minSillHeightMm: options.minSillHeightMm,
+    nearLimitToleranceMm: options.nearLimitToleranceMm ?? 50,
+  });
+
+  const warnings: string[] = [];
+  if (classified.accessoriesSkipped > 0) {
+    warnings.push(
+      `Аксессуары окон (откос/подоконник-заполнение) исключены: ${classified.accessoriesSkipped}.`
+    );
+  }
+  if (classified.missingSill > 0) {
+    warnings.push(
+      `Окон без читаемой высоты подоконника: ${classified.missingSill} (пропущены).`
+    );
+  }
+
+  return {
+    success: true,
+    message:
+      `Проверено окон: ${classified.checked} (из ${classified.totalWindows}). ` +
+      `Норма подоконника ≥ ${options.minSillHeightMm} мм.`,
+    minSillHeightMm: options.minSillHeightMm,
+    totalChecked: classified.checked,
+    violations: classified.violations,
+    nearLimit: classified.nearLimit,
+    compliant: classified.compliant,
+    source: options.source,
+    warnings,
+  };
+}
+
+/**
+ * Opening height check (REV-58).
+ * v1: nominal DOOR_HEIGHT for egress doors vs «высота эвак. выходов в свету».
+ */
+export async function runOpeningHeightCheck(options: {
+  levelName: string;
+  includeCompliant: boolean;
+  minHeightMm: number;
+  source: NormAuditSource;
+  nearLimitToleranceMm?: number;
+  egressDoorsOnly?: boolean;
+}): Promise<OpeningHeightRunnerResult> {
+  if (!(options.minHeightMm > 0)) {
+    return {
+      success: false,
+      message:
+        "Нет числовой нормы высоты проёма. Сделайте seed / query «высота эвакуационных выходов».",
+      minHeightMm: 0,
+      totalChecked: 0,
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      source: options.source,
+      warnings: [],
+    };
+  }
+
+  const raw = await fetchOpeningGeometry(options.levelName);
+  if (!raw.success) {
+    return {
+      success: false,
+      message: raw.message || "get_opening_geometry_info failed.",
+      minHeightMm: options.minHeightMm,
+      totalChecked: 0,
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      source: options.source,
+      warnings: [],
+    };
+  }
+
+  const openings: OpeningHeightInput[] = raw.openings.map((item) => ({
+    id: item.id,
+    uniqueId: item.uniqueId || String(item.id),
+    family: item.family,
+    type: item.type,
+    level: item.level,
+    category: item.category || "door",
+    openingHeightMm: item.openingHeightMm ?? null,
+    isOnEgressPath: item.isOnEgressPath,
+  }));
+
+  const classified = classifyOpeningHeights(openings, {
+    minHeightMm: options.minHeightMm,
+    nearLimitToleranceMm: options.nearLimitToleranceMm ?? 50,
+    egressDoorsOnly: options.egressDoorsOnly ?? true,
+  });
+
+  const warnings: string[] = [
+    "v1: сравнивается номинальная высота параметра (DOOR_HEIGHT / WINDOW_HEIGHT). " +
+      "По умолчанию — двери на путях эвакуации (норма «высота выходов в свету»).",
+  ];
+  if (classified.accessoriesSkipped > 0) {
+    warnings.push(
+      `Откосы/аксессуары исключены: ${classified.accessoriesSkipped}.`
+    );
+  }
+  if (classified.nonEgressSkipped > 0) {
+    warnings.push(
+      `Двери вне путей эвакуации не проверялись: ${classified.nonEgressSkipped}.`
+    );
+  }
+  if (classified.windowsSkipped > 0) {
+    warnings.push(
+      `Окна не сравнивались с нормой эвак. выхода: ${classified.windowsSkipped}.`
+    );
+  }
+  if (classified.missingHeight > 0) {
+    warnings.push(
+      `Проёмов без читаемой высоты: ${classified.missingHeight} (пропущены).`
+    );
+  }
+
+  return {
+    success: true,
+    message:
+      `Проверено проёмов: ${classified.checked} (блоков после фильтра: ${classified.totalOpenings}). ` +
+      `Норма высоты ≥ ${options.minHeightMm} мм.`,
+    minHeightMm: options.minHeightMm,
+    totalChecked: classified.checked,
+    violations: classified.violations,
+    nearLimit: classified.nearLimit,
+    compliant: classified.compliant,
+    source: options.source,
+    warnings,
+  };
+}
+
+const verticalCirculationSchema = z.object({
+  success: z.boolean(),
+  message: z.string().optional().default(""),
+  stairs: z
+    .array(
+      z.object({
+        id: z.number(),
+        uniqueId: z.string().optional().default(""),
+        name: z.string().optional().default(""),
+        type: z.string().optional().default(""),
+        level: z.string().optional().default(""),
+        widthMm: z.number().nullable().optional(),
+        riserMm: z.number().nullable().optional(),
+        treadMm: z.number().nullable().optional(),
+      })
+    )
+    .optional()
+    .default([]),
+  ramps: z
+    .array(
+      z.object({
+        id: z.number(),
+        uniqueId: z.string().optional().default(""),
+        name: z.string().optional().default(""),
+        type: z.string().optional().default(""),
+        level: z.string().optional().default(""),
+        widthMm: z.number().nullable().optional(),
+        slopePercent: z.number().nullable().optional(),
+      })
+    )
+    .optional()
+    .default([]),
+  railings: z
+    .array(
+      z.object({
+        id: z.number(),
+        uniqueId: z.string().optional().default(""),
+        name: z.string().optional().default(""),
+        type: z.string().optional().default(""),
+        level: z.string().optional().default(""),
+        heightMm: z.number().nullable().optional(),
+      })
+    )
+    .optional()
+    .default([]),
+});
+
+async function fetchVerticalCirculation(levelName: string) {
+  const rawResponse = await withRevitConnection(async (revitClient) => {
+    return await revitClient.sendCommand("get_vertical_circulation_info", {
+      levelName,
+    });
+  });
+  return verticalCirculationSchema.parse(rawResponse);
+}
+
+export interface StairWidthRunnerResult {
+  success: boolean;
+  message: string;
+  minWidthMm: number;
+  totalChecked: number;
+  violations: ClassifiedStairWidth[];
+  nearLimit: ClassifiedStairWidth[];
+  compliant: ClassifiedStairWidth[];
+  source: NormAuditSource;
+  warnings: string[];
+}
+
+export async function runStairWidthCheck(options: {
+  levelName: string;
+  includeCompliant: boolean;
+  minWidthMm: number;
+  source: NormAuditSource;
+  nearLimitToleranceMm?: number;
+}): Promise<StairWidthRunnerResult> {
+  if (!(options.minWidthMm > 0)) {
+    return {
+      success: false,
+      message: "Нет нормы ширины марша.",
+      minWidthMm: 0,
+      totalChecked: 0,
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      source: options.source,
+      warnings: [],
+    };
+  }
+  const raw = await fetchVerticalCirculation(options.levelName);
+  if (!raw.success) {
+    return {
+      success: false,
+      message: raw.message || "get_vertical_circulation_info failed.",
+      minWidthMm: options.minWidthMm,
+      totalChecked: 0,
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      source: options.source,
+      warnings: [],
+    };
+  }
+  const classified = classifyStairWidths(raw.stairs, {
+    minWidthMm: options.minWidthMm,
+    nearLimitToleranceMm: options.nearLimitToleranceMm ?? 50,
+  });
+  const warnings: string[] = [];
+  if (classified.missingWidth > 0) {
+    warnings.push(`Лестниц без ширины марша: ${classified.missingWidth}.`);
+  }
+  return {
+    success: true,
+    message: `Проверено лестниц: ${classified.checked}. Норма ширины марша ≥ ${options.minWidthMm} мм.`,
+    minWidthMm: options.minWidthMm,
+    totalChecked: classified.checked,
+    violations: classified.violations,
+    nearLimit: classified.nearLimit,
+    compliant: classified.compliant,
+    source: options.source,
+    warnings,
+  };
+}
+
+export interface StairRiserTreadRunnerResult {
+  success: boolean;
+  message: string;
+  maxRiserMm?: number;
+  minTreadMm?: number;
+  totalChecked: number;
+  violations: ClassifiedStairRiserTread[];
+  nearLimit: ClassifiedStairRiserTread[];
+  compliant: ClassifiedStairRiserTread[];
+  source: NormAuditSource;
+  warnings: string[];
+}
+
+export async function runStairRiserTreadCheck(options: {
+  levelName: string;
+  includeCompliant: boolean;
+  maxRiserMm?: number | null;
+  minTreadMm?: number | null;
+  source: NormAuditSource;
+}): Promise<StairRiserTreadRunnerResult> {
+  const raw = await fetchVerticalCirculation(options.levelName);
+  if (!raw.success) {
+    return {
+      success: false,
+      message: raw.message || "get_vertical_circulation_info failed.",
+      totalChecked: 0,
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      source: options.source,
+      warnings: [],
+    };
+  }
+  const classified = classifyStairRiserTreads(raw.stairs, {
+    maxRiserMm: options.maxRiserMm,
+    minTreadMm: options.minTreadMm,
+  });
+  return {
+    success: true,
+    message: `Проверено ступеней (подступенок/проступь): ${classified.checked}.`,
+    maxRiserMm: options.maxRiserMm ?? undefined,
+    minTreadMm: options.minTreadMm ?? undefined,
+    totalChecked: classified.checked,
+    violations: classified.violations,
+    nearLimit: classified.nearLimit,
+    compliant: classified.compliant,
+    source: options.source,
+    warnings:
+      classified.missing > 0
+        ? [`Нет riser/tread у ${classified.missing} измерений.`]
+        : [],
+  };
+}
+
+export interface RampRunnerResult {
+  success: boolean;
+  message: string;
+  minWidthMm?: number;
+  maxSlopePercent?: number;
+  totalChecked: number;
+  violations: ClassifiedRamp[];
+  nearLimit: ClassifiedRamp[];
+  compliant: ClassifiedRamp[];
+  source: NormAuditSource;
+  warnings: string[];
+}
+
+export async function runRampCheck(options: {
+  levelName: string;
+  includeCompliant: boolean;
+  minWidthMm?: number | null;
+  maxSlopePercent?: number | null;
+  source: NormAuditSource;
+}): Promise<RampRunnerResult> {
+  const raw = await fetchVerticalCirculation(options.levelName);
+  if (!raw.success) {
+    return {
+      success: false,
+      message: raw.message || "get_vertical_circulation_info failed.",
+      totalChecked: 0,
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      source: options.source,
+      warnings: [],
+    };
+  }
+  const classified = classifyRamps(raw.ramps, {
+    minWidthMm: options.minWidthMm,
+    maxSlopePercent: options.maxSlopePercent,
+  });
+  return {
+    success: true,
+    message: `Проверено пандусов: ${classified.checked}.`,
+    minWidthMm: options.minWidthMm ?? undefined,
+    maxSlopePercent: options.maxSlopePercent ?? undefined,
+    totalChecked: classified.checked,
+    violations: classified.violations,
+    nearLimit: classified.nearLimit,
+    compliant: classified.compliant,
+    source: options.source,
+    warnings:
+      classified.missing > 0
+        ? [`Нет ширины/уклона у ${classified.missing} измерений.`]
+        : [],
+  };
+}
+
+export interface RailingHeightRunnerResult {
+  success: boolean;
+  message: string;
+  minHeightMm: number;
+  totalChecked: number;
+  violations: ClassifiedRailing[];
+  nearLimit: ClassifiedRailing[];
+  compliant: ClassifiedRailing[];
+  source: NormAuditSource;
+  warnings: string[];
+}
+
+export async function runRailingHeightCheck(options: {
+  levelName: string;
+  includeCompliant: boolean;
+  minHeightMm: number;
+  source: NormAuditSource;
+}): Promise<RailingHeightRunnerResult> {
+  if (!(options.minHeightMm > 0)) {
+    return {
+      success: false,
+      message: "Нет нормы высоты ограждения.",
+      minHeightMm: 0,
+      totalChecked: 0,
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      source: options.source,
+      warnings: [],
+    };
+  }
+  const raw = await fetchVerticalCirculation(options.levelName);
+  if (!raw.success) {
+    return {
+      success: false,
+      message: raw.message || "get_vertical_circulation_info failed.",
+      minHeightMm: options.minHeightMm,
+      totalChecked: 0,
+      violations: [],
+      nearLimit: [],
+      compliant: [],
+      source: options.source,
+      warnings: [],
+    };
+  }
+  const classified = classifyRailingHeights(raw.railings, {
+    minHeightMm: options.minHeightMm,
+  });
+  const warnings: string[] = [];
+  if (classified.missingHeight > 0) {
+    warnings.push(`Ограждений без высоты: ${classified.missingHeight}.`);
+  }
+  if (classified.skippedHandrails > 0) {
+    warnings.push(
+      `Пропущено поручней МГН (норма 0,8–0,9 м, не балконное ограждение): ${classified.skippedHandrails}.`
+    );
+  }
+  if (classified.skippedAccessories > 0) {
+    warnings.push(
+      `Пропущено аксессуаров ограждения: ${classified.skippedAccessories}.`
+    );
+  }
+  return {
+    success: true,
+    message: `Проверено ограждений: ${classified.checked}. Норма ≥ ${options.minHeightMm} мм.`,
+    minHeightMm: options.minHeightMm,
+    totalChecked: classified.checked,
+    violations: classified.violations,
+    nearLimit: classified.nearLimit,
+    compliant: classified.compliant,
+    source: options.source,
+    warnings,
+  };
 }
 
 /**

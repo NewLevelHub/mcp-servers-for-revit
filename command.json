@@ -244,6 +244,16 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "get_opening_geometry_info",
+      "description": "Extract window sill height and door/window opening height for norm checks (REV-58)",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "get_vertical_circulation_info",
+      "description": "Extract stair width/riser/tread, ramp width/slope, railing height for norm checks (REV-59)",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "check_room_depth",
       "description": "Check room depths against a normative min/max limit, report and optionally highlight violators",
       "assemblyPath": "RevitMCPCommandSet.dll"
