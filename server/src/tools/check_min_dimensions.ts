@@ -80,14 +80,36 @@ export function formatMinDimensionsReport(result: CheckMinDimensionsResult): str
   ];
 
   const { limits } = result;
+  if (limits.housingType) {
+    lines.push(
+      `- Тип жилья: **${limits.housingType === "mgn" ? "МГН / престарелые" : "обычное"}**`
+    );
+  }
+  if (limits.widthMeasurementBasis) {
+    const basisLabel =
+      limits.widthMeasurementBasis === "clear_width"
+        ? "в свету (норма)"
+        : limits.widthMeasurementBasis === "wall_to_rail"
+          ? "от стены до ограждения (норма)"
+          : "bounding box (факт)";
+    lines.push(`- Базис ширины: **${basisLabel}**`);
+  }
+  if (limits.measurementNote) {
+    lines.push(`- ${limits.measurementNote}`);
+  }
   if (limits.minBalconyWidthMm) {
-    lines.push(`- Мин. ширина балкона: **${limits.minBalconyWidthMm} мм**`);
+    lines.push(`- Мин. ширина балкона (квартирный): **${limits.minBalconyWidthMm} мм**`);
   }
   if (limits.minLoggiaWidthMm) {
-    lines.push(`- Мин. ширина лоджии: **${limits.minLoggiaWidthMm} мм**`);
+    lines.push(`- Мин. ширина лоджии (квартирная): **${limits.minLoggiaWidthMm} мм**`);
   }
   if (limits.minLoggiaDepthMm) {
     lines.push(`- Мин. глубина лоджии/балкона: **${limits.minLoggiaDepthMm} мм**`);
+  }
+  if (limits.minFirePathOutdoorWidthMm) {
+    lines.push(
+      `- Мин. ширина пути к Н1 (воздушная зона / галерея, п. 4.2.30): **${limits.minFirePathOutdoorWidthMm} мм**`
+    );
   }
   if (limits.minFirePierToOpeningMm) {
     lines.push(
@@ -150,23 +172,37 @@ export function formatMinDimensionsReport(result: CheckMinDimensionsResult): str
 export function registerCheckMinDimensionsTool(server: McpServer) {
   server.tool(
     "check_min_dimensions",
-    "Check minimum dimensions of balconies, loggias, and fire-resistant piers (противопожарные простенки) against norms from repo/normatives PDFs (ГОСТ/СП/СН РК) or explicit limits. Identifies rooms by name/purpose, compares width/depth footprint (mm) and pier distances between glazed openings on facade walls. Returns violations with element ids; mode 'highlight' colors violating room tag labels (name/area) red in the active view without filling the room.",
+    "Check minimum dimensions of balconies, loggias, fire-path outdoor spaces (воздушная зона → Н1), and fire piers. Default housingType=ordinary: NO min width for private apartment balconies/loggias (СП has none); applies п. 4.2.30 1.2 m only to воздушная зона / path to H1 stairs; keeps fire piers. Pass housingType=mgn for elderly/accessible 1.4 m on private loggias. Actual width is bounding-box smaller span.",
     {
+      housingType: z
+        .enum(["ordinary", "mgn"])
+        .optional()
+        .default("ordinary")
+        .describe(
+          "'ordinary' (default) — no private balcony width; 1.2 m only for fire-path outdoor (ВЗ/Н1); 'mgn' — 1.4 m for private loggias."
+        ),
       minBalconyWidthMm: z
         .number()
         .positive()
         .optional()
-        .describe("Minimum balcony width in mm. Omit to auto-load from normatives/."),
+        .describe("Minimum private balcony width in mm. Omit to auto-load (ordinary: none)."),
       minLoggiaWidthMm: z
         .number()
         .positive()
         .optional()
-        .describe("Minimum loggia width in mm. Omit to auto-load from normatives/."),
+        .describe("Minimum private loggia width in mm. Omit to auto-load (ordinary: none)."),
       minLoggiaDepthMm: z
         .number()
         .positive()
         .optional()
-        .describe("Minimum loggia/balcony depth in mm. Omit to auto-load from normatives/."),
+        .describe("Minimum loggia/balcony depth in mm. Omit to auto-load."),
+      minFirePathOutdoorWidthMm: z
+        .number()
+        .positive()
+        .optional()
+        .describe(
+          "Min width for воздушная зона / gallery to H1 stairs (п. 4.2.30). Omit to auto-load 1200 mm."
+        ),
       minFirePierToOpeningMm: z
         .number()
         .positive()
@@ -218,6 +254,7 @@ export function registerCheckMinDimensionsTool(server: McpServer) {
     },
     async (args) => {
       try {
+        const housingType = args.housingType ?? "ordinary";
         const { rules, warnings, normativesDir } =
           await loadMinDimensionRulesFromNormatives({
             pdfFiles: args.normativePdfFiles,
@@ -225,10 +262,11 @@ export function registerCheckMinDimensionsTool(server: McpServer) {
           });
 
         const limits = resolveMinDimensionLimits(rules, {
-          housingType: "ordinary",
+          housingType,
           minBalconyWidthMm: args.minBalconyWidthMm,
           minLoggiaWidthMm: args.minLoggiaWidthMm,
           minLoggiaDepthMm: args.minLoggiaDepthMm,
+          minFirePathOutdoorWidthMm: args.minFirePathOutdoorWidthMm,
           minFirePierToOpeningMm: args.minFirePierToOpeningMm,
           minFirePierBetweenOpeningsMm: args.minFirePierBetweenOpeningsMm,
         });
@@ -237,22 +275,23 @@ export function registerCheckMinDimensionsTool(server: McpServer) {
           limits.minBalconyWidthMm !== undefined ||
           limits.minLoggiaWidthMm !== undefined ||
           limits.minLoggiaDepthMm !== undefined ||
+          limits.minFirePathOutdoorWidthMm !== undefined ||
           limits.minFirePierToOpeningMm !== undefined ||
           limits.minFirePierBetweenOpeningsMm !== undefined;
 
         if (!hasLimit) {
           const skipNote =
             limits.skippedMgnRules > 0
-              ? ` Пропущено ${limits.skippedMgnRules} правил МГН/спецжилья (для обычного жилья не применяются).`
+              ? ` Пропущено ${limits.skippedMgnRules} правил МГН/спецжилья (для ordinary не применяются к квартирным лоджиям).`
               : "";
           return {
             content: [
               {
                 type: "text",
                 text:
-                  "check_min_dimensions: для обычного жилья нет применимой мин. ширины/глубины лоджий-балконов." +
+                  "check_min_dimensions: нет применимых лимитов (простенки / путь к Н1 / МГН)." +
                   skipNote +
-                  " Простенки тоже не извлечены. Передайте лимиты явно или housingType=mgn.",
+                  " Передайте лимиты явно или housingType=mgn для проектов МГН/престарелых.",
               },
             ],
             isError: true,
@@ -263,6 +302,7 @@ export function registerCheckMinDimensionsTool(server: McpServer) {
           minBalconyWidthMm: limits.minBalconyWidthMm,
           minLoggiaWidthMm: limits.minLoggiaWidthMm,
           minLoggiaDepthMm: limits.minLoggiaDepthMm,
+          minFirePathOutdoorWidthMm: limits.minFirePathOutdoorWidthMm,
           minFirePierToOpeningMm: limits.minFirePierToOpeningMm,
           minFirePierBetweenOpeningsMm: limits.minFirePierBetweenOpeningsMm,
           mode: args.mode ?? "report",

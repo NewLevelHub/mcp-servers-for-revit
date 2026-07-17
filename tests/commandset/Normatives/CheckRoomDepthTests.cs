@@ -62,6 +62,39 @@ public class CheckRoomDepthTests : RevitApiTest
     }
 
     [Test]
+    [Arguments("Спальня")]
+    [Arguments("Гостиная")]
+    [Arguments("Детская")]
+    [Arguments("Кабинет")]
+    [Arguments("Жилая комната")]
+    public async Task LivingRoomDepth_IncludesLivingAliases(string name)
+    {
+        await Assert.That(LivingRoomDepthClassifier.IsLivingRoomForDepth(name)).IsTrue();
+    }
+
+    [Test]
+    [Arguments("Лестница")]
+    [Arguments("Коридор")]
+    [Arguments("ПОН")]
+    [Arguments("Кухня")]
+    [Arguments("Лоджия")]
+    [Arguments("Санузел")]
+    public async Task LivingRoomDepth_ExcludesNonLiving(string name)
+    {
+        await Assert.That(LivingRoomDepthClassifier.IsLivingRoomForDepth(name)).IsFalse();
+    }
+
+    [Test]
+    public async Task LivingScopeAlias_Жилая_MeansSemanticScope()
+    {
+        await Assert.That(LivingRoomDepthClassifier.IsLivingScopeAlias("жилая")).IsTrue();
+        await Assert.That(LivingRoomDepthClassifier.IsLivingScopeAlias("Спальня")).IsFalse();
+        await Assert.That(
+            CheckRoomDepthEventHandler.NormalizeRoomScope("all", "жилая")
+        ).IsEqualTo(CheckRoomDepthEventHandler.RoomScopeLiving);
+    }
+
+    [Test]
     public async Task RoomFootprint_RectangularRoom_DepthIsLargerSpan()
     {
         await Assert.That(_room).IsNotNull();

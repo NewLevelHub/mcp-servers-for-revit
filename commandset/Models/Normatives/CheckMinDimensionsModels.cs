@@ -79,6 +79,10 @@ namespace RevitMCPCommandSet.Models.Normatives
         [JsonProperty("minLoggiaDepthMm")]
         public double? MinLoggiaDepthMm { get; set; }
 
+        /// <summary>п. 4.2.30 — воздушная зона / путь к Н1 (не квартирная лоджия).</summary>
+        [JsonProperty("minFirePathOutdoorWidthMm")]
+        public double? MinFirePathOutdoorWidthMm { get; set; }
+
         [JsonProperty("minFirePierToOpeningMm")]
         public double? MinFirePierToOpeningMm { get; set; }
 

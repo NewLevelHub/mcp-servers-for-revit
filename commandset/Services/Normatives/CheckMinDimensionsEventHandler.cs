@@ -15,6 +15,7 @@ namespace RevitMCPCommandSet.Services.Normatives
         private double? _minBalconyWidthMm;
         private double? _minLoggiaWidthMm;
         private double? _minLoggiaDepthMm;
+        private double? _minFirePathOutdoorWidthMm;
         private double? _minFirePierToOpeningMm;
         private double? _minFirePierBetweenOpeningsMm;
         private string _mode = ModeReport;
@@ -39,11 +40,13 @@ namespace RevitMCPCommandSet.Services.Normatives
             string roomNameFilter = "",
             bool includeCompliant = false,
             bool checkFirePiers = true,
-            int[] highlightColor = null)
+            int[] highlightColor = null,
+            double? minFirePathOutdoorWidthMm = null)
         {
             _minBalconyWidthMm = minBalconyWidthMm;
             _minLoggiaWidthMm = minLoggiaWidthMm;
             _minLoggiaDepthMm = minLoggiaDepthMm;
+            _minFirePathOutdoorWidthMm = minFirePathOutdoorWidthMm;
             _minFirePierToOpeningMm = minFirePierToOpeningMm;
             _minFirePierBetweenOpeningsMm = minFirePierBetweenOpeningsMm;
             _mode = string.Equals(mode, ModeHighlight, StringComparison.OrdinalIgnoreCase)
@@ -112,7 +115,7 @@ namespace RevitMCPCommandSet.Services.Normatives
                         continue;
                     }
 
-                    if (!BalconyLoggiaClassifier.IsBalconyOrLoggia(roomName, roomPurpose))
+                    if (!BalconyLoggiaClassifier.IsOutdoorSpaceForMinDimensions(roomName, roomPurpose))
                         continue;
 
                     checkedCount++;
@@ -121,12 +124,21 @@ namespace RevitMCPCommandSet.Services.Normatives
                     var (widthMm, depthMm) = RoomFootprintCalculator.Calculate(room);
                     var areaM2 = RevitUnitConversion.ToSquareMeters(room.Area);
 
-                    EvaluateWidth(room, kind, kindLabel, levelName, roomName, widthMm, depthMm, areaM2, violations, compliant, highlightIds);
-                    EvaluateDepth(room, kind, kindLabel, levelName, roomName, widthMm, depthMm, areaM2, violations, compliant, highlightIds);
-
-                    if (_checkFirePiers)
+                    if (kind == BalconyLoggiaClassifier.OutdoorSpaceKind.FirePathOutdoor)
                     {
-                        EvaluateFirePiers(doc, room, kindLabel, levelName, roomName, widthMm, depthMm, areaM2, violations, compliant, highlightIds);
+                        EvaluateFirePathWidth(
+                            room, kindLabel, levelName, roomName, widthMm, depthMm, areaM2,
+                            violations, compliant, highlightIds);
+                    }
+                    else
+                    {
+                        EvaluateWidth(room, kind, kindLabel, levelName, roomName, widthMm, depthMm, areaM2, violations, compliant, highlightIds);
+                        EvaluateDepth(room, kind, kindLabel, levelName, roomName, widthMm, depthMm, areaM2, violations, compliant, highlightIds);
+
+                        if (_checkFirePiers)
+                        {
+                            EvaluateFirePiers(doc, room, kindLabel, levelName, roomName, widthMm, depthMm, areaM2, violations, compliant, highlightIds);
+                        }
                     }
                 }
 
@@ -144,6 +156,7 @@ namespace RevitMCPCommandSet.Services.Normatives
                     MinBalconyWidthMm = _minBalconyWidthMm,
                     MinLoggiaWidthMm = _minLoggiaWidthMm,
                     MinLoggiaDepthMm = _minLoggiaDepthMm,
+                    MinFirePathOutdoorWidthMm = _minFirePathOutdoorWidthMm,
                     MinFirePierToOpeningMm = _minFirePierToOpeningMm,
                     MinFirePierBetweenOpeningsMm = _minFirePierBetweenOpeningsMm,
                     TotalSpacesChecked = checkedCount,
@@ -185,8 +198,41 @@ namespace RevitMCPCommandSet.Services.Normatives
             return _minBalconyWidthMm.HasValue
                 || _minLoggiaWidthMm.HasValue
                 || _minLoggiaDepthMm.HasValue
+                || _minFirePathOutdoorWidthMm.HasValue
                 || _minFirePierToOpeningMm.HasValue
                 || _minFirePierBetweenOpeningsMm.HasValue;
+        }
+
+        private void EvaluateFirePathWidth(
+            Room room,
+            string kindLabel,
+            string levelName,
+            string roomName,
+            double widthMm,
+            double depthMm,
+            double areaM2,
+            List<MinDimensionCheckItem> violations,
+            List<MinDimensionCheckItem> compliant,
+            List<ElementId> highlightIds)
+        {
+            if (!_minFirePathOutdoorWidthMm.HasValue)
+                return;
+
+            AddDimensionItem(
+                room,
+                kindLabel,
+                levelName,
+                roomName,
+                checkType: "fire_path_width",
+                metric: "width",
+                actualValueMm: widthMm,
+                requiredValueMm: _minFirePathOutdoorWidthMm.Value,
+                widthMm,
+                depthMm,
+                areaM2,
+                violations,
+                compliant,
+                highlightIds);
         }
 
         private void EvaluateWidth(

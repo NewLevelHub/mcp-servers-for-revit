@@ -1,6 +1,6 @@
 /**
- * Residential room classification for REV-57 (area / height checkers).
- * v1 uses room name + department; purpose parameters from Revit are follow-up.
+ * Residential room classification for area / height / depth checkers.
+ * Depth (п. 4.4.10.22) uses living rooms only — see isLivingRoomForDepth.
  */
 
 export type ResidentialRoomCategory =
@@ -26,11 +26,16 @@ const EXCLUDED_KEYWORDS: readonly string[] = [
   "гардероб",
   "техн",
   "лестниц",
+  "лестнич",
   "лифт",
   "холл",
   "площадк",
   "мәлімет",
   "дәліз",
+  // ПОН / public amenity (REV-50)
+  "пон",
+  "общественн назначен",
+  "помещени обществен",
 ];
 
 const LIVING_KEYWORDS: readonly string[] = [
@@ -43,6 +48,11 @@ const LIVING_KEYWORDS: readonly string[] = [
   "отдых",
   "тұрғын бөлме",
   "қонақ",
+  "детск",
+  "кабинет",
+  "библиотек",
+  "столов",
+  "игров",
 ];
 
 const KITCHEN_KEYWORDS: readonly string[] = [
@@ -77,6 +87,19 @@ const BEDROOM_KEYWORDS: readonly string[] = [
   "спал",
 ];
 
+const LIVING_SCOPE_ALIASES: readonly string[] = [
+  "жилая",
+  "жилое",
+  "жилые",
+  "жилых",
+  "living",
+  "living room",
+  "жилая комната",
+  "жилые комнаты",
+  "тұрғын",
+  "тұрғын бөлме",
+];
+
 function blob(name?: string, department?: string): string {
   return `${name ?? ""} ${department ?? ""}`.toLowerCase().trim();
 }
@@ -93,9 +116,12 @@ export function classifyResidentialRoom(
   const text = blob(name, department);
   if (!text) return "unknown";
 
+  if (text.includes("нежил")) return "excluded";
   if (includesAny(text, EXCLUDED_KEYWORDS)) return "excluded";
 
-  if (includesAny(text, KITCHEN_KEYWORDS)) return "kitchen";
+  if (includesAny(text, KITCHEN_KEYWORDS) && !includesAny(text, ["гостин"])) {
+    return "kitchen";
+  }
   if (includesAny(text, BATHROOM_KEYWORDS)) return "bathroom";
   if (includesAny(text, BEDROOM_KEYWORDS)) return "bedroom";
   if (includesAny(text, LIVING_KEYWORDS)) return "living_room";
@@ -111,4 +137,20 @@ export function isResidentialRoomForHeight(category: ResidentialRoomCategory): b
     category === "bathroom" ||
     category === "bedroom"
   );
+}
+
+/**
+ * Living rooms for depth max (СП РК 3.02-101 п. 4.4.10.22):
+ * спальня / гостиная / детская / кабинет — not stairs, corridors, PON, kitchen.
+ */
+export function isLivingRoomForDepth(name?: string, department?: string): boolean {
+  const category = classifyResidentialRoom(name, department);
+  return category === "living_room" || category === "bedroom";
+}
+
+/** Filter values like «жилая» mean semantic living scope, not a name substring. */
+export function isLivingScopeAlias(filter?: string): boolean {
+  if (!filter?.trim()) return false;
+  const normalized = filter.trim().toLowerCase();
+  return LIVING_SCOPE_ALIASES.includes(normalized);
 }
