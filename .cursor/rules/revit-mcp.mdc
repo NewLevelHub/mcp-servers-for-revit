@@ -30,6 +30,17 @@ alwaysApply: true
 
 **Не** использовать для этого `run_norm_audit mode=highlight`, `color_elements` или только `highlight_room_tags`.
 
+## Показать нарушения с подписями (текст + выноска)
+
+Фразы вроде «покажи нарушения и подпиши», «подпиши почему», «текст с выноской к нарушениям»:
+
+1. Шаги 1–4 из «Показать нарушения» (заливка + цвет дверей).
+2. `annotate_norm_findings` с `findings` из аудита (`violation` + `nearLimit`), `style: "leader"`, `clearPrevious: true`.
+   Либо вручную `create_text_notes` с кратким текстом (не полный quote).
+3. Шаблон подписи: `{name}: {actual} < {required} · {document} {clause}` (тип текста из шаблона, предпочтительно `ADSK_Замечания`).
+
+Подписи **дополняют** цветовую область, не заменяют её.
+
 ## Запрет `send_code_to_revit`
 
 **Не вызывай**, если задачу решает `create_*_element`, `export_room_data`, `operate_element` и др.
@@ -100,8 +111,9 @@ MCP **не создаёт** новый проект. Сообщи пользов
 | Нормоконтроль: ширина эвак. коридора | `run_norm_audit` или точечно `check_evacuation_width` |
 | **Покраска площади помещений (Цветовая область)** | **`create_filled_regions`** — Annotate → Filled Region по контуру комнаты. Тип из проекта (напр. `ADSK_У_Сплошная_Красный`). `roomIds` / `roomNames` или все на виде; `clearPrevious` снимает прошлые MCP-области. Для «мягкой» палитры по параметру — `color_elements` (цветовая схема вида), не путать. |
 | **Показать / покрасить нарушения (по умолчанию)** | Фразы «покажи нарушения», «подсвети нарушения», «покрась нарушения» → **всегда** `run_norm_audit` (`mode=report`) → **`create_filled_regions`** по `elementId` помещений (violation + nearLimit). Двери ПД / не-Room → `operate_element` `SetColor` красным. Не `mode=highlight`, не `color_elements`, не только марки. |
+| **Подписать нарушения (текст + выноска)** | Фразы «подпиши», «с выноской», «почему нарушение» → после заливки: **`annotate_norm_findings`** (или `create_text_notes`) — краткий текст + leader к элементу, тип `ADSK_Замечания`. Не дублировать quote. `clearPrevious` / тег `MCP-ANN`. |
 | **Покраска марок помещений (быстро)** | **`highlight_room_tags`** — только если пользователь явно просит покрасить **марки** (текст), не площадь. |
-| Подсветка при нормоконтроле | См. строку «Показать / покрасить нарушения» — `create_filled_regions` |
+| Подсветка при нормоконтроле | См. строку «Показать / покрасить нарушения» — `create_filled_regions`; с подписями — + `annotate_norm_findings` |
 | Нормоконтроль: глубина помещений | `run_norm_audit` или `extract_norm_rules_from_pdf` (topic) → `check_room_depth` |
 | Нормоконтроль: противопожарные двери | `run_norm_audit` или `check_fire_doors` (параметры + примечание спеки; `markSource`) |
 | Нормоконтроль: ширина двери / проёма | `run_norm_audit` (checkType `door_clear_width`) или точечно `check_door_width`. v1 = номинал `DOOR_WIDTH`; по умолчанию только двери на путях эвакуации; откосы исключены (REV-41); ширина «в свету» — follow-up |

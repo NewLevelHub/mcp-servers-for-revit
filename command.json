@@ -59,6 +59,11 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "create_text_notes",
+      "description": "Annotate Text notes with optional leaders (выноска) on the active floor plan",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "tag_walls",
       "description": "Tag all the walls in the model",
       "assemblyPath": "RevitMCPCommandSet.dll"

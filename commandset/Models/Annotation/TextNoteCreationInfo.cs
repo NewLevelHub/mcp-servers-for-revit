@@ -27,7 +27,9 @@ using RevitMCPCommandSet.Models.Common;
 namespace RevitMCPCommandSet.Models.Annotation;
 
 /// <summary>
-///     Information about text note creation parameters
+///     Information about text note creation parameters.
+///     Prefer the MCP command <c>create_text_notes</c> / model
+///     <see cref="TextNotePlacementInfo"/> for plan annotations with leaders (REV-61).
 /// </summary>
 public class TextNoteCreationInfo
 {
