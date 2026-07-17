@@ -5,8 +5,10 @@ import {
   chunk,
   naturalCompareSheetNumbers,
   PROJECT_FIELD_ALIASES,
+  resolveDateVisibilityParameterNames,
   resolveParameterName,
   SHEET_FIELD_ALIASES,
+  TOTAL_SHEETS_VISIBILITY_ALIASES,
 } from "./titleBlock.js";
 
 describe("resolveParameterName", () => {
@@ -37,6 +39,43 @@ describe("resolveParameterName", () => {
     const resolved = resolveParameterName(available, PROJECT_FIELD_ALIASES.stage);
     assert.equal(resolved.name, undefined);
     assert.equal(resolved.readOnlyMatch, undefined);
+  });
+
+  it("prefers real ADSK sheet fields and resolves total sheets", () => {
+    const adsk = [
+      { name: "ADSK_Штамп Строка 4 фамилия", isReadOnly: false },
+      { name: "Drawn By", isReadOnly: false },
+      { name: "ADSK_Штамп Количество листов", isReadOnly: false },
+      { name: "Количество листов", isReadOnly: false },
+    ];
+    assert.equal(
+      resolveParameterName(adsk, SHEET_FIELD_ALIASES.drawnBy).name,
+      "ADSK_Штамп Строка 4 фамилия"
+    );
+    assert.equal(
+      resolveParameterName(adsk, SHEET_FIELD_ALIASES.totalSheets).name,
+      "ADSK_Штамп Количество листов"
+    );
+    assert.equal(
+      resolveParameterName(adsk, TOTAL_SHEETS_VISIBILITY_ALIASES).name,
+      "Количество листов"
+    );
+  });
+});
+
+describe("resolveDateVisibilityParameterNames", () => {
+  it("selects only writable switches for supplied signature rows", () => {
+    const available = [
+      { name: "Строка2_Дата", isReadOnly: false },
+      { name: "Строка3_Дата", isReadOnly: false },
+      { name: "Строка4_Дата", isReadOnly: false },
+      { name: "Ф3_Стр4_Дата", isReadOnly: true },
+      { name: "Количество листов", isReadOnly: false },
+    ];
+    assert.deepEqual(
+      resolveDateVisibilityParameterNames(available, [2, 4, 5]),
+      ["Строка2_Дата", "Строка4_Дата"]
+    );
   });
 });
 

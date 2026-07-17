@@ -6,9 +6,11 @@ import {
   buildAutoNumberPlan,
   chunk,
   PROJECT_FIELD_ALIASES,
+  resolveDateVisibilityParameterNames,
   resolveParameterName,
   SHEET_FIELD_ALIASES,
   SHEET_NUMBER_ALIASES,
+  TOTAL_SHEETS_VISIBILITY_ALIASES,
   type AvailableParameter,
 } from "../utils/titleBlock.js";
 
@@ -18,6 +20,12 @@ interface SheetInfo {
   id: number;
   name: string;
   number: string;
+  parameters: AvailableParameter[];
+}
+
+interface TitleBlockInfo {
+  id: number;
+  sheetNumber: string;
   parameters: AvailableParameter[];
 }
 
@@ -283,6 +291,35 @@ export function registerFillTitleBlockTool(server: McpServer) {
             throw new Error("После фильтра по номерам не осталось ни одного листа.");
           }
 
+          // Frame-instance visibility controls are separate from sheet data in
+          // common ADSK families. Map existing title blocks back to their sheet
+          // number so date/«Листов» values are not merely written but also shown.
+          const titleBlocksBySheetNumber = new Map<string, TitleBlockInfo[]>();
+          const needsTitleBlockVisibility =
+            Boolean(args.sheetFields?.issueDate) || args.fillTotalSheets !== false;
+          if (needsTitleBlockVisibility) {
+            const titleBlocksResponse = await revitClient.sendCommand("ai_element_filter", {
+              data: {
+                filterCategory: "OST_TitleBlocks",
+                includeTypes: false,
+                includeInstances: true,
+              },
+            });
+            const titleBlockElements = parseFilteredElements(titleBlocksResponse);
+            const paramsByTitleBlock = await fetchParametersBatch(
+              revitClient,
+              titleBlockElements.map((titleBlock) => titleBlock.id)
+            );
+            for (const titleBlock of titleBlockElements) {
+              const parameters = paramsByTitleBlock.get(titleBlock.id)?.parameters ?? [];
+              const sheetNumber = findParamValue(parameters, SHEET_NUMBER_ALIASES);
+              if (!sheetNumber) continue;
+              const existing = titleBlocksBySheetNumber.get(sheetNumber) ?? [];
+              existing.push({ id: titleBlock.id, sheetNumber, parameters });
+              titleBlocksBySheetNumber.set(sheetNumber, existing);
+            }
+          }
+
           const referenceParams = sheets[0].parameters;
           const writes: WriteOp[] = [];
           const unresolvedFields: string[] = [];
@@ -335,6 +372,18 @@ export function registerFillTitleBlockTool(server: McpServer) {
           const sheetEntries = Object.entries(args.sheetFields ?? {}).filter(
             ([, value]) => value != null && value !== ""
           );
+          const configuredDateRows = (
+            [
+              ["chiefEngineer", 2],
+              ["drawnBy", 4],
+              ["checkedBy", 5],
+              ["normControl", 6],
+            ] as const
+          )
+            .filter(([key]) => Boolean(args.sheetFields?.[key]))
+            .map(([, row]) => row);
+          const dateRows =
+            configuredDateRows.length > 0 ? configuredDateRows : [2, 4, 5, 6];
           for (const [key, value] of sheetEntries) {
             const aliases = SHEET_FIELD_ALIASES[key];
             const resolved = resolveParameterName(referenceParams, aliases ?? []);
@@ -354,6 +403,23 @@ export function registerFillTitleBlockTool(server: McpServer) {
                 value: value as string,
                 target: sheet.number || sheet.name,
               });
+            }
+            if (key === "issueDate") {
+              for (const sheet of sheets) {
+                for (const titleBlock of titleBlocksBySheetNumber.get(sheet.number) ?? []) {
+                  for (const parameterName of resolveDateVisibilityParameterNames(
+                    titleBlock.parameters,
+                    dateRows
+                  )) {
+                    writes.push({
+                      elementId: titleBlock.id,
+                      parameterName,
+                      value: true,
+                      target: `${sheet.number || sheet.name} · рамка`,
+                    });
+                  }
+                }
+              }
             }
           }
 
@@ -382,8 +448,22 @@ export function registerFillTitleBlockTool(server: McpServer) {
                   value: String(sheets.length),
                   target: sheet.number || sheet.name,
                 });
+                for (const titleBlock of titleBlocksBySheetNumber.get(sheet.number) ?? []) {
+                  const visibility = resolveParameterName(
+                    titleBlock.parameters,
+                    TOTAL_SHEETS_VISIBILITY_ALIASES
+                  );
+                  if (visibility.name) {
+                    writes.push({
+                      elementId: titleBlock.id,
+                      parameterName: visibility.name,
+                      value: true,
+                      target: `${sheet.number || sheet.name} · рамка`,
+                    });
+                  }
+                }
               }
-            } else if (args.autoNumber) {
+            } else {
               warnings.push(
                 "Параметр «Листов» не найден на листах — общее число листов не записано."
               );

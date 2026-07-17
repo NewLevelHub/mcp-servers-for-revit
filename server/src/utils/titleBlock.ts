@@ -9,13 +9,50 @@
 
 /** Well-known штамп fields on the SHEET, with parameter-name aliases in priority order. */
 export const SHEET_FIELD_ALIASES: Record<string, readonly string[]> = {
-  drawnBy: ["Разработал", "ADSK_Разработал", "Drawn By", "Автор"],
-  checkedBy: ["Проверил", "ADSK_Проверил", "Checked By", "Проверено"],
-  chiefEngineer: ["ГИП", "ADSK_ГИП", "Утвердил", "Approved By", "Утверждено"],
-  normControl: ["Н.контроль", "Н. контроль", "ADSK_Н.контроль", "Нормоконтроль"],
+  drawnBy: [
+    "ADSK_Штамп Строка 4 фамилия",
+    "Разработал",
+    "ADSK_Разработал",
+    "Drawn By",
+    "Автор",
+  ],
+  checkedBy: [
+    "ADSK_Штамп Строка 5 фамилия",
+    "Проверил",
+    "ADSK_Проверил",
+    "Checked By",
+    "Проверено",
+  ],
+  chiefEngineer: [
+    "ADSK_Штамп Строка 2 фамилия",
+    "ГИП",
+    "ADSK_ГИП",
+    "Утвердил",
+    "Approved By",
+    "Утверждено",
+  ],
+  normControl: [
+    "ADSK_Штамп Строка 6 фамилия",
+    "Н.контроль",
+    "Н. контроль",
+    "ADSK_Н.контроль",
+    "Нормоконтроль",
+  ],
   issueDate: ["Дата выпуска листа", "Sheet Issue Date", "ADSK_Дата", "Дата"],
-  totalSheets: ["Листов", "ADSK_Количество листов", "Всего листов"],
+  totalSheets: [
+    "ADSK_Штамп Количество листов",
+    "Листов",
+    "ADSK_Количество листов",
+    "Всего листов",
+  ],
 } as const;
+
+/** Writable family-instance switch that makes the «Листов» label visible. */
+export const TOTAL_SHEETS_VISIBILITY_ALIASES: readonly string[] = [
+  "Количество листов",
+  "Показывать количество листов",
+  "Show Total Sheets",
+];
 
 /** Штамп fields on PROJECT INFORMATION (labels in the frame family read them). */
 export const PROJECT_FIELD_ALIASES: Record<string, readonly string[]> = {
@@ -64,6 +101,24 @@ export function resolveParameterName(
     return { name: match.name };
   }
   return { readOnlyMatch };
+}
+
+/**
+ * Resolve writable per-row date visibility switches in ADSK title blocks.
+ * The date text itself remains the sheet's Sheet Issue Date; these booleans
+ * only expose that value in the signature rows used by the supplied roles.
+ */
+export function resolveDateVisibilityParameterNames(
+  available: AvailableParameter[],
+  rows: readonly number[]
+): string[] {
+  const wanted = new Set(rows.map((row) => `строка${row}_дата`));
+  return available
+    .filter((parameter) => {
+      const normalized = parameter.name.toLowerCase().replace(/\s+/g, "");
+      return !parameter.isReadOnly && wanted.has(normalized);
+    })
+    .map((parameter) => parameter.name);
 }
 
 /** Natural compare so «АР-10» sorts after «АР-9», not after «АР-1». */
