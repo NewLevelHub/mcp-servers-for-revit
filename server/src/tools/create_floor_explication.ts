@@ -20,7 +20,7 @@ const explicationSchema = z.object({
     .optional()
     .default(true)
     .describe(
-      "Default true: discover levels with (полы)* finishes; merge consecutive storeys that share the same floor type(s) and XY footprint into one title (e.g. 3-6-го этажа)."
+      "Default true: discover levels with (полы)* finishes; merge consecutive storeys that share the same SET of floor-construction types into one title (e.g. the typical tower 2-16-го этажа). Non-typical levels (-1, 1, тех, кровля) stay separate."
     ),
   templateId: z
     .string()
@@ -62,6 +62,20 @@ const explicationSchema = z.object({
     .optional()
     .default("Форма 3")
     .describe("Title block type. Default Форма 3."),
+  sheetFormat: z
+    .string()
+    .optional()
+    .default("A2")
+    .describe(
+      "Paper format of the explication sheet(s): A0..A4. Default A2 — floor схема columns are ~234 mm wide, so A3 fits only one column and schedules overlap; A2 fits two columns like the reference RD sheet. Sets the title block «Формат А» parameter."
+    ),
+  autoLayout: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe(
+      "Default true: pack schedules with the shelf auto-layout engine (columns, title-block aware, no overlap; overflow spills to extra ЭП-0N sheets). Set false for legacy top→bottom stacking."
+    ),
   positionX: z
     .number()
     .optional()
@@ -77,7 +91,7 @@ const explicationSchema = z.object({
 export function registerCreateFloorExplicationTool(server: McpServer) {
   server.tool(
     "create_floor_explication",
-    "Create floor экспликация using seeded «Короткий блок» columns. By default discovers levels that have (полы)* finishes, merges typified consecutive storeys (same type + same plan location) into titles like «2-го этажа» or «3-6-го этажа», and places ALL schedules on ONE sheet. Set splitByLevelGroups=false for one combined schedule. For data-only export use create_floor_schedule.",
+    "Create floor экспликация using seeded «Короткий блок» columns. By default discovers levels that have (полы)* finishes, merges typified consecutive storeys that share the same SET of floor-construction types (e.g. the typical tower «2-16-го этажа») while keeping non-typical levels (-1, 1, тех, кровля) separate, and packs the schedules onto A2 sheet(s) with the shelf auto-layout engine (columns, no overlap; overflow to ЭП-02, …). Set splitByLevelGroups=false for one combined schedule, sheetFormat to change paper size, autoLayout=false for legacy stacking. For data-only export use create_floor_schedule.",
     {
       explication: explicationSchema
         .optional()

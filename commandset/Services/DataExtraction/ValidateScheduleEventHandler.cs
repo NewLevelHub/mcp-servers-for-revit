@@ -428,7 +428,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             var elements = new FilteredElementCollector(doc, schedule.Id)
                 .WhereElementIsNotElementType()
                 .ToElements()
-                .Where(element => !categoryConfig.CurtainWallsOnly || CurtainWallClassifier.IsCurtainWall(element))
+                .Where(element => IsSchedulableModelElement(element, categoryConfig))
                 .ToList();
 
             return FilterElementsByLevel(doc, elements, targetLevel);

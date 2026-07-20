@@ -127,6 +127,21 @@ namespace RevitMCPCommandSet.Models.DataExtraction
         [JsonProperty("groups")]
         public List<ScheduleGroupRow> Groups { get; set; } = new List<ScheduleGroupRow>();
 
+        [JsonProperty("createdViewSchedule")]
+        public bool CreatedViewSchedule { get; set; }
+
+        [JsonProperty("scheduleId", NullValueHandling = NullValueHandling.Ignore)]
+        public long? ScheduleId { get; set; }
+
+        [JsonProperty("scheduleUniqueId", NullValueHandling = NullValueHandling.Ignore)]
+        public string ScheduleUniqueId { get; set; }
+
+        [JsonProperty("scheduleName", NullValueHandling = NullValueHandling.Ignore)]
+        public string ScheduleName { get; set; }
+
+        [JsonProperty("warnings")]
+        public List<string> Warnings { get; set; } = new List<string>();
+
         [JsonProperty("success")]
         public bool Success { get; set; }
 

@@ -15,8 +15,7 @@ export function registerCreateLineBasedElementTool(server: McpServer) {
               .describe("Revit built-in category (e.g., OST_Walls, OST_StructuralFraming, OST_DuctCurves)"),
             typeId: z
               .number()
-              .optional()
-              .describe("The ID of the family type to create."),
+              .describe("Required. Family/WallType ElementId from get_available_family_types. Missing or invalid typeId fails (no FirstOrDefault fallback)."),
             locationLine: z
               .object({
                 p0: z.object({
@@ -34,7 +33,7 @@ export function registerCreateLineBasedElementTool(server: McpServer) {
             thickness: z
               .number()
               .describe(
-                "Thickness/width of the element (e.g., wall thickness)"
+                "Informational only — wall thickness comes from typeId (WallType compound structure), not this field."
               ),
             height: z
               .number()

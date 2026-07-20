@@ -21,7 +21,11 @@ namespace RevitMCPCommandSet.Commands.DataExtraction
         {
             try
             {
-                _handler.SetParameters(Category);
+                var createViewSchedule = parameters?["createViewSchedule"]?.Value<bool>() ?? false;
+                var scheduleName = parameters?["scheduleName"]?.Value<string>();
+                var replaceExisting = parameters?["replaceExisting"]?.Value<bool>() ?? false;
+
+                _handler.SetParameters(Category, createViewSchedule: createViewSchedule, scheduleName: scheduleName, replaceExisting: replaceExisting);
 
                 if (RaiseAndWaitForCompletion(120000))
                 {

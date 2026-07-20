@@ -16,10 +16,6 @@ namespace RevitMCPCommandSet.Utils
             @"^(?:(?:уровень|level|ур\.?)\s*(-?\d+)|(-?\d+)\s*этаж)",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
-        /// <summary>XY bbox and area rounding in mm / m² for «same place» match.</summary>
-        private const double BboxQuantumMm = 200;
-        private const double AreaQuantumM2 = 0.5;
-
         public sealed class DiscoveredGroup
         {
             public string Key { get; set; } = "";
@@ -194,54 +190,26 @@ namespace RevitMCPCommandSet.Utils
         }
 
         /// <summary>
-        /// Stable XY+type signature: same type(s), same plan location/size (ignores Z).
+        /// Type-set signature for экспликация grouping: the distinct set of floor-construction
+        /// type names present on the level. Экспликация lists each floor construction once and
+        /// sums areas via Totals, so per-floor bbox/area must NOT split otherwise-identical
+        /// typical storeys (that produced separate 2 / 3-5 / 6-9 / 10-16 schedules whose content
+        /// duplicates and overflows the sheet). Two levels merge into one типовой range only when
+        /// they use the same palette of floor types; a level with an extra/absent type stays apart.
         /// </summary>
         private static string BuildSignature(IReadOnlyList<Floor> floors)
         {
-            var parts = new List<string>();
+            var typeNames = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var floor in floors)
             {
                 var doc = floor.Document;
                 var floorType = doc?.GetElement(floor.GetTypeId()) as FloorType;
                 var typeName = floorType?.Name ?? floor.Name ?? "";
-
-                var bb = floor.get_BoundingBox(null);
-                var minX = 0L;
-                var minY = 0L;
-                var maxX = 0L;
-                var maxY = 0L;
-                if (bb != null)
-                {
-                    minX = QuantizeMm(bb.Min.X * 304.8);
-                    minY = QuantizeMm(bb.Min.Y * 304.8);
-                    maxX = QuantizeMm(bb.Max.X * 304.8);
-                    maxY = QuantizeMm(bb.Max.Y * 304.8);
-                }
-
-                var areaM2 = 0.0;
-                var areaParam = floor.get_Parameter(BuiltInParameter.HOST_AREA_COMPUTED);
-                if (areaParam != null && areaParam.HasValue)
-                    areaM2 = areaParam.AsDouble() * 0.09290304; // ft² → m²
-
-                var areaQ = Math.Round(areaM2 / AreaQuantumM2) * AreaQuantumM2;
-                parts.Add(string.Format(
-                    CultureInfo.InvariantCulture,
-                    "{0}|{1},{2},{3},{4}|{5:0.0}",
-                    typeName,
-                    minX,
-                    minY,
-                    maxX,
-                    maxY,
-                    areaQ));
+                if (!string.IsNullOrWhiteSpace(typeName))
+                    typeNames.Add(typeName.Trim());
             }
 
-            parts.Sort(StringComparer.OrdinalIgnoreCase);
-            return string.Join(";", parts);
-        }
-
-        private static long QuantizeMm(double mm)
-        {
-            return (long)Math.Round(mm / BboxQuantumMm) * (long)BboxQuantumMm;
+            return string.Join(";", typeNames);
         }
 
         private static long GetElementIdValue(ElementId id)

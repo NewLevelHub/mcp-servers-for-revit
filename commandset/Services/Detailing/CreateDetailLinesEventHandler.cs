@@ -60,9 +60,10 @@ namespace RevitMCPCommandSet.Services.Detailing
             _resetEvent.Reset();
         }
 
-        public bool WaitForCompletion(int timeoutMilliseconds = 10000)
+        public bool WaitForCompletion(int timeoutMilliseconds = 60000)
         {
-            _resetEvent.Reset();
+            // Do not Reset here — SetParameters already Reset; resetting after a fast
+            // Execute can clear the signal and hang until timeout.
             return _resetEvent.WaitOne(timeoutMilliseconds);
         }
 
@@ -77,14 +78,19 @@ namespace RevitMCPCommandSet.Services.Detailing
                 var view = app.ActiveUIDocument.ActiveView
                     ?? throw new InvalidOperationException("No active view.");
 
-                if (view is not ViewPlan)
+                if (!(view is ViewPlan || view is ViewDrafting ||
+                      view.ViewType == ViewType.Detail || view.ViewType == ViewType.DraftingView))
                     throw new InvalidOperationException(
-                        $"Active view '{view.Name}' is not a plan view — open the floor plan first.");
+                        $"Active view '{view.Name}' ({view.ViewType}) does not support detail curves. " +
+                        "Open a floor plan, detail callout, or drafting view.");
 
                 // Detail curves must lie in the view plane.
-                double z = view.GenLevel?.Elevation ?? 0;
+                // Plans: elevation of associated level; drafting/detail: sketch plane origin (z=0).
+                double z = view is ViewPlan plan && plan.GenLevel != null
+                    ? plan.GenLevel.Elevation
+                    : 0;
 
-                using (var tx = new Transaction(doc, "Create Evacuation Route Lines"))
+                using (var tx = new Transaction(doc, "Create Detail Lines"))
                 {
                     tx.Start();
 
