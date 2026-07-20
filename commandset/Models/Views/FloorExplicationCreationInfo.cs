@@ -44,6 +44,21 @@ namespace RevitMCPCommandSet.Models.Views
         [JsonProperty("titleBlockTypeName")]
         public string TitleBlockTypeName { get; set; } = "Форма 3";
 
+        /// <summary>
+        /// Paper format for the explication sheet(s): "A0".."A4". Default "A2" (matches
+        /// reference RD sheets — floor схема columns are ~234 mm wide, so A3 fits only one
+        /// column and schedules overlap; A2 fits two columns).
+        /// </summary>
+        [JsonProperty("sheetFormat")]
+        public string SheetFormat { get; set; } = "A2";
+
+        /// <summary>
+        /// When true (default) pack schedules with the shelf auto-layout engine (columns,
+        /// title-block aware, overflow to extra sheets) instead of naive top→bottom stacking.
+        /// </summary>
+        [JsonProperty("autoLayout")]
+        public bool AutoLayout { get; set; } = true;
+
         [JsonProperty("positionX")]
         public double PositionX { get; set; } = 20;
 

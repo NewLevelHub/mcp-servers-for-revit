@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { withRevitConnection } from "../utils/ConnectionManager.js";
 import {
@@ -5,6 +6,12 @@ import {
   scheduleExportPaginationSchema,
   ScheduleExportPaginationArgs,
 } from "../utils/ScheduleExportPagination.js";
+
+interface ScheduleExportAndViewArgs extends ScheduleExportPaginationArgs {
+  createViewSchedule?: boolean;
+  scheduleName?: string;
+  replaceExisting?: boolean;
+}
 
 function registerScheduleExportTool(
   server: McpServer,
@@ -16,11 +23,37 @@ function registerScheduleExportTool(
   server.tool(
     toolName,
     description,
-    { ...scheduleExportPaginationSchema },
-    async (args: ScheduleExportPaginationArgs) => {
+    {
+      ...scheduleExportPaginationSchema,
+      createViewSchedule: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "Also create a real Revit ViewSchedule for this category, so validate_schedule can compare the schedule view against the model."
+        ),
+      scheduleName: z
+        .string()
+        .optional()
+        .describe(
+          "Optional Revit ViewSchedule name. Defaults to 'Спецификация дверей' or 'Спецификация окон'."
+        ),
+      replaceExisting: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "When createViewSchedule=true, delete and recreate an existing schedule with the same name."
+        ),
+    },
+    async (args: ScheduleExportAndViewArgs) => {
       try {
         const response = await withRevitConnection(async (revitClient) => {
-          return await revitClient.sendCommand(commandName, {});
+          return await revitClient.sendCommand(commandName, {
+            createViewSchedule: args.createViewSchedule ?? false,
+            scheduleName: args.scheduleName ?? null,
+            replaceExisting: args.replaceExisting ?? false,
+          });
         });
 
         return {

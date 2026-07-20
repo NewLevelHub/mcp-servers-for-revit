@@ -38,7 +38,7 @@ namespace RevitMCPCommandSet.Commands
                 _handler.SetParameters(data);
 
                 // 触发外部事件并等待完成
-                if (RaiseAndWaitForCompletion(10000))
+                if (RaiseAndWaitForCompletion(60000))
                 {
                     return _handler.Result;
                 }

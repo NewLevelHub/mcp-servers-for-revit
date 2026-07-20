@@ -168,42 +168,58 @@ namespace RevitMCPCommandSet.Services.Views
             string sheetUniqueId = null;
             string sheetNumber = null;
             string sheetName = null;
-            SheetCreationResult sheetResult = null;
+            var placementBySchedule = new Dictionary<long, SheetRef>();
 
             if (_info.PlaceOnSheet)
             {
                 try
                 {
-                    sheetResult = CreateSheet(
-                        app,
-                        doc,
-                        sheetNumberOverride: string.IsNullOrWhiteSpace(_info.SheetNumber)
-                            ? null
-                            : _info.SheetNumber.Trim(),
-                        sheetNameOverride: string.IsNullOrWhiteSpace(_info.SheetName)
-                            ? "Экспликация полов"
-                            : _info.SheetName.Trim(),
-                        warnings);
-
-                    sheetId = sheetResult.SheetId;
-                    sheetUniqueId = sheetResult.SheetUniqueId;
-                    sheetNumber = sheetResult.SheetNumber;
-                    sheetName = sheetResult.SheetName;
-
-                    // Stack schedules top→bottom on one sheet (like project RD layout).
-                    // Large Type Image rows make each block tall — coarse vertical step.
-                    var y = Math.Max(_info.PositionY, 40);
-                    const double stepMm = 90;
-                    for (var i = 0; i < pendingSchedules.Count; i++)
+                    if (_info.AutoLayout)
                     {
-                        var item = pendingSchedules[i];
-                        var placeY = y + (pendingSchedules.Count - 1 - i) * stepMm;
-                        PlaceScheduleOnSheet(
+                        var primary = LayoutAcrossSheets(
+                            app, doc, pendingSchedules, placementBySchedule, warnings);
+                        if (primary != null)
+                        {
+                            sheetId = primary.SheetId;
+                            sheetUniqueId = primary.SheetUniqueId;
+                            sheetNumber = primary.SheetNumber;
+                            sheetName = primary.SheetName;
+                        }
+                    }
+                    else
+                    {
+                        var sheetResult = CreateSheet(
                             app,
-                            item.Schedule,
-                            sheetResult,
-                            warnings,
-                            positionYOverride: placeY);
+                            doc,
+                            sheetNumberOverride: string.IsNullOrWhiteSpace(_info.SheetNumber)
+                                ? null
+                                : _info.SheetNumber.Trim(),
+                            sheetNameOverride: string.IsNullOrWhiteSpace(_info.SheetName)
+                                ? "Экспликация полов"
+                                : _info.SheetName.Trim(),
+                            warnings);
+
+                        sheetId = sheetResult.SheetId;
+                        sheetUniqueId = sheetResult.SheetUniqueId;
+                        sheetNumber = sheetResult.SheetNumber;
+                        sheetName = sheetResult.SheetName;
+
+                        // Legacy fallback: stack schedules top→bottom on one sheet.
+                        var y = Math.Max(_info.PositionY, 40);
+                        const double stepMm = 90;
+                        var primaryRef = SheetRef.From(sheetResult);
+                        for (var i = 0; i < pendingSchedules.Count; i++)
+                        {
+                            var item = pendingSchedules[i];
+                            var placeY = y + (pendingSchedules.Count - 1 - i) * stepMm;
+                            PlaceScheduleOnSheet(
+                                app,
+                                item.Schedule,
+                                sheetResult,
+                                warnings,
+                                positionYOverride: placeY);
+                            placementBySchedule[item.Schedule.ScheduleId] = primaryRef;
+                        }
                     }
                 }
                 catch (Exception sheetEx)
@@ -215,6 +231,7 @@ namespace RevitMCPCommandSet.Services.Views
 
             foreach (var item in pendingSchedules)
             {
+                placementBySchedule.TryGetValue(item.Schedule.ScheduleId, out var placed);
                 created.Add(new FloorExplicationCreatedItem
                 {
                     GroupKey = item.Group.Key,
@@ -223,10 +240,10 @@ namespace RevitMCPCommandSet.Services.Views
                     ScheduleId = item.Schedule.ScheduleId,
                     ScheduleUniqueId = item.Schedule.ScheduleUniqueId,
                     ScheduleName = item.Schedule.ScheduleName,
-                    SheetId = sheetId,
-                    SheetUniqueId = sheetUniqueId,
-                    SheetNumber = sheetNumber,
-                    SheetName = sheetName
+                    SheetId = placed?.SheetId ?? sheetId,
+                    SheetUniqueId = placed?.SheetUniqueId ?? sheetUniqueId,
+                    SheetNumber = placed?.SheetNumber ?? sheetNumber,
+                    SheetName = placed?.SheetName ?? sheetName
                 });
             }
 
@@ -366,7 +383,35 @@ namespace RevitMCPCommandSet.Services.Views
                     sheetNumber = sheetResult.SheetNumber;
                     sheetName = sheetResult.SheetName;
 
-                    PlaceScheduleOnSheet(app, scheduleResult, sheetResult, warnings);
+                    if (_info.AutoLayout)
+                    {
+                        var layoutInfo = new AutoLayoutSheetInfo
+                        {
+                            SheetId = sheetResult.SheetId,
+                            CreateSheetIfMissing = false,
+                            AvoidExisting = false,
+                            Order = "heightDesc",
+                            Spacing = 8,
+                            MarginLeft = 20,
+                            TitleBlockReserveBottom = 60,
+                            Items = new List<AutoLayoutItemInfo>
+                            {
+                                new AutoLayoutItemInfo
+                                {
+                                    ViewId = scheduleResult.ScheduleId,
+                                    ViewUniqueId = scheduleResult.ScheduleUniqueId
+                                }
+                            }
+                        };
+
+                        var layoutResult = AutoLayoutSheetEventHandler.Layout(doc, layoutInfo);
+                        if (layoutResult?.Warnings != null)
+                            warnings.AddRange(layoutResult.Warnings);
+                    }
+                    else
+                    {
+                        PlaceScheduleOnSheet(app, scheduleResult, sheetResult, warnings);
+                    }
                 }
                 catch (Exception sheetEx)
                 {
@@ -584,7 +629,75 @@ namespace RevitMCPCommandSet.Services.Views
             if (sheetResult.Warnings != null && sheetResult.Warnings.Count > 0)
                 warnings.AddRange(sheetResult.Warnings);
 
+            ApplySheetFormat(doc, sheetResult.SheetId, _info.SheetFormat, warnings);
+
             return sheetResult;
+        }
+
+        /// <summary>
+        /// Set the paper format (A0..A4) on the sheet's title block instance. ADSK
+        /// «ОсновнаяНадпись» drives its frame size from the integer «Формат А» parameter
+        /// (2 = A2). Default A3 fits only one ~234 mm schedule column, so экспликация columns
+        /// overlapped; A2 fits two columns like the reference RD sheet.
+        /// </summary>
+        private static void ApplySheetFormat(
+            Document doc,
+            long sheetId,
+            string format,
+            List<string> warnings)
+        {
+            if (string.IsNullOrWhiteSpace(format))
+                return;
+
+            var digits = new string(format.Where(char.IsDigit).ToArray());
+            if (!int.TryParse(digits, out var formatNumber))
+            {
+                warnings.Add($"Unrecognized sheetFormat '{format}'; sheet left with default format.");
+                return;
+            }
+
+            var sheet = doc.GetElement(
+                RevitMCPCommandSet.Utils.ElementIdExtensions.FromLong(sheetId)) as ViewSheet;
+            if (sheet == null)
+                return;
+
+            var titleBlock = new FilteredElementCollector(doc, sheet.Id)
+                .OfCategory(BuiltInCategory.OST_TitleBlocks)
+                .WhereElementIsNotElementType()
+                .FirstElement();
+
+            if (titleBlock == null)
+            {
+                warnings.Add("Title block not found on the explication sheet; format left as default.");
+                return;
+            }
+
+            try
+            {
+                using (var tx = new Transaction(doc, "Set explication sheet format"))
+                {
+                    tx.Start();
+                    var formatParam = titleBlock.LookupParameter("Формат А");
+                    if (formatParam != null && !formatParam.IsReadOnly)
+                    {
+                        formatParam.Set(formatNumber);
+                    }
+                    else
+                    {
+                        warnings.Add(
+                            "Parameter 'Формат А' not found or read-only on the title block; " +
+                            "sheet format left as default. Set the sheet format manually if needed.");
+                    }
+
+                    tx.Commit();
+                }
+
+                doc.Regenerate();
+            }
+            catch (Exception ex)
+            {
+                warnings.Add($"Failed to set sheet format to {format}: {ex.Message}");
+            }
         }
 
         private void PlaceScheduleOnSheet(
@@ -635,6 +748,134 @@ namespace RevitMCPCommandSet.Services.Views
             }
 
             return $"ЭП-{DateTime.Now:HHmmss}";
+        }
+
+        /// <summary>
+        /// Reference to a sheet a schedule was placed on (may differ per schedule when the
+        /// content overflows onto additional ЭП sheets).
+        /// </summary>
+        private sealed class SheetRef
+        {
+            public long SheetId { get; set; }
+            public string SheetUniqueId { get; set; }
+            public string SheetNumber { get; set; }
+            public string SheetName { get; set; }
+
+            public static SheetRef From(SheetCreationResult result) => new SheetRef
+            {
+                SheetId = result.SheetId,
+                SheetUniqueId = result.SheetUniqueId,
+                SheetNumber = result.SheetNumber,
+                SheetName = result.SheetName
+            };
+        }
+
+        /// <summary>
+        /// Pack the created schedules onto A2 sheet(s) with the shelf auto-layout engine
+        /// (columns, title-block aware, no overlap). Schedules that do not fit spill onto a new
+        /// ЭП-0N sheet. Returns the primary (first) sheet; fills <paramref name="placementBySchedule"/>
+        /// with the sheet each schedule landed on.
+        /// </summary>
+        private SheetRef LayoutAcrossSheets(
+            UIApplication app,
+            Document doc,
+            List<(FloorExplicationLevelGroup Group, List<Level> Levels, ScheduleCreationResult Schedule)> pending,
+            Dictionary<long, SheetRef> placementBySchedule,
+            List<string> warnings)
+        {
+            var remaining = pending.Select(p => p.Schedule).ToList();
+            SheetRef primary = null;
+            var guard = 0;
+
+            while (remaining.Count > 0 && guard < 12)
+            {
+                guard++;
+
+                var sheetResult = CreateSheet(
+                    app,
+                    doc,
+                    sheetNumberOverride: guard == 1 && !string.IsNullOrWhiteSpace(_info.SheetNumber)
+                        ? _info.SheetNumber.Trim()
+                        : null,
+                    sheetNameOverride: string.IsNullOrWhiteSpace(_info.SheetName)
+                        ? "Экспликация полов"
+                        : _info.SheetName.Trim(),
+                    warnings);
+
+                var sheetRef = SheetRef.From(sheetResult);
+                primary ??= sheetRef;
+
+                var layoutInfo = new AutoLayoutSheetInfo
+                {
+                    SheetId = sheetResult.SheetId,
+                    CreateSheetIfMissing = false,
+                    AvoidExisting = false,
+                    Order = "heightDesc",
+                    Spacing = 8,
+                    MarginLeft = 20,
+                    TitleBlockReserveBottom = 60,
+                    Items = remaining
+                        .Select(s => new AutoLayoutItemInfo
+                        {
+                            ViewId = s.ScheduleId,
+                            ViewUniqueId = s.ScheduleUniqueId
+                        })
+                        .ToList()
+                };
+
+                var layoutResult = AutoLayoutSheetEventHandler.Layout(doc, layoutInfo);
+                if (layoutResult?.Warnings != null)
+                    warnings.AddRange(layoutResult.Warnings);
+
+                var placedIds = new HashSet<long>();
+                if (layoutResult?.Items != null)
+                {
+                    foreach (var placedItem in layoutResult.Items)
+                    {
+                        if (!placedItem.Placed)
+                            continue;
+
+                        placementBySchedule[placedItem.ViewId] = sheetRef;
+                        placedIds.Add(placedItem.ViewId);
+                    }
+                }
+
+                var next = remaining.Where(s => !placedIds.Contains(s.ScheduleId)).ToList();
+
+                if (placedIds.Count == 0)
+                {
+                    warnings.Add(
+                        $"{next.Count} экспликация schedule(s) do not fit on a fresh {_info.SheetFormat} sheet " +
+                        "(taller than the sheet). Split the schedule into segments (Revit «Разбить таблицу») " +
+                        "or use a larger format; leaving them unplaced.");
+
+                    if (!ReferenceEquals(sheetRef, primary))
+                        DeleteSheetSafe(doc, sheetResult.SheetId, warnings);
+
+                    break;
+                }
+
+                remaining = next;
+            }
+
+            return primary;
+        }
+
+        private static void DeleteSheetSafe(Document doc, long sheetId, List<string> warnings)
+        {
+            try
+            {
+                using (var tx = new Transaction(doc, "Remove empty explication sheet"))
+                {
+                    tx.Start();
+                    doc.Delete(RevitMCPCommandSet.Utils.ElementIdExtensions.FromLong(sheetId));
+                    tx.Commit();
+                }
+            }
+            catch (Exception ex)
+            {
+                warnings.Add($"Failed to remove empty overflow sheet: {ex.Message}");
+            }
         }
 
         private static long GetElementIdValue(ElementId id)
