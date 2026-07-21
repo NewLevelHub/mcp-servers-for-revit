@@ -1,3 +1,4 @@
+using Autodesk.Revit.DB.Architecture;
 using Autodesk.Revit.UI;
 using RevitMCPCommandSet.Models.Common;
 using RevitMCPSDK.API.Interfaces;
@@ -35,13 +36,15 @@ namespace RevitMCPCommandSet.Services
                 var familySymbols = new FilteredElementCollector(doc)
                     .OfClass(typeof(FamilySymbol))
                     .Cast<FamilySymbol>();
-                // 系统族类型（墙、楼板等）
+                // 系统族类型（墙、楼板、лестницы、ограждения и т.д.）
                 var systemTypes = new List<ElementType>();
                 systemTypes.AddRange(new FilteredElementCollector(doc).OfClass(typeof(WallType)).Cast<ElementType>());
                 systemTypes.AddRange(new FilteredElementCollector(doc).OfClass(typeof(FloorType)).Cast<ElementType>());
                 systemTypes.AddRange(new FilteredElementCollector(doc).OfClass(typeof(RoofType)).Cast<ElementType>());
                 systemTypes.AddRange(new FilteredElementCollector(doc).OfClass(typeof(CeilingType)).Cast<ElementType>());
                 systemTypes.AddRange(new FilteredElementCollector(doc).OfClass(typeof(CurtainSystemType)).Cast<ElementType>());
+                systemTypes.AddRange(new FilteredElementCollector(doc).OfClass(typeof(StairsType)).Cast<ElementType>());
+                systemTypes.AddRange(new FilteredElementCollector(doc).OfClass(typeof(RailingType)).Cast<ElementType>());
                 // 合并结果
                 var allElements = familySymbols
                     .Cast<ElementType>()

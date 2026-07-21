@@ -1,169 +1,116 @@
-﻿// 
-//                       RevitAPI-Solutions
-// Copyright (c) Duong Tran Quang (DTDucas) (baymax.contact@gmail.com)
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-//
-
-using Newtonsoft.Json;
+﻿using Newtonsoft.Json;
 using RevitMCPCommandSet.Models.Common;
 
 namespace RevitMCPCommandSet.Models.Architecture;
 
 /// <summary>
-///     Information about stair creation parameters
+/// Parameters for creating stairs (REV-83+): straight, L (Г), or U (П).
+/// Coordinates and dimensions are in millimeters.
 /// </summary>
 public class StairCreationInfo
 {
-    /// <summary>
-    ///     Default constructor
-    /// </summary>
     public StairCreationInfo()
     {
         PathPoints = new List<JZPoint>();
-        Options = new Dictionary<string, object>();
+        Layout = "straight";
+        Turn = "right";
     }
 
     /// <summary>
-    ///     Constructor with basic parameters
+    /// Stair plan layout: "straight" | "L" (Г-образная) | "U" (П-образная).
+    /// Aliases accepted by handler: g/г → L, p/п → U.
     /// </summary>
-    /// <param name="baseLevel">Base level elevation (mm)</param>
-    /// <param name="topLevel">Top level elevation (mm)</param>
-    /// <param name="width">Stair width (mm)</param>
-    /// <param name="riserHeight">Riser height (mm)</param>
-    /// <param name="treadDepth">Tread depth (mm)</param>
-    public StairCreationInfo(double baseLevel, double topLevel, double width, double riserHeight, double treadDepth)
-    {
-        BaseLevel = baseLevel;
-        TopLevel = topLevel;
-        Width = width;
-        RiserHeight = riserHeight;
-        TreadDepth = treadDepth;
-        PathPoints = new List<JZPoint>();
-        Options = new Dictionary<string, object>();
-    }
+    [JsonProperty("layout")]
+    public string Layout { get; set; }
 
-    /// <summary>
-    ///     Location point of the stair (starting point)
-    /// </summary>
-    [JsonProperty("location")]
-    public JZPoint Location { get; set; }
-
-    /// <summary>
-    ///     Direction vector for the stair (XY plane)
-    /// </summary>
-    [JsonProperty("direction")]
-    public JZPoint Direction { get; set; }
-
-    /// <summary>
-    ///     Start point of the stair
-    /// </summary>
+    /// <summary>Start of the first run path centerline (mm). Z overridden to base level.</summary>
     [JsonProperty("startPoint")]
     public JZPoint StartPoint { get; set; }
 
     /// <summary>
-    ///     End point of the stair
+    /// For straight: end of the run.
+    /// For L/U: optional direction hint (vector start→end); length ignored when risers auto-sized.
     /// </summary>
     [JsonProperty("endPoint")]
     public JZPoint EndPoint { get; set; }
 
     /// <summary>
-    ///     Path points defining the stair path
+    /// Bearing of the first run in degrees from +X toward +Y (CCW).
+    /// 0 = east (+X), 90 = north (+Y). Used for L/U when endPoint is omitted.
     /// </summary>
+    [JsonProperty("bearingDeg")]
+    public double? BearingDeg { get; set; }
+
+    /// <summary>
+    /// Turn direction when ascending for L/U: "left" or "right" (default right).
+    /// </summary>
+    [JsonProperty("turn")]
+    public string Turn { get; set; }
+
+    /// <summary>Landing depth along the first-run direction (mm). Default = widthMm.</summary>
+    [JsonProperty("landingDepthMm")]
+    public double LandingDepthMm { get; set; }
+
+    /// <summary>
+    /// Explicit first-run length (mm). If 0, computed from height / riser / tread split.
+    /// </summary>
+    [JsonProperty("firstRunLengthMm")]
+    public double FirstRunLengthMm { get; set; }
+
+    /// <summary>
+    /// Explicit second-run length (mm) for L/U. If 0, computed automatically.
+    /// </summary>
+    [JsonProperty("secondRunLengthMm")]
+    public double SecondRunLengthMm { get; set; }
+
+    /// <summary>Optional path points (reserved).</summary>
     [JsonProperty("pathPoints")]
     public List<JZPoint> PathPoints { get; set; }
 
-    /// <summary>
-    ///     Base level elevation (mm)
-    /// </summary>
-    [JsonProperty("baseLevel")]
-    public double BaseLevel { get; set; }
+    /// <summary>Base level ElementId.</summary>
+    [JsonProperty("baseLevelId")]
+    public int BaseLevelId { get; set; }
 
-    /// <summary>
-    ///     Top level elevation (mm)
-    /// </summary>
-    [JsonProperty("topLevel")]
-    public double TopLevel { get; set; }
+    /// <summary>Top level ElementId (must be above base).</summary>
+    [JsonProperty("topLevelId")]
+    public int TopLevelId { get; set; }
 
-    /// <summary>
-    ///     Stair width (mm)
-    /// </summary>
-    [JsonProperty("width")]
-    public double Width { get; set; }
+    /// <summary>Run width in mm (normative min typically 900–1350).</summary>
+    [JsonProperty("widthMm")]
+    public double WidthMm { get; set; }
 
-    /// <summary>
-    ///     Riser height (mm)
-    /// </summary>
-    [JsonProperty("riserHeight")]
-    public double RiserHeight { get; set; }
+    /// <summary>Desired riser height mm (used to split risers for L/U; StairsType still applies).</summary>
+    [JsonProperty("riserHeightMm")]
+    public double RiserHeightMm { get; set; }
 
-    /// <summary>
-    ///     Tread depth (mm)
-    /// </summary>
-    [JsonProperty("treadDepth")]
-    public double TreadDepth { get; set; }
+    /// <summary>Desired tread depth mm (used to size run paths for L/U).</summary>
+    [JsonProperty("treadDepthMm")]
+    public double TreadDepthMm { get; set; }
 
-    /// <summary>
-    ///     Number of steps (if specified)
-    /// </summary>
-    [JsonProperty("stepCount")]
-    public int StepCount { get; set; }
-
-    /// <summary>
-    ///     Stair type ID in Revit
-    /// </summary>
+    /// <summary>StairsType ElementId — required. Missing/invalid fails explicitly.</summary>
     [JsonProperty("typeId")]
     public int TypeId { get; set; }
 
     /// <summary>
-    ///     Stair type name
+    /// Clear stair-shaft rectangle in plan (mm). For layout U/L: fits both runs + landing
+    /// inside this box (compact cell like typical floors). Origin = SW corner before rotation.
     /// </summary>
-    [JsonProperty("stairType")]
-    public string StairType { get; set; } = "Standard";
+    [JsonProperty("shaftRect")]
+    public FloorOpeningRect ShaftRect { get; set; }
 
     /// <summary>
-    ///     Stair material
+    /// Existing Stairs ElementId — use its plan bbox as shaftRect (stack under a correct
+    /// reference stair, e.g. copy 2→3 footprint for 1→2).
     /// </summary>
-    [JsonProperty("material")]
-    public string Material { get; set; } = "Concrete";
+    [JsonProperty("mirrorElementId")]
+    public int MirrorElementId { get; set; }
 
     /// <summary>
-    ///     Does the stair have a landing
+    /// When shaft is shorter than ideal (risers−1)×tread:
+    /// "clamp" (default) = keep compact footprint;
+    /// "extend" = allow run longer than shaft (old behaviour);
+    /// "strict" = fail if shaft cannot fit ideal run length.
     /// </summary>
-    [JsonProperty("hasLanding")]
-    public bool HasLanding { get; set; }
-
-    /// <summary>
-    ///     Landing width (if hasLanding is true)
-    /// </summary>
-    [JsonProperty("landingWidth")]
-    public double LandingWidth { get; set; }
-
-    /// <summary>
-    ///     Landing depth (if hasLanding is true)
-    /// </summary>
-    [JsonProperty("landingDepth")]
-    public double LandingDepth { get; set; }
-
-    /// <summary>
-    ///     Additional options
-    /// </summary>
-    [JsonProperty("options")]
-    public Dictionary<string, object> Options { get; set; }
+    [JsonProperty("fitMode")]
+    public string FitMode { get; set; }
 }

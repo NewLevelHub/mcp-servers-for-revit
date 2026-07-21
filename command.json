@@ -149,6 +149,21 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "create_stair",
+      "description": "Create a straight single-run stair between two levels using a StairsType from the project (normative width from server)",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "create_railing",
+      "description": "Create a railing by path or hosted on a stair using a RailingType from the project",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "create_floor_opening",
+      "description": "Cut a floor slab opening or create a vertical shaft between levels (stair/lift/MEP) — profile as rect or boundaryPoints in mm",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "tag_rooms",
       "description": "Create tags for all rooms in the current view displaying room name and number",
       "assemblyPath": "RevitMCPCommandSet.dll"

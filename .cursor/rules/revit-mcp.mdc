@@ -99,6 +99,9 @@ MCP **не создаёт** новый проект. Сообщи пользов
 | Полы, потолки, крыши | `create_surface_based_element` |
 | Двери, окна | `create_point_based_element` |
 | Уровни, оси, помещения | `create_level`, `create_grid` (**`autoFromWalls: true`**, пузырь `bottomLeft` = цифры снизу / буквы слева), `create_room` |
+| Лестница | **`create_stair`** — `layout` straight / L / U; `typeId` (StairsType); `widthMm` из норм. Для П «как типовой этаж»: **`shaftRect`** (клетка) или **`mirrorElementId`** (bbox эталонной лестницы) + `fitMode=clamp`. Не удлинять марш за клетку. ADSK 150×300 |
+| Ограждение | **`create_railing`** — `typeId` (RailingType), path (`pathPoints`+`levelId`) **или** host (`hostElementId` лестницы). Высота из типа ADSK `h NNNN` / нормы |
+| Проём в перекрытии / шахта | **`create_floor_opening`** — `mode=floor` (вырез в плите: `hostFloorId` или `levelId`) или `mode=shaft` (`baseLevelId`+`topLevelId`); контур `rect` или `boundaryPoints` (мм). Для лестницы: сначала проём/шахта, потом `create_stair` в тот же контур. Нет host/уровней → явный fail |
 | Осевые размеры (внешние цепочки) | **`dimension_grids`** — отступ от габарита всего здания (не от линии оси); межосевой + габаритный ярус; цифры снизу, буквы слева |
 | Разделители помещений (гибрид) | `analyze_room_boundaries` → агент выбирает линии/имена → `create_room_separators` (разделители + помещения + марки). Не `send_code_to_revit`. |
 | Удаление / видимость | `delete_element`, `operate_element` |
@@ -121,7 +124,7 @@ MCP **не создаёт** новый проект. Сообщи пользов
 | Нормоконтроль: габарит входного тамбура | `run_norm_audit` (checkType `tambour_size_min`) или точечно `check_tambour_size`. v1 = ширина × глубина по геометрии помещения; норма ≥ 1,65×1,65 м (СП РК 3.02-101-2012 п. 4.4.10.6); помещения по имени «тамбур» / vestibule |
 | Нормоконтроль: площадь / высота / этаж | `run_norm_audit` (checkTypes `room_area_min`, `room_height_min`, `storey_height`) или `check_room_norms`. Площадь из `export_room_data`; **высота помещений** = ΔZ уровней − толщина перекрытия (не сырой Room UnboundedHeight / дефолт 8'); высота этажа = ΔZ надземных уровней из `export_tep_data`; тип помещения по имени/назначению |
 | Нормоконтроль: подоконник / высота проёма | `run_norm_audit` (checkTypes `window_sill_height`, `opening_height`) или `check_window_openings`. Данные: `get_opening_geometry_info` (sillHeightMm, openingHeightMm). Подоконник — только окна; высота проёма v1 — двери на путях эвакуации (номинал DOOR_HEIGHT). Нет правила в библиотеке → skipped |
-| Нормоконтроль: лестницы / пандусы / ограждения | `run_norm_audit` (checkTypes `stair_width`, `stair_riser_tread`, `ramp_slope_width`, `railing_height`) или `check_vertical_circulation`. Данные: `get_vertical_circulation_info`. Нет правила в библиотеке → skipped (не silent fail). Полный МГН end-to-end — Wave 5 |
+| Нормоконтроль: лестницы / пандусы / ограждения | `run_norm_audit` (checkTypes `stair_width`, `stair_riser_tread`, `ramp_slope_width`, `railing_height`) или `check_vertical_circulation`. Данные: `get_vertical_circulation_info`. Нет правила в библиотеке → skipped (не silent fail). **Создание** — `create_stair` / `create_railing` (не check) |
 | Нормоконтроль: мин. размеры лоджии/балкона/простенка | `run_norm_audit` или `check_min_dimensions` |
 
 ## Создание здания (порядок вызовов)
