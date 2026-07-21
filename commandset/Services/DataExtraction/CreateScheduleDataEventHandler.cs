@@ -13,6 +13,9 @@ namespace RevitMCPCommandSet.Services.DataExtraction
         private bool _createViewSchedule;
         private string _scheduleName;
         private bool _replaceExisting;
+        private string _templateScheduleName;
+        private string _templateId;
+        private string _lastScheduleTemplateSource;
 
         public ScheduleExportResult ResultInfo { get; private set; } = new ScheduleExportResult();
         public bool TaskCompleted { get; private set; }
@@ -23,13 +26,18 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             string typeNameFilter = null,
             bool createViewSchedule = false,
             string scheduleName = null,
-            bool replaceExisting = false)
+            bool replaceExisting = false,
+            string templateScheduleName = null,
+            string templateId = null)
         {
             _category = category;
             _typeNameFilter = typeNameFilter;
             _createViewSchedule = createViewSchedule;
             _scheduleName = scheduleName;
             _replaceExisting = replaceExisting;
+            _templateScheduleName = templateScheduleName;
+            _templateId = templateId;
+            _lastScheduleTemplateSource = null;
             TaskCompleted = false;
             _resetEvent.Reset();
         }
@@ -80,7 +88,14 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                 ViewSchedule createdSchedule = null;
                 if (_createViewSchedule)
                 {
-                    createdSchedule = CreateOrReplaceElementSchedule(doc, _category, _scheduleName, _replaceExisting, warnings);
+                    createdSchedule = CreateOrReplaceElementSchedule(
+                        doc,
+                        _category,
+                        _scheduleName,
+                        _replaceExisting,
+                        _templateScheduleName,
+                        _templateId,
+                        warnings);
                     message += $" Created Revit ViewSchedule '{createdSchedule.Name}'.";
                 }
 
@@ -96,6 +111,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                     ScheduleId = createdSchedule != null ? GetElementIdValue(createdSchedule.Id) : null,
                     ScheduleUniqueId = createdSchedule?.UniqueId,
                     ScheduleName = createdSchedule?.Name,
+                    ScheduleTemplateSource = _lastScheduleTemplateSource,
                     Warnings = warnings,
                     Success = true,
                     Message = message
@@ -120,11 +136,19 @@ namespace RevitMCPCommandSet.Services.DataExtraction
 
         public string GetName() => "Create Schedule Data";
 
-        private static ViewSchedule CreateOrReplaceElementSchedule(
+        private static readonly string[] DefaultDoorScheduleTemplateNames =
+        {
+            "О_АР_Спецификация элементов заполнения дверных проемов поэтжная",
+            "Спецификация элементов заполнения дверных проемов поэтжная",
+        };
+
+        private ViewSchedule CreateOrReplaceElementSchedule(
             Document doc,
             ScheduleElementCategory category,
             string requestedName,
             bool replaceExisting,
+            string templateScheduleName,
+            string templateId,
             List<string> warnings)
         {
             if (category != ScheduleElementCategory.Doors && category != ScheduleElementCategory.Windows)
@@ -149,17 +173,304 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                 if (existing != null && replaceExisting)
                     doc.Delete(existing.Id);
 
-                var schedule = existing != null && !replaceExisting
-                    ? existing
-                    : ViewSchedule.CreateSchedule(doc, categoryElement.Id);
+                if (existing != null && !replaceExisting)
+                {
+                    tx.Commit();
+                    return existing;
+                }
 
-                if (existing == null || replaceExisting)
+                ViewSchedule schedule;
+                if (category == ScheduleElementCategory.Doors)
+                {
+                    var template = ResolveDoorScheduleTemplate(doc, templateId, templateScheduleName);
+                    if (template != null)
+                    {
+                        schedule = DuplicateScheduleFromTemplate(doc, template, baseName);
+                        _lastScheduleTemplateSource = template.Name;
+                        warnings.Add($"Duplicated RD door schedule template '{template.Name}'.");
+                    }
+                    else
+                    {
+                        schedule = ViewSchedule.CreateSchedule(doc, categoryElement.Id);
+                        schedule.Name = GetUniqueScheduleName(doc, baseName);
+                        ConfigureRdDoorSchedule(doc, schedule, warnings);
+                        _lastScheduleTemplateSource = "built-in-rd-layout";
+                        warnings.Add(
+                            "RD door schedule template not found in project; created schedule with RD column layout.");
+                    }
+                }
+                else
+                {
+                    schedule = ViewSchedule.CreateSchedule(doc, categoryElement.Id);
                     schedule.Name = GetUniqueScheduleName(doc, baseName);
+                    ConfigureElementSchedule(doc, schedule, category, warnings);
+                }
 
-                ConfigureElementSchedule(doc, schedule, category, warnings);
                 tx.Commit();
                 return schedule;
             }
+        }
+
+        private static ViewSchedule DuplicateScheduleFromTemplate(
+            Document doc,
+            ViewSchedule template,
+            string requestedName)
+        {
+            var duplicatedId = template.Duplicate(ViewDuplicateOption.Duplicate);
+            var schedule = doc.GetElement(duplicatedId) as ViewSchedule
+                ?? throw new InvalidOperationException("Failed to duplicate schedule template.");
+            schedule.Name = GetUniqueScheduleName(doc, requestedName);
+            return schedule;
+        }
+
+        private static ViewSchedule ResolveDoorScheduleTemplate(
+            Document doc,
+            string templateId,
+            string templateScheduleName)
+        {
+            if (!string.IsNullOrWhiteSpace(templateId))
+            {
+                var byId = ResolveScheduleByIdOrUniqueId(doc, templateId.Trim());
+                if (byId != null && IsDoorSchedule(byId))
+                    return byId;
+            }
+
+            if (!string.IsNullOrWhiteSpace(templateScheduleName))
+            {
+                var byName = FindDoorScheduleByName(doc, templateScheduleName.Trim());
+                if (byName != null)
+                    return byName;
+            }
+
+            foreach (var candidate in DefaultDoorScheduleTemplateNames)
+            {
+                var found = FindDoorScheduleByName(doc, candidate);
+                if (found != null)
+                    return found;
+            }
+
+            return FindDoorScheduleTemplateByKeywords(doc);
+        }
+
+        private static ViewSchedule ResolveScheduleByIdOrUniqueId(Document doc, string templateId)
+        {
+            var element = doc.GetElement(templateId);
+            if (element == null && long.TryParse(templateId, out var numericId))
+            {
+#if REVIT2024_OR_GREATER
+                element = doc.GetElement(new ElementId(numericId));
+#else
+                element = doc.GetElement(new ElementId((int)numericId));
+#endif
+            }
+
+            return element as ViewSchedule;
+        }
+
+        private static bool IsDoorSchedule(ViewSchedule schedule)
+        {
+            if (schedule == null || schedule.IsTemplate)
+                return false;
+
+            var doorsCategory = Category.GetCategory(schedule.Document, BuiltInCategory.OST_Doors);
+            return doorsCategory != null && schedule.Definition.CategoryId == doorsCategory.Id;
+        }
+
+        private static ViewSchedule FindDoorScheduleByName(Document doc, string name)
+        {
+            var doorsCategoryId = Category.GetCategory(doc, BuiltInCategory.OST_Doors)?.Id;
+            if (doorsCategoryId == null)
+                return null;
+
+            var schedules = new FilteredElementCollector(doc)
+                .OfClass(typeof(ViewSchedule))
+                .Cast<ViewSchedule>()
+                .Where(s => !s.IsTemplate && s.Definition.CategoryId == doorsCategoryId)
+                .ToList();
+
+            var exact = schedules.FirstOrDefault(s =>
+                s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+            if (exact != null)
+                return exact;
+
+            return schedules.FirstOrDefault(s =>
+                s.Name.IndexOf(name, StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        private static bool NameContains(string value, string token) =>
+            value?.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0;
+
+        private static ViewSchedule FindDoorScheduleTemplateByKeywords(Document doc)
+        {
+            var doorsCategoryId = Category.GetCategory(doc, BuiltInCategory.OST_Doors)?.Id;
+            if (doorsCategoryId == null)
+                return null;
+
+            return new FilteredElementCollector(doc)
+                .OfClass(typeof(ViewSchedule))
+                .Cast<ViewSchedule>()
+                .Where(s => !s.IsTemplate && s.Definition.CategoryId == doorsCategoryId)
+                .FirstOrDefault(s =>
+                {
+                    var n = s.Name;
+                    var isDoor = NameContains(n, "дверн") || NameContains(n, "door");
+                    var isFloorMatrix = NameContains(n, "поэтж") || NameContains(n, "заполнения");
+                    return isDoor && isFloorMatrix;
+                });
+        }
+
+        /// <summary>
+        /// RD-style door schedule when no project template exists: ADSK columns + floor matrix.
+        /// Mirrors «О_АР_Спецификация элементов заполнения дверных проемов поэтжная».
+        /// </summary>
+        private static void ConfigureRdDoorSchedule(
+            Document doc,
+            ViewSchedule schedule,
+            List<string> warnings)
+        {
+            var definition = schedule.Definition;
+            definition.IsItemized = false;
+            definition.ShowTitle = true;
+            definition.ShowHeaders = true;
+            definition.ShowGridLines = true;
+
+            ClearScheduleDefinition(definition);
+
+            AddField(doc, definition, warnings, "Description|Описание", ScheduleFieldType.ElementType, "Описание", hidden: true);
+            AddField(doc, definition, warnings, "Level|Уровень", ScheduleFieldType.Instance, "Уровень", hidden: true);
+            var familyTypeField = AddField(
+                doc,
+                definition,
+                warnings,
+                "Family and Type|Семейство и типоразмер|Типоразмер|Type",
+                ScheduleFieldType.ElementType,
+                "Семейство и типоразмер",
+                hidden: true);
+
+            AddField(
+                doc,
+                definition,
+                warnings,
+                "ADSK_Марка|Mark|Марка",
+                ScheduleFieldType.Instance,
+                "Поз.",
+                widthMm: 15,
+                alignment: ScheduleHorizontalAlignment.Center);
+            AddField(doc, definition, warnings, "ADSK_Обозначение", ScheduleFieldType.Instance, "Обозначение", widthMm: 60);
+            AddField(doc, definition, warnings, "ADSK_Наименование", ScheduleFieldType.Instance, "Наименование", widthMm: 65);
+
+            var floorColumns = new (string param, string heading)[]
+            {
+                ("-1 этаж", "-1 этаж             -4,200"),
+                ("01 этаж", "1 этаж \r\n0,000"),
+                ("02 этаж", "2 этаж         +3,900"),
+                ("03 этаж", "3-5 этаж  +6,900 -   +12,900 "),
+                ("06 этаж", "6-9 этаж +15,900 -   +24,900 "),
+                ("10 этаж", "10-16 этаж +27,900 - +45,900 "),
+                ("12 этаж", "Тех.этаж, кровля"),
+            };
+
+            foreach (var (param, heading) in floorColumns)
+            {
+                AddField(
+                    doc,
+                    definition,
+                    warnings,
+                    param,
+                    ScheduleFieldType.Instance,
+                    heading,
+                    widthMm: 20,
+                    alignment: ScheduleHorizontalAlignment.Center);
+            }
+
+            AddField(
+                doc,
+                definition,
+                warnings,
+                "Count|Количество|Число",
+                ScheduleFieldType.Count,
+                "Общее количество",
+                widthMm: 20,
+                alignment: ScheduleHorizontalAlignment.Center);
+            AddField(doc, definition, warnings, "ADSK_Масса_Текст", ScheduleFieldType.Instance, "Масса ед., кг", widthMm: 15);
+            AddField(
+                doc,
+                definition,
+                warnings,
+                "Comments|Комментарии к типоразмеру|Type Comments",
+                ScheduleFieldType.ElementType,
+                "Примечание",
+                widthMm: 54,
+                alignment: ScheduleHorizontalAlignment.Center);
+
+            ApplyDescriptionDoorFilter(definition, warnings);
+
+            TryAddSortField(definition, warnings, "ADSK_Марка|Mark|Марка");
+            if (familyTypeField != null)
+                TryAddSortField(definition, warnings, "Family and Type|Семейство и типоразмер");
+
+            if (familyTypeField != null)
+                ApplyAccessoryFilters(definition, familyTypeField.FieldId, ScheduleElementCategory.Doors, warnings);
+        }
+
+        private static void ApplyDescriptionDoorFilter(ScheduleDefinition definition, List<string> warnings)
+        {
+            try
+            {
+                var descriptionFieldId = FindFieldIdByName(definition, "Описание");
+                if (descriptionFieldId == null)
+                {
+                    warnings.Add("Description field not found; RD door filter was not applied.");
+                    return;
+                }
+
+                definition.AddFilter(new ScheduleFilter(descriptionFieldId, ScheduleFilterType.BeginsWith, "Двер"));
+            }
+            catch (Exception ex)
+            {
+                warnings.Add($"Failed to add RD door description filter: {ex.Message}");
+            }
+        }
+
+        private static void TryAddSortField(
+            ScheduleDefinition definition,
+            List<string> warnings,
+            string aliases)
+        {
+            try
+            {
+                var fieldId = FindFieldIdByName(definition, aliases);
+                if (fieldId == null)
+                {
+                    warnings.Add($"Sort field '{aliases}' was not found and was skipped.");
+                    return;
+                }
+
+                definition.AddSortGroupField(new ScheduleSortGroupField(fieldId, ScheduleSortOrder.Ascending));
+            }
+            catch (Exception ex)
+            {
+                warnings.Add($"Failed to add sort for '{aliases}': {ex.Message}");
+            }
+        }
+
+        private static ScheduleFieldId FindFieldIdByName(ScheduleDefinition definition, string aliases)
+        {
+            var aliasList = aliases
+                .Split('|')
+                .Select(alias => alias.Trim())
+                .Where(alias => alias.Length > 0)
+                .ToList();
+
+            for (var i = 0; i < definition.GetFieldCount(); i++)
+            {
+                var field = definition.GetField(definition.GetFieldId(i));
+                var name = field.GetName();
+                if (aliasList.Any(alias => name.Equals(alias, StringComparison.OrdinalIgnoreCase)))
+                    return definition.GetFieldId(i);
+            }
+
+            return null;
         }
 
         private static void ConfigureElementSchedule(
@@ -207,7 +518,10 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             List<string> warnings,
             string aliases,
             ScheduleFieldType fieldType,
-            string heading)
+            string heading,
+            bool hidden = false,
+            double widthMm = 0,
+            ScheduleHorizontalAlignment? alignment = null)
         {
             var schedulable = FindSchedulableField(doc, definition, aliases, fieldType);
             if (schedulable == null)
@@ -221,6 +535,11 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                 var field = definition.AddField(schedulable);
                 if (!string.IsNullOrWhiteSpace(heading))
                     field.ColumnHeading = heading;
+                field.IsHidden = hidden;
+                if (widthMm > 0)
+                    field.GridColumnWidth = widthMm / 304.8;
+                if (alignment.HasValue)
+                    field.HorizontalAlignment = alignment.Value;
                 return field;
             }
             catch (Exception ex)

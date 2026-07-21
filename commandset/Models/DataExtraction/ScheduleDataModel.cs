@@ -139,6 +139,12 @@ namespace RevitMCPCommandSet.Models.DataExtraction
         [JsonProperty("scheduleName", NullValueHandling = NullValueHandling.Ignore)]
         public string ScheduleName { get; set; }
 
+        /// <summary>
+        /// Source RD template name when ViewSchedule was duplicated, or "built-in-rd-layout" for fallback.
+        /// </summary>
+        [JsonProperty("scheduleTemplateSource", NullValueHandling = NullValueHandling.Ignore)]
+        public string ScheduleTemplateSource { get; set; }
+
         [JsonProperty("warnings")]
         public List<string> Warnings { get; set; } = new List<string>();
 
