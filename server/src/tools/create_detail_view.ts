@@ -11,7 +11,7 @@ const pointSchema = z.object({
 export function registerCreateDetailViewTool(server: McpServer) {
   server.tool(
     "create_detail_view",
-    "Create a detail view for construction nodes (узлы). Mode 'callout' cuts a detail callout from a parent plan/section view around an element (elementId + padding) or an explicit rectangle (areaMin/areaMax, model mm); mode 'drafting' creates an independent drafting view for drawing a node from scratch. Sets name, scale (e.g. 10 for 1:10), and detail level (Fine by default). Use place_detail_component, create_text_note, and create_dimensions to fill the view.",
+    "Create a detail view for construction nodes (узлы). Mode 'callout' cuts a detail callout from a parent plan/section view around an element (elementId + padding) or an explicit rectangle (areaMin/areaMax, model mm); mode 'drafting' creates an independent drafting view for drawing a node from scratch. Sets name, scale (e.g. 10 for 1:10), and detail level (Fine by default). By default activates the new view in the UI. Then use create_detail_lines, create_text_note, create_dimensions, and place_detail_component.",
     {
       mode: z
         .enum(["callout", "drafting"])
@@ -30,6 +30,11 @@ export function registerCreateDetailViewTool(server: McpServer) {
         .optional()
         .default("Fine")
         .describe("Detail level of the created view. Defaults to Fine."),
+      activateView: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe("Switch the Revit UI to the created view. Defaults to true."),
       parentViewId: z
         .number()
         .int()
@@ -60,6 +65,7 @@ export function registerCreateDetailViewTool(server: McpServer) {
         name: args.name ?? "",
         scale: args.scale ?? 10,
         detailLevel: args.detailLevel ?? "Fine",
+        activateView: args.activateView ?? true,
         parentViewId: args.parentViewId ?? 0,
         parentViewUniqueId: args.parentViewUniqueId ?? "",
         parentViewName: args.parentViewName ?? "",

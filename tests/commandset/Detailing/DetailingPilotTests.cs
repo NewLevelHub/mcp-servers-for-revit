@@ -163,6 +163,44 @@ public class DetailingPilotTests : RevitApiTest
 
     [Test]
     [HookExecutor<RevitThreadExecutor>]
+    public async Task CreateDetailLines_OnDraftingView_ByViewId_CreatesSegments()
+    {
+        var viewResult = CreateDetailViewEventHandler.Create(_doc, new DetailViewCreationInfo
+        {
+            Mode = "drafting",
+            Name = "Узел 6. Линии",
+            ActivateView = false
+        });
+
+        var result = CreateDetailLinesEventHandler.Create(
+            _doc,
+            null,
+            new DetailLinesCreationInfo
+            {
+                ViewUniqueId = viewResult.ViewUniqueId,
+                Polylines = new List<DetailPolylineInfo>
+                {
+                    new()
+                    {
+                        Points = new List<DetailLinePoint>
+                        {
+                            new() { X = 0, Y = 0 },
+                            new() { X = 200, Y = 0 },
+                            new() { X = 200, Y = 100 },
+                            new() { X = 0, Y = 100 },
+                            new() { X = 0, Y = 0 }
+                        }
+                    }
+                }
+            });
+
+        await Assert.That(result.Success).IsTrue();
+        await Assert.That(result.CreatedCount).IsEqualTo(4);
+        await Assert.That(result.ViewId).IsEqualTo(viewResult.ViewId);
+    }
+
+    [Test]
+    [HookExecutor<RevitThreadExecutor>]
     public async Task PlaceDetailComponent_LoadedType_PlacedOnDraftingView()
     {
         var symbol = new FilteredElementCollector(_doc)

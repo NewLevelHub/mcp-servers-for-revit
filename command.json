@@ -219,6 +219,16 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "configure_schedule",
+      "description": "Edit an existing ViewSchedule in-place: column widths, hide/show columns, filters, sorts, groups, and display flags (REV-68)",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "fit_schedule_to_sheet",
+      "description": "Make an existing ViewSchedule fit a target sheet width by hiding optional columns, narrowing columns proportionally, and/or adding a level filter (REV-68)",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "create_sheet",
       "description": "Create a sheet with a project title block",
       "assemblyPath": "RevitMCPCommandSet.dll"
