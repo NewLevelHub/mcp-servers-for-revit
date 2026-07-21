@@ -11,6 +11,8 @@ interface ScheduleExportAndViewArgs extends ScheduleExportPaginationArgs {
   createViewSchedule?: boolean;
   scheduleName?: string;
   replaceExisting?: boolean;
+  templateScheduleName?: string;
+  templateId?: string;
 }
 
 function registerScheduleExportTool(
@@ -45,6 +47,18 @@ function registerScheduleExportTool(
         .describe(
           "When createViewSchedule=true, delete and recreate an existing schedule with the same name."
         ),
+      templateScheduleName: z
+        .string()
+        .optional()
+        .describe(
+          "RD door schedule template name to duplicate (e.g. 'О_АР_Спецификация элементов заполнения дверных проемов поэтжная'). When omitted, auto-finds the project RD template."
+        ),
+      templateId: z
+        .string()
+        .optional()
+        .describe(
+          "ElementId or UniqueId of an existing door ViewSchedule to duplicate as template."
+        ),
     },
     async (args: ScheduleExportAndViewArgs) => {
       try {
@@ -53,6 +67,8 @@ function registerScheduleExportTool(
             createViewSchedule: args.createViewSchedule ?? false,
             scheduleName: args.scheduleName ?? null,
             replaceExisting: args.replaceExisting ?? false,
+            templateScheduleName: args.templateScheduleName ?? null,
+            templateId: args.templateId ?? null,
           });
         });
 
@@ -86,7 +102,7 @@ export function registerCreateDoorScheduleTool(server: McpServer) {
     "create_door_schedule",
     "create_door_schedule",
     "door",
-    "Export structured door schedule data for door blocks only (excludes slopes/reveals and similar accessories by family/type name). Returns rows grouped by family type with mark, type, size, level, elementIds (truncated per maxElementIdsPerGroup), and count. The per-instance list is omitted by default — page through it with includeInstances/instancesOffset/instancesLimit. Foundation for create_schedule and validate_schedule workflows."
+    "Export structured door schedule data for door blocks only (excludes slopes/reveals and similar accessories by family/type name). Returns rows grouped by family type with mark, type, size, level, elementIds (truncated per maxElementIdsPerGroup), and count. When createViewSchedule=true, duplicates the project RD door schedule template (поэтажная матрица: Поз., Обозначение, Наименование, колонки этажей, Итого) instead of a bare 4-column list. Falls back to built-in RD column layout if no template is found."
   );
 }
 

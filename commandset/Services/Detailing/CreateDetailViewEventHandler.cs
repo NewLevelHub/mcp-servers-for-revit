@@ -37,6 +37,13 @@ public class CreateDetailViewEventHandler : IExternalEventHandler, IWaitableExte
         {
             var doc = app.ActiveUIDocument.Document;
             ResultInfo = Create(doc, _info);
+
+            if (ResultInfo.Success && _info.ActivateView && ResultInfo.ViewId > 0)
+            {
+                var view = doc.GetElement(RevitMCPCommandSet.Utils.ElementIdExtensions.FromLong(ResultInfo.ViewId)) as View;
+                if (view != null && !view.IsTemplate)
+                    app.ActiveUIDocument.ActiveView = view;
+            }
         }
         catch (Exception ex)
         {

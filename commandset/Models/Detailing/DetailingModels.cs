@@ -29,6 +29,12 @@ public class DetailViewCreationInfo
     [JsonProperty("detailLevel")]
     public string DetailLevel { get; set; } = "Fine";
 
+    /// <summary>
+    ///     When true (default), switch the UI to the created view after creation.
+    /// </summary>
+    [JsonProperty("activateView")]
+    public bool ActivateView { get; set; } = true;
+
     [JsonProperty("parentViewId")]
     public long ParentViewId { get; set; }
 
@@ -221,6 +227,36 @@ public class TextNoteCreationInfo
     /// </summary>
     [JsonProperty("leaderEnd")]
     public JZPoint LeaderEnd { get; set; }
+}
+
+public class DetailPolylineInfo
+{
+    [JsonProperty("points")]
+    public List<DetailLinePoint> Points { get; set; } = new List<DetailLinePoint>();
+}
+
+public class DetailLinePoint
+{
+    [JsonProperty("x")]
+    public double X { get; set; }
+
+    [JsonProperty("y")]
+    public double Y { get; set; }
+}
+
+public class DetailLinesCreationInfo
+{
+    [JsonProperty("viewId")]
+    public long ViewId { get; set; }
+
+    [JsonProperty("viewUniqueId")]
+    public string ViewUniqueId { get; set; } = string.Empty;
+
+    [JsonProperty("viewName")]
+    public string ViewName { get; set; } = string.Empty;
+
+    [JsonProperty("polylines")]
+    public List<DetailPolylineInfo> Polylines { get; set; } = new List<DetailPolylineInfo>();
 }
 
 public class TextNoteCreationResult

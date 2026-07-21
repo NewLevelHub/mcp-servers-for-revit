@@ -1,5 +1,6 @@
 using Autodesk.Revit.UI;
 using Newtonsoft.Json.Linq;
+using RevitMCPCommandSet.Models.Detailing;
 using RevitMCPCommandSet.Services.Detailing;
 using RevitMCPSDK.API.Base;
 
@@ -20,10 +21,14 @@ namespace RevitMCPCommandSet.Commands.Detailing
         {
             try
             {
-                var polylines = parameters?["polylines"]?.ToObject<List<DetailPolylineInfo>>()
-                    ?? new List<DetailPolylineInfo>();
+                var info = parameters?.ToObject<DetailLinesCreationInfo>() ?? new DetailLinesCreationInfo();
+                if (info.Polylines == null || info.Polylines.Count == 0)
+                {
+                    info.Polylines = parameters?["polylines"]?.ToObject<List<DetailPolylineInfo>>()
+                        ?? new List<DetailPolylineInfo>();
+                }
 
-                _handler.SetParameters(polylines);
+                _handler.SetParameters(info);
 
                 if (RaiseAndWaitForCompletion(60000))
                 {
