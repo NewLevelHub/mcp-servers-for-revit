@@ -31,6 +31,7 @@ public class SetElementParameterCommand : ExternalEventCommandBase
         _handler.TargetElementId = elementId;
         _handler.ParameterName = parameterName;
         _handler.Value = ConvertToken(valueToken);
+        _handler.Prepare();
 
         if (RaiseAndWaitForCompletion(30000))
             return _handler.Result;

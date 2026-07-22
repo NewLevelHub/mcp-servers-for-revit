@@ -184,7 +184,7 @@ export function registerCheckTambourSizeTool(server: McpServer) {
         return {
           content: [
             { type: "text", text: report },
-            { type: "text", text: JSON.stringify(jsonPayload, null, 2) },
+            { type: "text", text: JSON.stringify(jsonPayload) },
           ],
           isError: !result.success,
         };

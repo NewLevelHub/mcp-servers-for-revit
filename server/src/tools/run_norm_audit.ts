@@ -107,7 +107,7 @@ export function registerRunNormAuditTool(server: McpServer) {
             { type: "text" as const, text: report },
             {
               type: "text" as const,
-              text: JSON.stringify(jsonPayload, null, 2),
+              text: JSON.stringify(jsonPayload),
             },
           ],
           isError: !result.success,

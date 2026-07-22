@@ -9,13 +9,20 @@ namespace RevitMCPCommandSet.Services;
 public class GetElementParametersEventHandler : IExternalEventHandler, IWaitableExternalEventHandler
 {
     public long TargetElementId { get; set; }
+    public List<string>? ParameterNames { get; set; }
+    public bool Slim { get; set; }
     public ElementParametersResult Result { get; private set; } = new();
     public bool TaskCompleted { get; private set; }
     private readonly ManualResetEvent _resetEvent = new(false);
 
+    public void Prepare()
+    {
+        TaskCompleted = false;
+        _resetEvent.Reset();
+    }
+
     public bool WaitForCompletion(int timeoutMilliseconds = 10000)
     {
-        _resetEvent.Reset();
         return _resetEvent.WaitOne(timeoutMilliseconds);
     }
 
@@ -26,25 +33,11 @@ public class GetElementParametersEventHandler : IExternalEventHandler, IWaitable
             var doc = app.ActiveUIDocument?.Document
                 ?? throw new InvalidOperationException("No active Revit document.");
 
-            var element = doc.GetElement(RevitMCPCommandSet.Utils.ElementIdExtensions.FromLong(TargetElementId))
-                ?? throw new ArgumentException($"Element with id {TargetElementId} was not found.");
-
-            var parameters = element.Parameters
-                .Cast<Parameter>()
-                .Where(parameter => parameter?.Definition != null)
-                .OrderBy(parameter => parameter.Definition.Name, StringComparer.OrdinalIgnoreCase)
-                .Select(parameter => ElementParameterHelper.ToParameterInfo(parameter, doc))
-                .ToList();
-
-            Result = new ElementParametersResult
-            {
-                Success = true,
-                Message = $"Collected {parameters.Count} parameters.",
-                ElementId = TargetElementId,
-                ElementName = element.Name,
-                Category = element.Category?.Name ?? string.Empty,
-                Parameters = parameters
-            };
+            Result = GetElementsParametersEventHandler.CollectElementParameters(
+                doc,
+                TargetElementId,
+                ParameterNames,
+                Slim);
         }
         catch (Exception ex)
         {

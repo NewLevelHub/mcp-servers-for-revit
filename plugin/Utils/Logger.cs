@@ -89,11 +89,22 @@ namespace revit_mcp_plugin.Utils
         {
             try
             {
-                File.AppendAllText(filePath, content + Environment.NewLine);
+                // Fire-and-forget so metrics/logging stay off the command latency path.
+                System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    try
+                    {
+                        File.AppendAllText(filePath, content + Environment.NewLine);
+                    }
+                    catch
+                    {
+                        // If writing to the logfile fails, do not throw an exception.
+                    }
+                });
             }
             catch
             {
-                // If writing to the logfile fails, do not throw an exception.
+                // If queuing fails, do not throw an exception.
             }
         }
     }

@@ -22,8 +22,8 @@ namespace RevitMCPCommandSet.Services.DataExtraction
 
         public bool WaitForCompletion(int timeoutMilliseconds = 10000)
         {
-            _resetEvent.Reset();
-        return _resetEvent.WaitOne(timeoutMilliseconds);
+            // Do not Reset here - SetParameters/Prepare already Reset before Raise.
+            return _resetEvent.WaitOne(timeoutMilliseconds);
         }
 
         public void Execute(UIApplication app)
@@ -31,116 +31,101 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             try
             {
                 var doc = app.ActiveUIDocument.Document;
-
-                // Get project name
                 string projectName = doc.Title;
 
-                // Count total elements
                 int totalElements = new FilteredElementCollector(doc)
                     .WhereElementIsNotElementType()
                     .GetElementCount();
 
-                // Count total types
                 int totalTypes = new FilteredElementCollector(doc)
                     .WhereElementIsElementType()
                     .GetElementCount();
 
-                // Count views
                 int totalViews = new FilteredElementCollector(doc)
                     .OfClass(typeof(View))
-                    .Where(v => !(v as View).IsTemplate)
-                    .Count();
+                    .Cast<View>()
+                    .Count(v => !v.IsTemplate);
 
-                // Count sheets
                 int totalSheets = new FilteredElementCollector(doc)
                     .OfClass(typeof(ViewSheet))
                     .GetElementCount();
 
-                // Analyze by category
                 var categoryStats = new Dictionary<string, CategoryStatistics>();
                 var familyNames = new HashSet<string>();
+                var levelCounts = new Dictionary<ElementId, int>();
 
-                var elements = new FilteredElementCollector(doc)
-                    .WhereElementIsNotElementType()
-                    .ToElements();
-
-                foreach (Element elem in elements)
+                // Single pass: category/type stats + level counts (no ToElements, no per-level re-scan).
+                foreach (Element elem in new FilteredElementCollector(doc).WhereElementIsNotElementType())
                 {
-                    if (elem.Category == null) continue;
-
-                    string catName = elem.Category.Name;
-
-                    if (!categoryStats.ContainsKey(catName))
+                    if (elem.Category != null)
                     {
-                        categoryStats[catName] = new CategoryStatistics
+                        string catName = elem.Category.Name;
+
+                        if (!categoryStats.TryGetValue(catName, out var stat))
                         {
-                            CategoryName = catName
-                        };
+                            stat = new CategoryStatistics { CategoryName = catName };
+                            categoryStats[catName] = stat;
+                        }
+
+                        stat.ElementCount++;
+
+                        if (elem is FamilyInstance fi)
+                        {
+                            string familyName = fi.Symbol?.Family?.Name;
+                            string typeName = fi.Symbol?.Name;
+
+                            if (!string.IsNullOrEmpty(familyName))
+                                familyNames.Add(familyName);
+
+                            if (_includeDetailedTypes && !string.IsNullOrEmpty(typeName))
+                            {
+                                var existingType = stat.Types
+                                    .FirstOrDefault(t => t.TypeName == typeName && t.FamilyName == familyName);
+
+                                if (existingType != null)
+                                {
+                                    existingType.InstanceCount++;
+                                }
+                                else
+                                {
+                                    stat.Types.Add(new TypeStatistics
+                                    {
+                                        TypeName = typeName,
+                                        FamilyName = familyName,
+                                        InstanceCount = 1
+                                    });
+                                }
+                            }
+                        }
                     }
 
-                    categoryStats[catName].ElementCount++;
-
-                    // Track type information
-                    if (elem is FamilyInstance fi)
+                    ElementId levelId = elem.LevelId;
+                    if (levelId != null && levelId != ElementId.InvalidElementId)
                     {
-                        string familyName = fi.Symbol?.Family?.Name;
-                        string typeName = fi.Symbol?.Name;
-
-                        if (!string.IsNullOrEmpty(familyName))
-                        {
-                            familyNames.Add(familyName);
-                        }
-
-                        if (_includeDetailedTypes && !string.IsNullOrEmpty(typeName))
-                        {
-                            var existingType = categoryStats[catName].Types
-                                .FirstOrDefault(t => t.TypeName == typeName && t.FamilyName == familyName);
-
-                            if (existingType != null)
-                            {
-                                existingType.InstanceCount++;
-                            }
-                            else
-                            {
-                                categoryStats[catName].Types.Add(new TypeStatistics
-                                {
-                                    TypeName = typeName,
-                                    FamilyName = familyName,
-                                    InstanceCount = 1
-                                });
-                            }
-                        }
+                        if (levelCounts.TryGetValue(levelId, out int count))
+                            levelCounts[levelId] = count + 1;
+                        else
+                            levelCounts[levelId] = 1;
                     }
                 }
 
-                // Calculate type and family counts per category
                 foreach (var stat in categoryStats.Values)
                 {
                     stat.TypeCount = stat.Types.Select(t => t.TypeName).Distinct().Count();
                     stat.FamilyCount = stat.Types.Select(t => t.FamilyName).Distinct().Count();
                 }
 
-                // Analyze by level
-                var levelStats = new List<LevelStatistics>();
-                var levels = new FilteredElementCollector(doc)
+                var levelStats = new FilteredElementCollector(doc)
                     .OfClass(typeof(Level))
                     .Cast<Level>()
-                    .OrderBy(l => l.Elevation);
-
-                foreach (Level level in levels)
-                {
-                    int elementCount = new FilteredElementCollector(doc)
-                        .WhereElementIsNotElementType()
-                        .Where(e => e.LevelId == level.Id)
-                        .Count();
-
-                    levelStats.Add(new LevelStatistics
+                    .OrderBy(l => l.Elevation)
+                    .Select(level => new LevelStatistics
                     {
                         LevelName = level.Name,
                         Elevation = level.Elevation,
-                        ElementCount = elementCount
-                    });
-                }
+                        ElementCount = levelCounts.TryGetValue(level.Id, out int count) ? count : 0
+                    })
+                    .ToList();
 
                 ResultInfo = new AnalyzeModelStatisticsResult
                 {

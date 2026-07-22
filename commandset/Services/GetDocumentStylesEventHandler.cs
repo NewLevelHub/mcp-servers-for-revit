@@ -8,13 +8,23 @@ namespace RevitMCPCommandSet.Services;
 
 public class GetDocumentStylesEventHandler : IExternalEventHandler, IWaitableExternalEventHandler
 {
+    public bool IncludeGraphicsStyles { get; set; }
     public DocumentStylesResult ResultInfo { get; private set; } = new();
     public bool TaskCompleted { get; private set; }
     private readonly ManualResetEvent _resetEvent = new(false);
 
+    /// <summary>
+    /// Reset wait state before ExternalEvent.Raise. Must be called from the command before RaiseAndWaitForCompletion.
+    /// </summary>
+    public void Prepare()
+    {
+        TaskCompleted = false;
+        _resetEvent.Reset();
+    }
+
     public bool WaitForCompletion(int timeoutMilliseconds = 10000)
     {
-        _resetEvent.Reset();
+        // Do not Reset here - SetParameters/Prepare already Reset before Raise.
         return _resetEvent.WaitOne(timeoutMilliseconds);
     }
 
@@ -28,12 +38,16 @@ public class GetDocumentStylesEventHandler : IExternalEventHandler, IWaitableExt
             ResultInfo = new DocumentStylesResult
             {
                 Success = true,
-                Message = "Document styles collected successfully.",
+                Message = IncludeGraphicsStyles
+                    ? "Document styles collected successfully."
+                    : "Document styles collected successfully (graphicsStyles omitted; pass includeGraphicsStyles=true to include).",
                 DimensionTypes = CollectDimensionTypes(doc),
                 GridTypes = CollectGridTypes(doc),
                 TextNoteTypes = CollectTextNoteTypes(doc),
                 LinePatterns = CollectLinePatterns(doc),
-                GraphicsStyles = CollectGraphicsStyles(doc),
+                GraphicsStyles = IncludeGraphicsStyles
+                    ? CollectGraphicsStyles(doc)
+                    : new List<GraphicsStyleInfo>(),
                 TitleBlocks = CollectTitleBlocks(doc)
             };
         }

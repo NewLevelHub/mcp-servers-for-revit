@@ -65,8 +65,8 @@ public class ConfigureGridDisplayEventHandler : IExternalEventHandler, IWaitable
 
     public bool WaitForCompletion(int timeoutMilliseconds = 10000)
     {
-        _resetEvent.Reset();
-        return _resetEvent.WaitOne(timeoutMilliseconds);
+            // Do not Reset here - SetParameters/Prepare already Reset before Raise.
+            return _resetEvent.WaitOne(timeoutMilliseconds);
     }
 
     public string GetName() => "Configure Grid Display";

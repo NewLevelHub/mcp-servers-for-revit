@@ -133,7 +133,7 @@ export function registerConfigureScheduleTool(server: McpServer) {
         });
 
         return {
-          content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+          content: [{ type: "text", text: JSON.stringify(response) }],
         };
       } catch (error) {
         return {

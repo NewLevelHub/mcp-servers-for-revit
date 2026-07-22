@@ -76,7 +76,7 @@ function registerScheduleExportTool(
           content: [
             {
               type: "text",
-              text: JSON.stringify(paginateScheduleExport(response, args), null, 2),
+              text: JSON.stringify(paginateScheduleExport(response, args)),
             },
           ],
         };

@@ -34,6 +34,7 @@ namespace RevitMCPCommandSet.Commands.Access
 
                     // 设置数量限制
                     _handler.Limit = limit;
+                    _handler.Prepare();
 
                     // 触发外部事件并等待完成
                     if (RaiseAndWaitForCompletion(15000))

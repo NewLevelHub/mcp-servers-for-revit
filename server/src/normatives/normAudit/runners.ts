@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { withRevitConnection } from "../../utils/ConnectionManager.js";
+import type { NormAuditRevitSnapshot } from "./auditSnapshot.js";
 import {
   DEFAULT_EVACUATION_WIDTH_PDF_FILES,
   loadEvacuationWidthRulesFromNormatives,
@@ -581,6 +582,7 @@ export async function runDoorWidthCheck(options: {
   source: NormAuditSource;
   nearLimitToleranceMm?: number;
   egressOnly?: boolean;
+  snapshot?: NormAuditRevitSnapshot;
 }): Promise<DoorWidthRunnerResult> {
   if (!(options.minWidthMm > 0)) {
     return {
@@ -598,11 +600,13 @@ export async function runDoorWidthCheck(options: {
     };
   }
 
-  const rawResponse = await withRevitConnection(async (revitClient) => {
-    return await revitClient.sendCommand("get_door_egress_info", {
-      levelName: options.levelName,
-    });
-  });
+  const rawResponse =
+    options.snapshot?.doorEgressInfo ??
+    (await withRevitConnection(async (revitClient) => {
+      return await revitClient.sendCommand("get_door_egress_info", {
+        levelName: options.levelName,
+      });
+    }));
 
   const raw = z
     .object({
@@ -715,6 +719,7 @@ export async function runTambourSizeCheck(options: {
   minSideMm: number;
   source: NormAuditSource;
   nearLimitToleranceMm?: number;
+  snapshot?: NormAuditRevitSnapshot;
 }): Promise<TambourSizeRunnerResult> {
   if (!(options.minSideMm > 0)) {
     return {
@@ -731,12 +736,14 @@ export async function runTambourSizeCheck(options: {
     };
   }
 
-  const rawResponse = await withRevitConnection(async (revitClient) => {
-    return await revitClient.sendCommand("get_room_geometry_metrics", {
-      levelName: options.levelName,
-      includeUnplacedRooms: false,
-    });
-  });
+  const rawResponse =
+    options.snapshot?.roomGeometryMetrics ??
+    (await withRevitConnection(async (revitClient) => {
+      return await revitClient.sendCommand("get_room_geometry_metrics", {
+        levelName: options.levelName,
+        includeUnplacedRooms: false,
+      });
+    }));
 
   const raw = z
     .object({
@@ -824,13 +831,16 @@ export async function runAccessibilityRoomsCheck(options: {
   levelName: string;
   includeCompliant: boolean;
   nearLimitToleranceMm?: number;
+  snapshot?: NormAuditRevitSnapshot;
 }): Promise<AccessibilityRoomsRunnerResult> {
-  const rawResponse = await withRevitConnection(async (revitClient) => {
-    return await revitClient.sendCommand("get_room_geometry_metrics", {
-      levelName: options.levelName,
-      includeUnplacedRooms: false,
-    });
-  });
+  const rawResponse =
+    options.snapshot?.roomGeometryMetrics ??
+    (await withRevitConnection(async (revitClient) => {
+      return await revitClient.sendCommand("get_room_geometry_metrics", {
+        levelName: options.levelName,
+        includeUnplacedRooms: false,
+      });
+    }));
 
   const raw = z
     .object({
@@ -916,12 +926,15 @@ export async function runAccessibilityDoorsCheck(options: {
   levelName: string;
   includeCompliant: boolean;
   nearLimitToleranceMm?: number;
+  snapshot?: NormAuditRevitSnapshot;
 }): Promise<AccessibilityDoorsRunnerResult> {
-  const rawResponse = await withRevitConnection(async (revitClient) => {
-    return await revitClient.sendCommand("get_door_egress_info", {
-      levelName: options.levelName,
-    });
-  });
+  const rawResponse =
+    options.snapshot?.doorEgressInfo ??
+    (await withRevitConnection(async (revitClient) => {
+      return await revitClient.sendCommand("get_door_egress_info", {
+        levelName: options.levelName,
+      });
+    }));
   const raw = z
     .object({
       success: z.boolean(),
@@ -1106,13 +1119,18 @@ type ExportedRoomRow = RoomAreaInput & {
   floorThicknessMm?: number;
 };
 
-async function fetchExportRoomData(levelName: string): Promise<ExportedRoomRow[]> {
-  const rawResponse = await withRevitConnection(async (revitClient) => {
-    return await revitClient.sendCommand("export_room_data", {
-      includeUnplacedRooms: false,
-      includeNotEnclosedRooms: false,
-    });
-  });
+async function fetchExportRoomData(
+  levelName: string,
+  snapshot?: NormAuditRevitSnapshot
+): Promise<ExportedRoomRow[]> {
+  const rawResponse =
+    snapshot?.exportRoomData ??
+    (await withRevitConnection(async (revitClient) => {
+      return await revitClient.sendCommand("export_room_data", {
+        includeUnplacedRooms: false,
+        includeNotEnclosedRooms: false,
+      });
+    }));
 
   const raw = z
     .object({
@@ -1147,10 +1165,14 @@ async function fetchExportRoomData(levelName: string): Promise<ExportedRoomRow[]
     }));
 }
 
-async function fetchTepLevels(): Promise<LevelElevation[]> {
-  const rawResponse = await withRevitConnection(async (revitClient) => {
-    return await revitClient.sendCommand("export_tep_data", {});
-  });
+async function fetchTepLevels(
+  snapshot?: NormAuditRevitSnapshot
+): Promise<LevelElevation[]> {
+  const rawResponse =
+    snapshot?.exportTepData ??
+    (await withRevitConnection(async (revitClient) => {
+      return await revitClient.sendCommand("export_tep_data", {});
+    }));
   const raw = z
     .object({
       success: z.boolean(),
@@ -1177,6 +1199,7 @@ export async function runRoomAreaCheck(options: {
   includeCompliant: boolean;
   limits: RoomAreaLimit[];
   nearLimitToleranceM2?: number;
+  snapshot?: NormAuditRevitSnapshot;
 }): Promise<RoomAreaRunnerResult> {
   if (options.limits.length === 0) {
     return {
@@ -1192,7 +1215,7 @@ export async function runRoomAreaCheck(options: {
     };
   }
 
-  const rooms = await fetchExportRoomData(options.levelName);
+  const rooms = await fetchExportRoomData(options.levelName, options.snapshot);
   const classified = classifyRoomAreas(rooms, {
     limits: options.limits,
     nearLimitToleranceM2: options.nearLimitToleranceM2 ?? 0.5,
@@ -1239,6 +1262,7 @@ export async function runRoomHeightCheck(options: {
   minHeightMm: number;
   source: NormAuditSource;
   nearLimitToleranceMm?: number;
+  snapshot?: NormAuditRevitSnapshot;
 }): Promise<RoomHeightRunnerResult> {
   if (!(options.minHeightMm > 0)) {
     return {
@@ -1256,8 +1280,8 @@ export async function runRoomHeightCheck(options: {
   }
 
   const [rooms, levels] = await Promise.all([
-    fetchExportRoomData(options.levelName),
-    fetchTepLevels().catch(() => [] as LevelElevation[]),
+    fetchExportRoomData(options.levelName, options.snapshot),
+    fetchTepLevels(options.snapshot).catch(() => [] as LevelElevation[]),
   ]);
 
   const resolvedRooms: RoomHeightInput[] = rooms.map((room) => {
@@ -1343,6 +1367,7 @@ export async function runStoreyHeightCheck(options: {
   minStoreyHeightMm: number;
   source: NormAuditSource;
   nearLimitToleranceMm?: number;
+  snapshot?: NormAuditRevitSnapshot;
 }): Promise<StoreyHeightRunnerResult> {
   if (!(options.minStoreyHeightMm > 0)) {
     return {
@@ -1359,9 +1384,11 @@ export async function runStoreyHeightCheck(options: {
     };
   }
 
-  const rawResponse = await withRevitConnection(async (revitClient) => {
-    return await revitClient.sendCommand("export_tep_data", {});
-  });
+  const rawResponse =
+    options.snapshot?.exportTepData ??
+    (await withRevitConnection(async (revitClient) => {
+      return await revitClient.sendCommand("export_tep_data", {});
+    }));
 
   const raw = z
     .object({
@@ -1510,12 +1537,17 @@ export interface OpeningHeightRunnerResult {
   warnings: string[];
 }
 
-async function fetchOpeningGeometry(levelName: string) {
-  const rawResponse = await withRevitConnection(async (revitClient) => {
-    return await revitClient.sendCommand("get_opening_geometry_info", {
-      levelName,
-    });
-  });
+async function fetchOpeningGeometry(
+  levelName: string,
+  snapshot?: NormAuditRevitSnapshot
+) {
+  const rawResponse =
+    snapshot?.openingGeometryInfo ??
+    (await withRevitConnection(async (revitClient) => {
+      return await revitClient.sendCommand("get_opening_geometry_info", {
+        levelName,
+      });
+    }));
 
   return z
     .object({
@@ -1537,6 +1569,7 @@ export async function runWindowSillCheck(options: {
   minSillHeightMm: number;
   source: NormAuditSource;
   nearLimitToleranceMm?: number;
+  snapshot?: NormAuditRevitSnapshot;
 }): Promise<WindowSillRunnerResult> {
   if (!(options.minSillHeightMm > 0)) {
     return {
@@ -1553,7 +1586,7 @@ export async function runWindowSillCheck(options: {
     };
   }
 
-  const raw = await fetchOpeningGeometry(options.levelName);
+  const raw = await fetchOpeningGeometry(options.levelName, options.snapshot);
   if (!raw.success) {
     return {
       success: false,
@@ -1621,6 +1654,7 @@ export async function runOpeningHeightCheck(options: {
   source: NormAuditSource;
   nearLimitToleranceMm?: number;
   egressDoorsOnly?: boolean;
+  snapshot?: NormAuditRevitSnapshot;
 }): Promise<OpeningHeightRunnerResult> {
   if (!(options.minHeightMm > 0)) {
     return {
@@ -1637,7 +1671,7 @@ export async function runOpeningHeightCheck(options: {
     };
   }
 
-  const raw = await fetchOpeningGeometry(options.levelName);
+  const raw = await fetchOpeningGeometry(options.levelName, options.snapshot);
   if (!raw.success) {
     return {
       success: false,
@@ -1756,12 +1790,17 @@ const verticalCirculationSchema = z.object({
     .default([]),
 });
 
-async function fetchVerticalCirculation(levelName: string) {
-  const rawResponse = await withRevitConnection(async (revitClient) => {
-    return await revitClient.sendCommand("get_vertical_circulation_info", {
-      levelName,
-    });
-  });
+async function fetchVerticalCirculation(
+  levelName: string,
+  snapshot?: NormAuditRevitSnapshot
+) {
+  const rawResponse =
+    snapshot?.verticalCirculationInfo ??
+    (await withRevitConnection(async (revitClient) => {
+      return await revitClient.sendCommand("get_vertical_circulation_info", {
+        levelName,
+      });
+    }));
   return verticalCirculationSchema.parse(rawResponse);
 }
 
@@ -1783,6 +1822,7 @@ export async function runStairWidthCheck(options: {
   minWidthMm: number;
   source: NormAuditSource;
   nearLimitToleranceMm?: number;
+  snapshot?: NormAuditRevitSnapshot;
 }): Promise<StairWidthRunnerResult> {
   if (!(options.minWidthMm > 0)) {
     return {
@@ -1797,7 +1837,7 @@ export async function runStairWidthCheck(options: {
       warnings: [],
     };
   }
-  const raw = await fetchVerticalCirculation(options.levelName);
+  const raw = await fetchVerticalCirculation(options.levelName, options.snapshot);
   if (!raw.success) {
     return {
       success: false,
@@ -1851,8 +1891,9 @@ export async function runStairRiserTreadCheck(options: {
   maxRiserMm?: number | null;
   minTreadMm?: number | null;
   source: NormAuditSource;
+  snapshot?: NormAuditRevitSnapshot;
 }): Promise<StairRiserTreadRunnerResult> {
-  const raw = await fetchVerticalCirculation(options.levelName);
+  const raw = await fetchVerticalCirculation(options.levelName, options.snapshot);
   if (!raw.success) {
     return {
       success: false,
@@ -1905,8 +1946,9 @@ export async function runRampCheck(options: {
   minWidthMm?: number | null;
   maxSlopePercent?: number | null;
   source: NormAuditSource;
+  snapshot?: NormAuditRevitSnapshot;
 }): Promise<RampRunnerResult> {
-  const raw = await fetchVerticalCirculation(options.levelName);
+  const raw = await fetchVerticalCirculation(options.levelName, options.snapshot);
   if (!raw.success) {
     return {
       success: false,
@@ -1957,6 +1999,7 @@ export async function runRailingHeightCheck(options: {
   includeCompliant: boolean;
   minHeightMm: number;
   source: NormAuditSource;
+  snapshot?: NormAuditRevitSnapshot;
 }): Promise<RailingHeightRunnerResult> {
   if (!(options.minHeightMm > 0)) {
     return {
@@ -1971,7 +2014,7 @@ export async function runRailingHeightCheck(options: {
       warnings: [],
     };
   }
-  const raw = await fetchVerticalCirculation(options.levelName);
+  const raw = await fetchVerticalCirculation(options.levelName, options.snapshot);
   if (!raw.success) {
     return {
       success: false,

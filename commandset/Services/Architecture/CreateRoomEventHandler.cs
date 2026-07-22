@@ -451,8 +451,8 @@ namespace RevitMCPCommandSet.Services.Architecture
         /// <returns>True if completed before timeout</returns>
         public bool WaitForCompletion(int timeoutMilliseconds = 10000)
         {
-            _resetEvent.Reset();
-        return _resetEvent.WaitOne(timeoutMilliseconds);
+            // Do not Reset here - SetParameters/Prepare already Reset before Raise.
+            return _resetEvent.WaitOne(timeoutMilliseconds);
         }
 
         /// <summary>

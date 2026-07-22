@@ -5,12 +5,12 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerGetMaterialQuantitiesTool(server: McpServer) {
   server.tool(
     "get_material_quantities",
-    "Calculate material quantities and takeoffs from the current Revit project. Returns detailed information about each material including name, class, area, volume, and element counts. Useful for cost estimation, material ordering, and sustainability analysis.",
+    "Calculate material quantities and takeoffs from the current Revit project. Returns detailed information about each material including name, class, area, volume, and element counts. Prefer categoryFilters (e.g. OST_Walls, OST_Floors) or selectedElementsOnly=true — unfiltered whole-model takeoff is slow on large projects.",
     {
       categoryFilters: z
         .array(z.string())
         .optional()
-        .describe("Optional list of Revit category names to filter by (e.g., ['OST_Walls', 'OST_Floors', 'OST_Roofs']). If not specified, all categories are included."),
+        .describe("Recommended. List of Revit category names to filter by (e.g., ['OST_Walls', 'OST_Floors', 'OST_Roofs']). If omitted, all instance elements are scanned (slow on large models)."),
       selectedElementsOnly: z
         .boolean()
         .optional()
@@ -32,7 +32,7 @@ export function registerGetMaterialQuantitiesTool(server: McpServer) {
           content: [
             {
               type: "text",
-              text: JSON.stringify(response, null, 2),
+              text: JSON.stringify(response),
             },
           ],
         };

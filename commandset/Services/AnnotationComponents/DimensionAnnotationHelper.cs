@@ -128,14 +128,30 @@ public static class DimensionAnnotationHelper
         XYZ dimensionDirection,
         double pickToleranceMm = DefaultPickToleranceMm)
     {
-        var collector = new FilteredElementCollector(doc, view.Id);
-        var elements = collector.WhereElementIsNotElementType().ToElements();
+        // Restrict to dimensionable categories — scanning every view element is very slow on large plans.
+        var dimensionCategories = new List<BuiltInCategory>
+        {
+            BuiltInCategory.OST_Walls,
+            BuiltInCategory.OST_Grids,
+            BuiltInCategory.OST_StructuralColumns,
+            BuiltInCategory.OST_Columns,
+            BuiltInCategory.OST_StructuralFraming,
+            BuiltInCategory.OST_Lines,
+            BuiltInCategory.OST_RoomSeparationLines,
+            BuiltInCategory.OST_Stairs,
+            BuiltInCategory.OST_Doors,
+            BuiltInCategory.OST_Windows,
+        };
+
+        var collector = new FilteredElementCollector(doc, view.Id)
+            .WhereElementIsNotElementType()
+            .WherePasses(new ElementMulticategoryFilter(dimensionCategories));
 
         Element closestElement = null;
         var minDistance = double.MaxValue;
         var toleranceFeet = pickToleranceMm * MillimetersToFeet;
 
-        foreach (var element in elements)
+        foreach (var element in collector)
         {
             if (element.Location == null)
                 continue;

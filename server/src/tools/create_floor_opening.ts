@@ -138,7 +138,7 @@ export function registerCreateFloorOpeningTool(server: McpServer) {
           content: [
             {
               type: "text",
-              text: JSON.stringify(response ?? { success: false }, null, 2),
+              text: JSON.stringify(response ?? { success: false }),
             },
           ],
         };

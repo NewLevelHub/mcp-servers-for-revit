@@ -31,6 +31,7 @@ namespace RevitMCPCommandSet.Commands.Test
                     }
 
                     _handler.Message = message;
+                    _handler.Prepare();
 
                     if (RaiseAndWaitForCompletion(15000))
                     {

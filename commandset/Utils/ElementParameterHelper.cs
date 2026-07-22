@@ -20,21 +20,24 @@ public static class ElementParameterHelper
                 string.Equals(param.Definition.Name, parameterName, StringComparison.OrdinalIgnoreCase));
     }
 
-    public static ElementParameterInfo ToParameterInfo(Parameter parameter, Document doc)
+    public static ElementParameterInfo ToParameterInfo(Parameter parameter, Document doc, bool slim = false)
     {
         var info = new ElementParameterInfo
         {
             Name = parameter.Definition.Name,
             StorageType = parameter.StorageType.ToString(),
-            UnitType = GetUnitTypeLabel(parameter),
             IsReadOnly = parameter.IsReadOnly,
             HasValue = parameter.HasValue,
-            IsShared = parameter.IsShared,
-            BuiltInParameter = GetBuiltInParameterName(parameter),
             DisplayValue = parameter.HasValue ? parameter.AsValueString() ?? string.Empty : string.Empty,
-            RawValue = GetRawValue(parameter, doc)
         };
 
+        if (slim)
+            return info;
+
+        info.UnitType = GetUnitTypeLabel(parameter);
+        info.IsShared = parameter.IsShared;
+        info.BuiltInParameter = GetBuiltInParameterName(parameter);
+        info.RawValue = GetRawValue(parameter, doc);
         return info;
     }
 

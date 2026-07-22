@@ -22,6 +22,9 @@ public class GetElementParametersCommand : ExternalEventCommandBase
             ?? throw new ArgumentException("elementId is required.");
 
         _handler.TargetElementId = elementId;
+        _handler.ParameterNames = parameters?["parameterNames"]?.ToObject<List<string>>();
+        _handler.Slim = parameters?["slim"]?.Value<bool>() ?? false;
+        _handler.Prepare();
 
         if (RaiseAndWaitForCompletion(30000))
             return _handler.Result;

@@ -999,12 +999,53 @@ namespace RevitMCPCommandSet.Utils
             if (doc == null)
                 throw new ArgumentNullException(nameof(doc), "文档不能为空");
 
-            // 直接使用LINQ查询获取距离最近的标高
+            return FindNearestLevel(GetAllLevels(doc), height);
+        }
+
+        /// <summary>
+        /// Collect levels once per handler Execute; pass into FindNearestLevel to avoid N collectors.
+        /// </summary>
+        public static IList<Level> GetAllLevels(this Document doc)
+        {
+            if (doc == null)
+                throw new ArgumentNullException(nameof(doc), "文档不能为空");
+
             return new FilteredElementCollector(doc)
                 .OfClass(typeof(Level))
                 .Cast<Level>()
-                .OrderBy(level => Math.Abs(level.Elevation - height))
-                .FirstOrDefault();
+                .ToList();
+        }
+
+        /// <summary>
+        /// Find nearest level from a preloaded list (no document scan).
+        /// </summary>
+        public static Level FindNearestLevel(IList<Level> levels, double height)
+        {
+            if (levels == null || levels.Count == 0)
+                return null;
+
+            Level nearest = null;
+            double best = double.MaxValue;
+            for (int i = 0; i < levels.Count; i++)
+            {
+                double distance = Math.Abs(levels[i].Elevation - height);
+                if (distance < best)
+                {
+                    best = distance;
+                    nearest = levels[i];
+                }
+            }
+            return nearest;
+        }
+
+        /// <summary>
+        /// Find nearest level using a preloaded list.
+        /// </summary>
+        public static Level FindNearestLevel(this Document doc, double height, IList<Level> levels)
+        {
+            if (levels != null && levels.Count > 0)
+                return FindNearestLevel(levels, height);
+            return doc.FindNearestLevel(height);
         }
 
         ///// <summary>

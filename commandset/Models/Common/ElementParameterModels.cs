@@ -70,3 +70,15 @@ public class SetElementParameterResult
     [JsonProperty("newDisplayValue")]
     public string NewDisplayValue { get; set; } = string.Empty;
 }
+
+public class ElementsParametersBatchResult
+{
+    [JsonProperty("success")]
+    public bool Success { get; set; }
+
+    [JsonProperty("message")]
+    public string Message { get; set; } = string.Empty;
+
+    [JsonProperty("results")]
+    public List<ElementParametersResult> Results { get; set; } = new();
+}

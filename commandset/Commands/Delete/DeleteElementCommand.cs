@@ -32,6 +32,7 @@ namespace RevitMCPCommandSet.Commands.Delete
 
                     // 设置要删除的元素ID数组
                     _handler.ElementIds = elementIds;
+                    _handler.Prepare();
 
                     // 触发外部事件并等待完成
                     if (RaiseAndWaitForCompletion(15000))
