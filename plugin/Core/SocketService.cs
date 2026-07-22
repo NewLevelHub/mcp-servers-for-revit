@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -156,18 +157,18 @@ namespace revit_mcp_plugin.Core
         {
             TcpClient tcpClient = (TcpClient)clientObj;
             NetworkStream stream = tcpClient.GetStream();
+            var readBuffer = new List<byte>();
+            var chunk = new byte[8192];
 
             try
             {
-                byte[] buffer = new byte[8192];
-
                 while (_isRunning && tcpClient.Connected)
                 {
                     int bytesRead = 0;
 
                     try
                     {
-                        bytesRead = stream.Read(buffer, 0, buffer.Length);
+                        bytesRead = stream.Read(chunk, 0, chunk.Length);
                     }
                     catch (IOException)
                     {
@@ -179,11 +180,16 @@ namespace revit_mcp_plugin.Core
                         break;
                     }
 
-                    string message = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-                    string response = ProcessJsonRPCRequest(message);
+                    for (int i = 0; i < bytesRead; i++)
+                    {
+                        readBuffer.Add(chunk[i]);
+                    }
 
-                    byte[] responseData = Encoding.UTF8.GetBytes(response);
-                    stream.Write(responseData, 0, responseData.Length);
+                    while (TryExtractFramedMessage(readBuffer, out string message))
+                    {
+                        string response = ProcessJsonRPCRequest(message);
+                        WriteFramedMessage(stream, response);
+                    }
                 }
             }
             catch(Exception)
@@ -194,6 +200,39 @@ namespace revit_mcp_plugin.Core
             {
                 tcpClient.Close();
             }
+        }
+
+        private const int MaxFrameBytes = 50 * 1024 * 1024;
+
+        private static bool TryExtractFramedMessage(List<byte> buffer, out string message)
+        {
+            message = null;
+            if (buffer.Count < 4)
+                return false;
+
+            int length = (buffer[0] << 24) | (buffer[1] << 16) | (buffer[2] << 8) | buffer[3];
+            if (length <= 0 || length > MaxFrameBytes)
+                throw new InvalidDataException($"Invalid TCP frame length: {length}");
+
+            int totalLength = 4 + length;
+            if (buffer.Count < totalLength)
+                return false;
+
+            message = Encoding.UTF8.GetString(buffer.GetRange(4, length).ToArray());
+            buffer.RemoveRange(0, totalLength);
+            return true;
+        }
+
+        private static void WriteFramedMessage(NetworkStream stream, string json)
+        {
+            byte[] body = Encoding.UTF8.GetBytes(json);
+            byte[] header = new byte[4];
+            header[0] = (byte)((body.Length >> 24) & 0xFF);
+            header[1] = (byte)((body.Length >> 16) & 0xFF);
+            header[2] = (byte)((body.Length >> 8) & 0xFF);
+            header[3] = (byte)(body.Length & 0xFF);
+            stream.Write(header, 0, header.Length);
+            stream.Write(body, 0, body.Length);
         }
 
         private string ProcessJsonRPCRequest(string requestJson)

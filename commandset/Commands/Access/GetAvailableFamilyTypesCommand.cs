@@ -32,6 +32,7 @@ namespace RevitMCPCommandSet.Commands.Access
                     _handler.CategoryList = categoryList;
                     _handler.FamilyNameFilter = familyNameFilter;
                     _handler.Limit = limit;
+                    _handler.Prepare();
 
                     // 触发外部事件并等待完成，最多等待15秒
                     if (RaiseAndWaitForCompletion(15000))

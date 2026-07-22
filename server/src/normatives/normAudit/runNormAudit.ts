@@ -94,6 +94,10 @@ import type {
   NormAuditSource,
 } from "./types.js";
 import { toAuditSource } from "./types.js";
+import {
+  fetchNormAuditSnapshot,
+  type NormAuditRevitSnapshot,
+} from "./auditSnapshot.js";
 
 export interface NormAuditDeps {
   db?: Database;
@@ -1383,27 +1387,53 @@ export async function runNormAudit(
   const checkers = selectPhase1Checkers(topics);
   const skippedRules = selectSkippedRules(topics);
 
+  let revitSnapshot: NormAuditRevitSnapshot | undefined;
+  const prefetchWarnings: string[] = [];
+  try {
+    revitSnapshot = await fetchNormAuditSnapshot(levelName);
+  } catch (error) {
+    prefetchWarnings.push(
+      `Prefetch norm-audit snapshot skipped: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+
+  const bindSnapshot = <
+    TArgs extends { snapshot?: NormAuditRevitSnapshot },
+    TResult,
+  >(
+    runner: (opts: TArgs) => Promise<TResult>
+  ): ((opts: Omit<TArgs, "snapshot">) => Promise<TResult>) => {
+    return (opts) =>
+      runner({
+        ...(opts as Omit<TArgs, "snapshot">),
+        snapshot: revitSnapshot,
+      } as TArgs);
+  };
+
   const resolvedDeps = {
     db: deps.db,
     runEvacuation: deps.runEvacuation ?? runEvacuationWidthCheck,
     runRoomDepth: deps.runRoomDepth ?? runRoomDepthCheck,
     runMinDimensions: deps.runMinDimensions ?? runMinDimensionsCheck,
     runFireDoors: deps.runFireDoors ?? runFireDoorsCheck,
-    runDoorWidth: deps.runDoorWidth ?? runDoorWidthCheck,
-    runTambourSize: deps.runTambourSize ?? runTambourSizeCheck,
+    runDoorWidth: deps.runDoorWidth ?? bindSnapshot(runDoorWidthCheck),
+    runTambourSize: deps.runTambourSize ?? bindSnapshot(runTambourSizeCheck),
     runAccessibilityRooms:
-      deps.runAccessibilityRooms ?? runAccessibilityRoomsCheck,
+      deps.runAccessibilityRooms ?? bindSnapshot(runAccessibilityRoomsCheck),
     runAccessibilityDoors:
-      deps.runAccessibilityDoors ?? runAccessibilityDoorsCheck,
-    runRoomArea: deps.runRoomArea ?? runRoomAreaCheck,
-    runRoomHeight: deps.runRoomHeight ?? runRoomHeightCheck,
-    runStoreyHeight: deps.runStoreyHeight ?? runStoreyHeightCheck,
-    runWindowSill: deps.runWindowSill ?? runWindowSillCheck,
-    runOpeningHeight: deps.runOpeningHeight ?? runOpeningHeightCheck,
-    runStairWidth: deps.runStairWidth ?? runStairWidthCheck,
-    runStairRiserTread: deps.runStairRiserTread ?? runStairRiserTreadCheck,
-    runRamp: deps.runRamp ?? runRampCheck,
-    runRailingHeight: deps.runRailingHeight ?? runRailingHeightCheck,
+      deps.runAccessibilityDoors ?? bindSnapshot(runAccessibilityDoorsCheck),
+    runRoomArea: deps.runRoomArea ?? bindSnapshot(runRoomAreaCheck),
+    runRoomHeight: deps.runRoomHeight ?? bindSnapshot(runRoomHeightCheck),
+    runStoreyHeight: deps.runStoreyHeight ?? bindSnapshot(runStoreyHeightCheck),
+    runWindowSill: deps.runWindowSill ?? bindSnapshot(runWindowSillCheck),
+    runOpeningHeight: deps.runOpeningHeight ?? bindSnapshot(runOpeningHeightCheck),
+    runStairWidth: deps.runStairWidth ?? bindSnapshot(runStairWidthCheck),
+    runStairRiserTread:
+      deps.runStairRiserTread ?? bindSnapshot(runStairRiserTreadCheck),
+    runRamp: deps.runRamp ?? bindSnapshot(runRampCheck),
+    runRailingHeight: deps.runRailingHeight ?? bindSnapshot(runRailingHeightCheck),
     resolveDepthLimit:
       deps.resolveDepthLimit ?? resolveRoomDepthLimitFromLibrary,
     resolveDoorWidth:
@@ -1432,7 +1462,7 @@ export async function runNormAudit(
 
   const findings: NormAuditFinding[] = [];
   const checks: NormAuditCheckRunSummary[] = [];
-  const warnings: string[] = [];
+  const warnings: string[] = [...prefetchWarnings];
 
   for (const checker of checkers) {
     const part = await runOneChecker(checker, {

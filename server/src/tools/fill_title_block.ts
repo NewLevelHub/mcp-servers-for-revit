@@ -94,18 +94,20 @@ async function fetchParametersBatch(
 ): Promise<Map<number, z.infer<typeof parametersResponseSchema>>> {
   const byId = new Map<number, z.infer<typeof parametersResponseSchema>>();
   for (const ids of chunk(elementIds, BATCH_SIZE)) {
-    const response = await revitClient.sendCommand("batch_execute", {
-      commands: ids.map((elementId) => ({
-        command: "get_element_parameters",
-        params: { elementId },
-      })),
+    const response = await revitClient.sendCommand("get_elements_parameters", {
+      elementIds: ids,
+      slim: true,
     });
-    const results = (response as { results?: Array<Record<string, unknown>> })?.results ?? [];
-    for (const item of results) {
-      if (item.success !== true) continue;
-      const parsed = parametersResponseSchema.safeParse(item.result);
-      if (parsed.success && parsed.data.elementId != null) {
-        byId.set(parsed.data.elementId, parsed.data);
+    const batch = z
+      .object({
+        success: z.boolean().optional(),
+        results: z.array(parametersResponseSchema).optional().default([]),
+      })
+      .safeParse(response);
+    if (!batch.success) continue;
+    for (const item of batch.data.results) {
+      if (item.elementId != null) {
+        byId.set(item.elementId, item);
       }
     }
   }
@@ -552,7 +554,7 @@ export function registerFillTitleBlockTool(server: McpServer) {
             { type: "text" as const, text: summaryLine },
             {
               type: "text" as const,
-              text: JSON.stringify({ ...result, warnings }, null, 2),
+              text: JSON.stringify({ ...result, warnings }),
             },
           ],
           isError:

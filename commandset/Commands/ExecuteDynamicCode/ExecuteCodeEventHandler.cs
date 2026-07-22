@@ -42,7 +42,7 @@ namespace RevitMCPCommandSet.Commands.ExecuteDynamicCode
         // 等待执行完成 - IWaitableExternalEventHandler接口实现
         public bool WaitForCompletion(int timeoutMilliseconds = 10000)
         {
-            _resetEvent.Reset();
+            // Do not Reset here - SetParameters/Prepare already Reset before Raise.
             return _resetEvent.WaitOne(timeoutMilliseconds);
         }
 

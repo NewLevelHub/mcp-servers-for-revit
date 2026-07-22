@@ -18,6 +18,8 @@ public class GetDocumentStylesCommand : ExternalEventCommandBase
 
     public override object Execute(JObject parameters, string requestId)
     {
+        _handler.IncludeGraphicsStyles = parameters?["includeGraphicsStyles"]?.Value<bool>() ?? false;
+        _handler.Prepare();
         if (RaiseAndWaitForCompletion(30000))
             return _handler.ResultInfo;
 

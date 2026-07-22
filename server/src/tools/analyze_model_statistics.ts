@@ -37,7 +37,7 @@ export function registerAnalyzeModelStatisticsTool(server: McpServer) {
               content: [
                 {
                   type: "text",
-                  text: JSON.stringify(asStatisticsResult(cached, true), null, 2),
+                  text: JSON.stringify(asStatisticsResult(cached, true)),
                 },
               ],
             };
@@ -72,7 +72,7 @@ export function registerAnalyzeModelStatisticsTool(server: McpServer) {
           content: [
             {
               type: "text",
-              text: JSON.stringify(asStatisticsResult(result, false), null, 2),
+              text: JSON.stringify(asStatisticsResult(result, false)),
             },
           ],
         };

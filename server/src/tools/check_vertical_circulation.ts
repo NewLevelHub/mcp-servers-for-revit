@@ -232,7 +232,7 @@ export function registerCheckVerticalCirculationTool(server: McpServer) {
       }
 
       payload.success = !hadError;
-      sections.push("", "```json", JSON.stringify(payload, null, 2), "```");
+      sections.push("", "```json", JSON.stringify(payload), "```");
 
       return {
         content: [{ type: "text", text: sections.join("\n") }],

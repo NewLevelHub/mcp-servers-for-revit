@@ -259,6 +259,11 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "get_elements_parameters",
+      "description": "Read parameters for multiple elements in one ExternalEvent (batch, max 100 ids)",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "set_element_parameter",
       "description": "Write a parameter value on an element by id inside a transaction",
       "assemblyPath": "RevitMCPCommandSet.dll"

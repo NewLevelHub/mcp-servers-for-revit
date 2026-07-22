@@ -14,9 +14,17 @@ namespace RevitMCPCommandSet.Services
         private readonly ManualResetEvent _resetEvent = new ManualResetEvent(false);
 
         // 实现IWaitableExternalEventHandler接口
+                /// <summary>
+        /// Reset wait state before ExternalEvent.Raise. Must be called from the command before RaiseAndWaitForCompletion.
+        /// </summary>
+        public void Prepare()
+        {
+            TaskCompleted = false;
+            _resetEvent.Reset();
+        }
         public bool WaitForCompletion(int timeoutMilliseconds = 10000)
         {
-            _resetEvent.Reset();
+            // Do not Reset here - SetParameters/Prepare already Reset before Raise.
             return _resetEvent.WaitOne(timeoutMilliseconds);
         }
 

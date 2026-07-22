@@ -1,6 +1,7 @@
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using RevitMCPCommandSet.Models.DataExtraction;
+using RevitMCPCommandSet.Utils;
 using RevitMCPSDK.API.Interfaces;
 
 namespace RevitMCPCommandSet.Services.DataExtraction
@@ -24,8 +25,8 @@ namespace RevitMCPCommandSet.Services.DataExtraction
 
         public bool WaitForCompletion(int timeoutMilliseconds = 10000)
         {
-            _resetEvent.Reset();
-        return _resetEvent.WaitOne(timeoutMilliseconds);
+            // Do not Reset here - SetParameters/Prepare already Reset before Raise.
+            return _resetEvent.WaitOne(timeoutMilliseconds);
         }
 
         public void Execute(UIApplication app)
@@ -34,103 +35,41 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             {
                 var uiDoc = app.ActiveUIDocument;
                 var doc = uiDoc.Document;
-
-                // Dictionary to accumulate material quantities
                 var materialData = new Dictionary<ElementId, MaterialQuantityModel>();
 
-                // Get elements to analyze
-                ICollection<Element> elements;
                 if (_selectedElementsOnly)
                 {
-                    var selectedIds = uiDoc.Selection.GetElementIds();
-                    elements = selectedIds.Select(id => doc.GetElement(id)).Where(e => e != null).ToList();
+                    foreach (var id in uiDoc.Selection.GetElementIds())
+                    {
+                        var element = doc.GetElement(id);
+                        if (element != null)
+                            AccumulateMaterialQuantities(doc, element, materialData);
+                    }
                 }
                 else
                 {
                     var collector = new FilteredElementCollector(doc)
                         .WhereElementIsNotElementType();
 
-                    // Apply category filters if specified
                     if (_categoryFilters != null && _categoryFilters.Count > 0)
                     {
                         var builtInCategories = new List<BuiltInCategory>();
                         foreach (var catName in _categoryFilters)
                         {
                             if (Enum.TryParse(catName, out BuiltInCategory cat))
-                            {
                                 builtInCategories.Add(cat);
-                            }
                         }
+
                         if (builtInCategories.Count > 0)
-                        {
-                            var filter = new ElementMulticategoryFilter(builtInCategories);
-                            collector = collector.WherePasses(filter);
-                        }
+                            collector = collector.WherePasses(new ElementMulticategoryFilter(builtInCategories));
                     }
 
-                    elements = collector.ToElements();
+                    // Iterate without ToElements() to avoid materializing the full list.
+                    foreach (Element element in collector)
+                        AccumulateMaterialQuantities(doc, element, materialData);
                 }
 
-                // Process each element
-                foreach (Element element in elements)
-                {
-                    // Get all material ids in the element
-                    var materialIds = element.GetMaterialIds(false);
-
-                    foreach (ElementId matId in materialIds)
-                    {
-                        Material material = doc.GetElement(matId) as Material;
-                        if (material == null) continue;
-
-                        // Initialize material data if not exists
-                        if (!materialData.ContainsKey(matId))
-                        {
-                            materialData[matId] = new MaterialQuantityModel
-                            {
-#if REVIT2024_OR_GREATER
-                                MaterialId = matId.Value,
-#else
-                                MaterialId = matId.IntegerValue,
-#endif
-                                MaterialName = material.Name,
-                                MaterialClass = material.MaterialClass
-                            };
-                        }
-
-                        // Get material area and volume for this element
-                        double area = element.GetMaterialArea(matId, false);
-                        double volume = element.GetMaterialVolume(matId);
-
-                        materialData[matId].Area += area;
-                        materialData[matId].Volume += volume;
-
-#if REVIT2024_OR_GREATER
-                        if (!materialData[matId].ElementIds.Contains(element.Id.Value))
-                        {
-                            materialData[matId].ElementIds.Add(element.Id.Value);
-#else
-                        if (!materialData[matId].ElementIds.Contains(element.Id.IntegerValue))
-                        {
-                            materialData[matId].ElementIds.Add(element.Id.IntegerValue);
-#endif
-                            materialData[matId].ElementCount++;
-                        }
-                    }
-                }
-
-                var materials = materialData.Values.ToList();
-                double totalArea = materials.Sum(m => m.Area);
-                double totalVolume = materials.Sum(m => m.Volume);
-
-                ResultInfo = new GetMaterialQuantitiesResult
-                {
-                    TotalMaterials = materials.Count,
-                    TotalArea = totalArea,
-                    TotalVolume = totalVolume,
-                    Materials = materials,
-                    Success = true,
-                    Message = $"Successfully calculated quantities for {materials.Count} materials"
-                };
+                ResultInfo = BuildResult(materialData);
             }
             catch (Exception ex)
             {
@@ -145,6 +84,68 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                 TaskCompleted = true;
                 _resetEvent.Set();
             }
+        }
+
+        private static void AccumulateMaterialQuantities(
+            Document doc,
+            Element element,
+            Dictionary<ElementId, MaterialQuantityModel> materialData)
+        {
+            ICollection<ElementId> materialIds;
+            try
+            {
+                materialIds = element.GetMaterialIds(false);
+            }
+            catch
+            {
+                return;
+            }
+
+            foreach (ElementId matId in materialIds)
+            {
+                if (doc.GetElement(matId) is not Material material)
+                    continue;
+
+                if (!materialData.TryGetValue(matId, out var quantity))
+                {
+                    quantity = new MaterialQuantityModel
+                    {
+#if REVIT2024_OR_GREATER
+                        MaterialId = matId.Value,
+#else
+                        MaterialId = matId.IntegerValue,
+#endif
+                        MaterialName = material.Name,
+                        MaterialClass = material.MaterialClass
+                    };
+                    materialData[matId] = quantity;
+                }
+
+                quantity.Area += element.GetMaterialArea(matId, false);
+                quantity.Volume += element.GetMaterialVolume(matId);
+
+                long elementIdValue = element.Id.GetValue();
+                if (!quantity.ElementIds.Contains(elementIdValue))
+                {
+                    quantity.ElementIds.Add(elementIdValue);
+                    quantity.ElementCount++;
+                }
+            }
+        }
+
+        private static GetMaterialQuantitiesResult BuildResult(
+            Dictionary<ElementId, MaterialQuantityModel> materialData)
+        {
+            var materials = materialData.Values.ToList();
+            return new GetMaterialQuantitiesResult
+            {
+                TotalMaterials = materials.Count,
+                TotalArea = materials.Sum(m => m.Area),
+                TotalVolume = materials.Sum(m => m.Volume),
+                Materials = materials,
+                Success = true,
+                Message = $"Successfully calculated quantities for {materials.Count} materials"
+            };
         }
 
         public string GetName()

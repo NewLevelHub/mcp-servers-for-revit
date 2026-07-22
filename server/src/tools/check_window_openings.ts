@@ -200,7 +200,7 @@ export function registerCheckWindowOpeningsTool(server: McpServer) {
         return {
           content: [
             { type: "text", text: sections.join("\n") },
-            { type: "text", text: JSON.stringify(payload, null, 2) },
+            { type: "text", text: JSON.stringify(payload) },
           ],
           isError: hadError,
         };

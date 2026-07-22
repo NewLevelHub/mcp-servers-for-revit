@@ -48,6 +48,7 @@ namespace RevitMCPCommandSet.Services
                 using (Transaction transaction = new Transaction(doc, "Create line-based elements"))
                 {
                     transaction.Start();
+                    IList<Level> levels = doc.GetAllLevels();
 
                     for (int index = 0; index < requestedCount; index++)
                     {
@@ -57,7 +58,7 @@ namespace RevitMCPCommandSet.Services
                         BuiltInCategory builtInCategory = BuiltInCategory.INVALID;
                         Enum.TryParse(data.Category?.Replace(".", "") ?? "", true, out builtInCategory);
 
-                        Level baseLevel = doc.FindNearestLevel(data.BaseLevel / 304.8);
+                        Level baseLevel = ProjectUtils.FindNearestLevel(levels, data.BaseLevel / 304.8);
                         if (baseLevel == null)
                         {
                             errors.Add($"[{index}] No level found near baseLevel={data.BaseLevel} mm.");
@@ -65,7 +66,7 @@ namespace RevitMCPCommandSet.Services
                         }
 
                         double baseOffset = (data.BaseOffset + data.BaseLevel) / 304.8 - baseLevel.Elevation;
-                        Level topLevel = doc.FindNearestLevel((data.BaseLevel + data.BaseOffset + data.Height) / 304.8);
+                        Level topLevel = ProjectUtils.FindNearestLevel(levels, (data.BaseLevel + data.BaseOffset + data.Height) / 304.8);
                         double topOffset = (data.BaseLevel + data.BaseOffset + data.Height) / 304.8 - topLevel.Elevation;
 
                         FamilySymbol symbol = null;

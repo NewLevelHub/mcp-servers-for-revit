@@ -466,7 +466,7 @@ namespace RevitMCPCommandSet.Services
 
         public bool WaitForCompletion(int timeoutMilliseconds = 10000)
         {
-            _resetEvent.Reset();
+            // Do not Reset here - SetParameters/Prepare already Reset before Raise.
             return _resetEvent.WaitOne(timeoutMilliseconds);
         }
 

@@ -48,11 +48,16 @@ export function getCommandMetricsLogPath(): string {
 
 function logCommandMetrics(metrics: CommandMetrics): void {
   const line = JSON.stringify(metrics);
+  // Keep stderr sync for live diagnostics; file I/O is async so it stays off the hot path.
   console.error(`[METRICS] ${line}`);
 
   try {
     ensureLogDir();
-    fs.appendFileSync(getMetricsLogPath(), line + "\n", "utf8");
+    fs.appendFile(getMetricsLogPath(), line + "\n", "utf8", (error) => {
+      if (error) {
+        console.error("Failed to write command metrics log:", error);
+      }
+    });
   } catch (error) {
     console.error("Failed to write command metrics log:", error);
   }

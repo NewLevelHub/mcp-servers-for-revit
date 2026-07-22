@@ -48,6 +48,7 @@ namespace RevitMCPCommandSet.Services
                 using (Transaction transaction = new Transaction(doc, "Create surface-based elements"))
                 {
                     transaction.Start();
+                    IList<Level> levels = doc.GetAllLevels();
 
                     for (int index = 0; index < requestedCount; index++)
                     {
@@ -57,7 +58,7 @@ namespace RevitMCPCommandSet.Services
                         BuiltInCategory builtInCategory = BuiltInCategory.INVALID;
                         Enum.TryParse(data.Category?.Replace(".", "").Replace("BuiltInCategory", "") ?? "", true, out builtInCategory);
 
-                        Level baseLevel = doc.FindNearestLevel(data.BaseLevel / 304.8);
+                        Level baseLevel = ProjectUtils.FindNearestLevel(levels, data.BaseLevel / 304.8);
                         if (baseLevel == null)
                         {
                             errors.Add($"[{index}] No level found near baseLevel={data.BaseLevel} mm.");

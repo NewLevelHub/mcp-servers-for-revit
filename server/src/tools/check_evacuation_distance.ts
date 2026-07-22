@@ -312,7 +312,7 @@ export function registerCheckEvacuationDistanceTool(server: McpServer) {
         return {
           content: [
             { type: "text" as const, text: report },
-            { type: "text" as const, text: JSON.stringify(jsonPayload, null, 2) },
+            { type: "text" as const, text: JSON.stringify(jsonPayload) },
           ],
         };
       } catch (error) {

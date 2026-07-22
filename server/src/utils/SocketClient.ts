@@ -38,7 +38,10 @@ export class RevitClientConnection {
   private connectPromise: Promise<void> | null = null;
   private disconnectCallbacks: Array<() => void> = [];
   responseCallbacks: Map<string, (response: string) => void> = new Map();
-  buffer: string = "";
+  private byteBuffer: Buffer = Buffer.alloc(0);
+
+  /** Max framed JSON payload (50 MB) — guards against corrupt length headers. */
+  private static readonly MAX_FRAME_BYTES = 50 * 1024 * 1024;
 
   constructor(host: string, port: number) {
     this.host = host;
@@ -58,9 +61,8 @@ export class RevitClientConnection {
     });
 
     socket.on("data", (data) => {
-      const dataString = data.toString();
-      this.buffer += dataString;
-      this.processBuffer();
+      this.byteBuffer = Buffer.concat([this.byteBuffer, data]);
+      this.processByteBuffer();
     });
 
     socket.on("close", () => {
@@ -87,7 +89,7 @@ export class RevitClientConnection {
     this.notifyDisconnect();
     this.isConnected = false;
     this.connectPromise = null;
-    this.buffer = "";
+    this.byteBuffer = Buffer.alloc(0);
 
     for (const [requestId, callback] of this.responseCallbacks) {
       callback(
@@ -112,7 +114,7 @@ export class RevitClientConnection {
     this.socket = this.createSocket();
     this.isConnected = false;
     this.connectPromise = null;
-    this.buffer = "";
+    this.byteBuffer = Buffer.alloc(0);
   }
 
   public connect(): Promise<void> {
@@ -196,7 +198,7 @@ export class RevitClientConnection {
     this.intentionallyClosed = true;
     this.connectPromise = null;
     this.isConnected = false;
-    this.buffer = "";
+    this.byteBuffer = Buffer.alloc(0);
 
     for (const [requestId, callback] of this.responseCallbacks) {
       callback(
@@ -218,14 +220,31 @@ export class RevitClientConnection {
     }
   }
 
-  private processBuffer(): void {
-    try {
-      JSON.parse(this.buffer);
-      this.handleResponse(this.buffer);
-      this.buffer = "";
-    } catch {
-      // Incomplete JSON — wait for more data
+  private processByteBuffer(): void {
+    while (this.byteBuffer.length >= 4) {
+      const frameLength = this.byteBuffer.readUInt32BE(0);
+      if (frameLength <= 0 || frameLength > RevitClientConnection.MAX_FRAME_BYTES) {
+        console.error(
+          `Invalid TCP frame length ${frameLength}; clearing buffer`
+        );
+        this.byteBuffer = Buffer.alloc(0);
+        return;
+      }
+      const totalLength = 4 + frameLength;
+      if (this.byteBuffer.length < totalLength) {
+        return;
+      }
+      const json = this.byteBuffer.subarray(4, totalLength).toString("utf8");
+      this.byteBuffer = this.byteBuffer.subarray(totalLength);
+      this.handleResponse(json);
     }
+  }
+
+  private writeFramedMessage(payload: string): void {
+    const body = Buffer.from(payload, "utf8");
+    const header = Buffer.alloc(4);
+    header.writeUInt32BE(body.length, 0);
+    this.socket.write(Buffer.concat([header, body]));
   }
 
   private generateRequestId(): string {
@@ -261,7 +280,20 @@ export class RevitClientConnection {
           id: requestId,
         };
 
+        const timeoutMs = HEAVY_COMMANDS.has(command)
+          ? HEAVY_COMMAND_TIMEOUT_MS
+          : COMMAND_TIMEOUT_MS;
+        let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+
+        const clearCommandTimeout = () => {
+          if (timeoutHandle !== null) {
+            clearTimeout(timeoutHandle);
+            timeoutHandle = null;
+          }
+        };
+
         this.responseCallbacks.set(requestId, (responseData) => {
+          clearCommandTimeout();
           try {
             const response = JSON.parse(responseData);
             if (response.error) {
@@ -281,12 +313,9 @@ export class RevitClientConnection {
         });
 
         const commandString = JSON.stringify(commandObj);
-        this.socket.write(commandString);
+        this.writeFramedMessage(commandString);
 
-        const timeoutMs = HEAVY_COMMANDS.has(command)
-          ? HEAVY_COMMAND_TIMEOUT_MS
-          : COMMAND_TIMEOUT_MS;
-        setTimeout(() => {
+        timeoutHandle = setTimeout(() => {
           if (this.responseCallbacks.has(requestId)) {
             this.responseCallbacks.delete(requestId);
             reject(
