@@ -265,6 +265,9 @@ function topicToTerms(topic: string): string[] {
   // Cross-language / synonym expansion so RU topics hit KZ quotes (REV-46).
   const extras: string[] = [];
   const joined = stems.join(" ");
+  if (/надпис|штамп/i.test(joined)) {
+    extras.push("основная надпись", "штамп", "басты жазу");
+  }
   if (/ширин|width/.test(joined)) extras.push("ені", "еніні");
   if (/коридор|дәліз/.test(joined)) extras.push("дәліз", "коридор");
   if (/эвакуац/.test(joined)) extras.push("эвакуац", "эвакуациял");
@@ -519,6 +522,21 @@ export function scoreRuleAgainstTopic(
     score -= 4;
   }
   if (wantsHeight && quoteHasHeight) score += 4;
+
+  // Topic: title block / штамп (questionnaire 1.4 example).
+  const wantsTitleBlock = /основн.*надпис|штамп|басты жазу|мөр/i.test(topic);
+  if (wantsTitleBlock) {
+    if (
+      /основн.*надпис|штамп|высот.*строк|басты жазу/i.test(
+        `${rule.object} ${tagsNorm} ${quoteNorm}`
+      )
+    ) {
+      score += 14;
+    }
+    if (/банкомат|дисплее|кровл|нахлест|нахлёст|указател/i.test(quoteNorm)) {
+      score -= 12;
+    }
+  }
 
   // Prefer a clear single limit over nonsense wide ranges (e.g. 1–20 m).
   const hasSpan =

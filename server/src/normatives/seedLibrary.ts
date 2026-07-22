@@ -13,6 +13,7 @@ import {
   type NormLibraryStats,
 } from "./rulesStore.js";
 import { ensureCuratedResidentialRoomNorms } from "./normAudit/curatedResidentialRoomNorms.js";
+import { ensureCuratedGost21101Rules } from "./curatedGost21101Rules.js";
 
 type Database = DatabaseConstructor.Database;
 
@@ -32,6 +33,9 @@ export interface SeedNormFileResult {
   inserted: number;
   updated: number;
   skipped: boolean;
+  /** True when PDF text was empty/sparse (scan) — see warnings. */
+  likelyScanned?: boolean;
+  warnings?: string[];
   error?: string;
 }
 
@@ -86,6 +90,12 @@ export async function seedNormLibrary(
         maxPages,
       });
 
+      const scanWarnings = extracted.warnings.filter(
+        (w) =>
+          /scan|OCR|sparse|no extractable text/i.test(w)
+      );
+      const likelyScanned = scanWarnings.length > 0;
+
       let rules = withSuggestedTags(extracted.rules);
       if (preferNumeric) {
         const numeric = rules.filter((rule) =>
@@ -103,6 +113,11 @@ export async function seedNormLibrary(
           inserted: 0,
           updated: 0,
           skipped: true,
+          likelyScanned,
+          warnings: scanWarnings.length > 0 ? scanWarnings : undefined,
+          error: likelyScanned
+            ? "No rules extracted — PDF looks like a scan / missing text layer."
+            : undefined,
         });
         continue;
       }
@@ -119,6 +134,8 @@ export async function seedNormLibrary(
         inserted: saveResult.inserted,
         updated: saveResult.updated,
         skipped: false,
+        likelyScanned,
+        warnings: scanWarnings.length > 0 ? scanWarnings : undefined,
       });
     } catch (error) {
       filesFailed += 1;
@@ -134,9 +151,13 @@ export async function seedNormLibrary(
     }
   }
 
-  const curated = ensureCuratedResidentialRoomNorms(db);
-  inserted += curated.inserted;
-  updated += curated.updated;
+  const curatedResidential = ensureCuratedResidentialRoomNorms(db);
+  inserted += curatedResidential.inserted;
+  updated += curatedResidential.updated;
+
+  const curatedGost = ensureCuratedGost21101Rules(db);
+  inserted += curatedGost.inserted;
+  updated += curatedGost.updated;
 
   return {
     normativesDir,
