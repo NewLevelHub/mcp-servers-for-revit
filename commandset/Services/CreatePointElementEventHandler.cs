@@ -229,8 +229,8 @@ namespace RevitMCPCommandSet.Services
         /// <returns>操作是否在超时前完成</returns>
         public bool WaitForCompletion(int timeoutMilliseconds = 60000)
         {
-            _resetEvent.Reset();
-        return _resetEvent.WaitOne(timeoutMilliseconds);
+            // Do not Reset here — SetParameters already Reset; Execute Sets when done.
+            return _resetEvent.WaitOne(timeoutMilliseconds);
         }
 
         /// <summary>

@@ -95,9 +95,9 @@ MCP **не создаёт** новый проект. Сообщи пользов
 | Вид / элементы | `get_current_view_info`, `get_current_view_elements`, `ai_element_filter` |
 | Выделение | `get_selected_elements` |
 | Типы семейств | `get_available_family_types` |
-| Стены, балки | `create_line_based_element` |
-| Полы, потолки, крыши | `create_surface_based_element` |
-| Двери, окна | `create_point_based_element` |
+| Стены, балки | `create_line_based_element` (**`typeId` обязателен**, иначе fail) |
+| Полы, потолки, крыши | `create_surface_based_element` (**`typeId` обязателен**, иначе fail) |
+| Двери, окна | `create_point_based_element` (**`typeId` + `hostWallId` обязательны**; без host — fail, не silent snap) |
 | Уровни, оси, помещения | `create_level`, `create_grid` (**`autoFromWalls: true`**, пузырь `bottomLeft` = цифры снизу / буквы слева), `create_room` |
 | Лестница | **`create_stair`** — `layout` straight / L / U; `typeId` (StairsType); `widthMm` из норм. Для П «как типовой этаж»: **`shaftRect`** (клетка) или **`mirrorElementId`** (bbox эталонной лестницы) + `fitMode=clamp`. Не удлинять марш за клетку. ADSK 150×300 |
 | Ограждение | **`create_railing`** — `typeId` (RailingType), path (`pathPoints`+`levelId`) **или** host (`hostElementId` лестницы). Высота из типа ADSK `h NNNN` / нормы |
@@ -129,10 +129,10 @@ MCP **не создаёт** новый проект. Сообщи пользов
 
 ## Создание здания (порядок вызовов)
 
-1. `get_available_family_types` — typeId стен, дверей, окон, полов.
-2. `create_line_based_element` — стены.
-3. `create_surface_based_element` — полы.
-4. `create_point_based_element` — двери и окна (`hostWallId` при необходимости).
+1. `get_available_family_types` — typeId стен, дверей, окон, полов (**обязателен** для create_*).
+2. `create_line_based_element` — стены (`typeId`; без typeId → Success=false).
+3. `create_surface_based_element` — полы (`typeId`).
+4. `create_point_based_element` — двери и окна (`typeId` + **`hostWallId` обязателен**; без host → fail).
 5. `create_room` — помещения внутри контура (если контур замкнут стенами).
 6. Если контур не замкнут или нужно нарезать open-plan: `analyze_room_boundaries` → `create_room_separators` (линии + комнаты + марки).
 7. `export_room_data` — проверка.

@@ -5,7 +5,9 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerCreatePointBasedElementTool(server: McpServer) {
   server.tool(
     "create_point_based_element",
-    "Create one or more point-based elements in Revit such as doors, windows, or furniture. Supports batch creation with detailed parameters including family type ID, position, dimensions, and level information. All units are in millimeters (mm).",
+    "Create one or more point-based elements in Revit such as doors, windows, or furniture. " +
+      "Requires typeId from get_available_family_types. Doors/windows also require hostWallId " +
+      "(no silent nearest-wall snap). width/height are informational — size comes from the family type. Units: mm.",
     {
       data: z
         .array(
@@ -15,8 +17,9 @@ export function registerCreatePointBasedElementTool(server: McpServer) {
               .describe("Description of the element (e.g., door, window)"),
             typeId: z
               .number()
-              .optional()
-              .describe("Family type ID from get_available_family_types. Strongly recommended for doors/windows."),
+              .describe(
+                "Required. FamilySymbol ElementId from get_available_family_types. Missing or invalid typeId fails (no FirstOrDefault fallback)."
+              ),
             locationPoint: z
               .object({
                 x: z.number().describe("X coordinate"),
@@ -26,21 +29,29 @@ export function registerCreatePointBasedElementTool(server: McpServer) {
               .describe(
                 "The position coordinates where the element will be placed"
               ),
-            width: z.number().describe("Width of the element in mm"),
+            width: z
+              .number()
+              .describe(
+                "Informational only — opening width comes from typeId (family type), not this field."
+              ),
             depth: z.number().optional().describe("Depth of the element in mm"),
-            height: z.number().describe("Height of the element in mm"),
+            height: z
+              .number()
+              .describe(
+                "Informational only for doors/windows — height comes from typeId. For windows, baseOffset maps to sill height."
+              ),
             baseLevel: z.number().describe("Base level height"),
-            baseOffset: z.number().describe("Offset from the base level"),
+            baseOffset: z.number().describe("Offset from the base level (sill height for windows)"),
             rotation: z
               .number()
               .optional()
-              .describe("Rotation angle in degrees (0-360)"),
+              .describe("Rotation angle in degrees (0-360), non-hosted elements only"),
             hostWallId: z
               .number()
               .optional()
               .describe(
-                "The ElementId of a specific wall to use as host for doors/windows. " +
-                "If not provided, the nearest wall will be auto-detected."
+                "Required for doors/windows: ElementId of the host wall. " +
+                  "Without it the command fails (no auto nearest-wall snap). Optional for non-hosted families."
               ),
             facingFlipped: z
               .boolean()
@@ -48,7 +59,7 @@ export function registerCreatePointBasedElementTool(server: McpServer) {
               .default(false)
               .describe(
                 "Whether to flip the facing direction of the door/window. " +
-                "When true, the element faces the opposite side of the wall."
+                  "When true, the element faces the opposite side of the wall."
               ),
           })
         )

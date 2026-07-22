@@ -67,7 +67,8 @@ public class PointElement
     public double Rotation { get; set; } = 0;
 
     /// <summary>
-    ///     显式宿主墙体ElementId，-1表示自动检测
+    ///     Host wall ElementId. Required for doors/windows (−1 / missing → fail).
+    ///     Optional for non-hosted families.
     /// </summary>
     [JsonProperty("hostWallId")]
     public int HostWallId { get; set; } = -1;
