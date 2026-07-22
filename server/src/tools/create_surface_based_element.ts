@@ -5,7 +5,9 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerCreateSurfaceBasedElementTool(server: McpServer) {
   server.tool(
     "create_surface_based_element",
-    "Create one or more surface-based elements in Revit such as floors, ceilings, or roofs. Supports batch creation with detailed parameters including family type ID, boundary lines, thickness, and level information. All units are in millimeters (mm).",
+    "Create one or more surface-based elements in Revit such as floors, ceilings, or roofs. " +
+      "Requires typeId from get_available_family_types (FloorType/RoofType/CeilingType). " +
+      "Missing typeId fails (no FirstOrDefault fallback). Units: mm.",
     {
       data: z
         .array(
@@ -16,11 +18,14 @@ export function registerCreateSurfaceBasedElementTool(server: McpServer) {
             category: z
               .enum(["OST_Floors", "OST_Ceilings", "OST_Roofs"])
               .optional()
-              .describe("The Revit built-in category for the element. Use OST_Floors for floors, OST_Ceilings for ceilings, OST_Roofs for roofs. If not specified, will be determined from typeId."),
+              .describe(
+                "Revit built-in category. Optional — resolved from typeId when omitted."
+              ),
             typeId: z
               .number()
-              .optional()
-              .describe("The ID of the family type to create."),
+              .describe(
+                "Required. FloorType/RoofType/CeilingType ElementId from get_available_family_types. Missing or invalid typeId fails."
+              ),
             boundary: z
               .object({
                 outerLoop: z
@@ -42,7 +47,11 @@ export function registerCreateSurfaceBasedElementTool(server: McpServer) {
                   .describe("Array of line segments defining the boundary"),
               })
               .describe("Boundary definition with outer loop"),
-            thickness: z.number().describe("Thickness of the element"),
+            thickness: z
+              .number()
+              .describe(
+                "Informational only — thickness comes from typeId compound structure, not this field."
+              ),
             baseLevel: z.number().describe("Base level height"),
             baseOffset: z.number().describe("Offset from the base level"),
           })

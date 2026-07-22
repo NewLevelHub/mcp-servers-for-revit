@@ -5,7 +5,9 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerCreateLineBasedElementTool(server: McpServer) {
   server.tool(
     "create_line_based_element",
-    "Create one or more line-based elements in Revit such as walls, beams, or pipes. Supports batch creation with detailed parameters including family type ID, start and end points, thickness, height, and level information. All units are in millimeters (mm).",
+    "Create one or more line-based elements in Revit such as walls, beams, or pipes. " +
+      "Requires typeId from get_available_family_types. Missing typeId fails (no FirstOrDefault fallback). " +
+      "Batch: one Transaction for the whole data[]. Units: mm.",
     {
       data: z
         .array(

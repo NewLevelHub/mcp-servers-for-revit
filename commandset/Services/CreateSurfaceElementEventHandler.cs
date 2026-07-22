@@ -23,7 +23,6 @@ namespace RevitMCPCommandSet.Services
         /// 执行结果（传出数据）
         /// </summary>
         public AIResult<List<int>> Result { get; private set; }
-        public string _floorName = "常规 - ";
         public bool _structural = true;
         private List<string> _warnings = new List<string>();
 
@@ -230,7 +229,7 @@ namespace RevitMCPCommandSet.Services
         /// <returns>操作是否在超时前完成</returns>
         public bool WaitForCompletion(int timeoutMilliseconds = 60000)
         {
-            _resetEvent.Reset();
+            // Do not Reset here — SetParameters already Reset; Execute Sets when done.
             return _resetEvent.WaitOne(timeoutMilliseconds);
         }
 
@@ -241,68 +240,5 @@ namespace RevitMCPCommandSet.Services
         {
             return "创建面状构件";
         }
-
-        /// <summary>
-        /// 获取或创建指定厚度的楼板类型
-        /// </summary>
-        /// <param name="thickness">目标厚度（ft）</param>
-        /// <returns>符合厚度要求的楼板类型</returns>
-        private FloorType CreateOrGetFloorType(Document doc, double thickness = 200 / 304.8)
-        {
-
-            // 查找匹配厚度的楼板类型
-            FloorType existingType = new FilteredElementCollector(doc)
-                                     .OfClass(typeof(FloorType))                    // 仅获取FloorType类
-                                     .OfCategory(BuiltInCategory.OST_Floors)        // 仅获取楼板类别
-                                     .Cast<FloorType>()                            // 转换为FloorType类型
-                                     .FirstOrDefault(w => w.Name == $"{_floorName}{thickness * 304.8}mm");
-            if (existingType != null)
-                return existingType;
-            // 如果没有找到匹配的楼板类型，创建新的
-            FloorType baseFloorType = existingType = new FilteredElementCollector(doc)
-                                     .OfClass(typeof(FloorType))                    // 仅获取FloorType类
-                                     .OfCategory(BuiltInCategory.OST_Floors)        // 仅获取楼板类别
-                                     .Cast<FloorType>()                            // 转换为FloorType类型
-                                     .FirstOrDefault(w => w.Name.Contains("常规"));
-            if (existingType != null)
-            {
-                baseFloorType = existingType = new FilteredElementCollector(doc)
-                                     .OfClass(typeof(FloorType))                    // 仅获取FloorType类
-                                     .OfCategory(BuiltInCategory.OST_Floors)        // 仅获取楼板类别
-                                     .Cast<FloorType>()                            // 转换为FloorType类型
-                                     .FirstOrDefault();
-            }
-
-            // 复制楼板类型
-            FloorType newFloorType = null;
-            newFloorType = baseFloorType.Duplicate($"{_floorName}{thickness * 304.8}mm") as FloorType;
-
-            // 设置新楼板类型的厚度
-            // 获取构造层设置
-            CompoundStructure cs = newFloorType.GetCompoundStructure();
-            if (cs != null)
-            {
-                // 获取所有层
-                IList<CompoundStructureLayer> layers = cs.GetLayers();
-                if (layers.Count > 0)
-                {
-                    // 计算当前总厚度
-                    double currentTotalThickness = cs.GetWidth();
-
-                    // 按比例调整每层厚度
-                    for (int i = 0; i < layers.Count; i++)
-                    {
-                        CompoundStructureLayer layer = layers[i];
-                        double newLayerThickness = thickness;
-                        cs.SetLayerWidth(i, newLayerThickness);
-                    }
-
-                    // 应用修改后的构造层设置
-                    newFloorType.SetCompoundStructure(cs);
-                }
-            }
-            return newFloorType;
-        }
-
     }
 }

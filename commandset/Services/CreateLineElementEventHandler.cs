@@ -26,9 +26,6 @@ namespace RevitMCPCommandSet.Services
         public AIResult<List<int>> Result { get; private set; }
         private List<string> _warnings = new List<string>();
 
-        public string _wallName = "常规 - ";
-        public string _ductName = "矩形风管 - ";
-
         /// <summary>
         /// 设置创建的参数
         /// </summary>
@@ -223,7 +220,7 @@ namespace RevitMCPCommandSet.Services
         /// <returns>操作是否在超时前完成</returns>
         public bool WaitForCompletion(int timeoutMilliseconds = 60000)
         {
-            _resetEvent.Reset();
+            // Do not Reset here — SetParameters already Reset; Execute Sets when done.
             return _resetEvent.WaitOne(timeoutMilliseconds);
         }
 
@@ -234,113 +231,5 @@ namespace RevitMCPCommandSet.Services
         {
             return "创建线状构件";
         }
-
-        /// <summary>
-        /// 创建或获取指定厚度的墙体类型
-        /// </summary>
-        /// <param name="doc">Revit文档</param>
-        /// <param name="width">宽度（ft）</param>
-        /// <returns></returns>
-        /// <exception cref="InvalidOperationException"></exception>
-        private WallType CreateOrGetWallType(Document doc, double width = 200 / 304.8)
-        {
-            // 如果没有有效的类型
-            // 先查找是否存在指定厚度的建筑墙类型
-            WallType existingType = new FilteredElementCollector(doc)
-                                    .OfClass(typeof(WallType))
-                                    .Cast<WallType>()
-                                    .FirstOrDefault(w => w.Name == $"{_wallName}{width * 304.8}mm");
-            if (existingType != null)
-                return existingType;
-
-            // 不存在则创建新的墙体类型，基于基本墙
-            WallType baseWallType = new FilteredElementCollector(doc)
-                                    .OfClass(typeof(WallType))
-                                    .Cast<WallType>()
-                                    .FirstOrDefault(w => w.Name.Contains("常规")); ;
-            if (baseWallType == null)
-            {
-                baseWallType = new FilteredElementCollector(doc)
-                                    .OfClass(typeof(WallType))
-                                    .Cast<WallType>()
-                                    .FirstOrDefault(); ;
-            }
-
-            if (baseWallType == null)
-                throw new InvalidOperationException("未找到可用的基础墙类型");
-
-            // 复制墙体类型
-            WallType newWallType = null;
-            newWallType = baseWallType.Duplicate($"{_wallName}{width * 304.8}mm") as WallType;
-
-            // 设置墙厚
-            CompoundStructure cs = newWallType.GetCompoundStructure();
-            if (cs != null)
-            {
-                // 获取原始层的材料ID
-                ElementId materialId = cs.GetLayers().First().MaterialId;
-
-                // 创建新的单层结构
-                CompoundStructureLayer newLayer = new CompoundStructureLayer(
-                    width,  // 宽度（转换为英尺）
-                    MaterialFunctionAssignment.Structure,  // 功能分配
-                    materialId  // 材料ID
-                );
-
-                // 创建新的复合结构
-                IList<CompoundStructureLayer> newLayers = new List<CompoundStructureLayer> { newLayer };
-                cs.SetLayers(newLayers);
-
-                // 应用新的复合结构
-                newWallType.SetCompoundStructure(cs);
-            }
-            return newWallType;
-        }
-
-        /// <summary>
-        /// 创建或获取指定尺寸的风管类型
-        /// </summary>
-        /// <param name="doc">Revit文档</param>
-        /// <param name="width">宽度（ft）</param>
-        /// <param name="height">高度（ft）</param>
-        /// <returns>风管类型</returns>
-        private DuctType CreateOrGetDuctType(Document doc, double width, double height)
-        {
-            string typeName = $"{_ductName}{width * 304.8}x{height * 304.8}mm";
-
-            // 先查找是否存在指定尺寸的风管类型
-            DuctType existingType = new FilteredElementCollector(doc)
-                                    .OfClass(typeof(DuctType))
-                                    .Cast<DuctType>()
-                                    .FirstOrDefault(d => d.Name == typeName && d.Shape == ConnectorProfileType.Rectangular);
-
-            if (existingType != null)
-                return existingType;
-
-            // 不存在则创建新的风管类型，基于已有的矩形风管类型
-            DuctType baseDuctType = new FilteredElementCollector(doc)
-                                    .OfClass(typeof(DuctType))
-                                    .Cast<DuctType>()
-                                    .FirstOrDefault(d => d.Shape == ConnectorProfileType.Rectangular);
-
-            if (baseDuctType == null)
-                throw new InvalidOperationException("未找到可用的基础矩形风管类型");
-
-            // 复制风管类型
-            DuctType newDuctType = baseDuctType.Duplicate(typeName) as DuctType;
-
-            // 设置风管尺寸参数
-            Parameter widthParam = newDuctType.get_Parameter(BuiltInParameter.RBS_CURVE_WIDTH_PARAM);
-            Parameter heightParam = newDuctType.get_Parameter(BuiltInParameter.RBS_CURVE_HEIGHT_PARAM);
-
-            if (widthParam != null && heightParam != null)
-            {
-                widthParam.Set(width);
-                heightParam.Set(height);
-            }
-
-            return newDuctType;
-        }
-
     }
 }
