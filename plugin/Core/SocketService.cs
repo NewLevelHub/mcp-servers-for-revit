@@ -54,6 +54,51 @@ namespace revit_mcp_plugin.Core
 
         public Logger Logger => _logger;
 
+        /// <summary>
+        /// Execute a JSON-RPC command in-process (used by the in-Revit AI assistant).
+        /// Requires <see cref="Initialize"/> and a running command registry.
+        /// </summary>
+        public string ExecuteJsonRpcLocal(string method, string paramsJson)
+        {
+            if (_commandExecutor == null)
+            {
+                return JsonConvert.SerializeObject(new
+                {
+                    jsonrpc = "2.0",
+                    id = "local",
+                    error = new { code = -32000, message = "Сервер команд не инициализирован. Включите MCP Switch." }
+                });
+            }
+
+            var id = Guid.NewGuid().ToString("N");
+            JToken parameters;
+            try
+            {
+                parameters = string.IsNullOrWhiteSpace(paramsJson)
+                    ? new JObject()
+                    : JToken.Parse(paramsJson);
+            }
+            catch (Exception ex)
+            {
+                return JsonConvert.SerializeObject(new
+                {
+                    jsonrpc = "2.0",
+                    id,
+                    error = new { code = -32602, message = "Некорректные параметры: " + ex.Message }
+                });
+            }
+
+            var requestObj = new JObject
+            {
+                ["jsonrpc"] = "2.0",
+                ["method"] = method,
+                ["params"] = parameters,
+                ["id"] = id
+            };
+
+            return ProcessJsonRPCRequest(requestObj.ToString(Formatting.None));
+        }
+
         // Initialization.
         public void Initialize(UIApplication uiApp)
         {

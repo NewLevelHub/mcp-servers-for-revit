@@ -1,0 +1,76 @@
+<Page x:Class="revit_mcp_plugin.UI.AssistantSettingsPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+      xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+      mc:Ignorable="d"
+      d:DesignHeight="450" d:DesignWidth="620"
+      Background="White"
+      FontFamily="Segoe UI">
+  <Page.Resources>
+    <Style TargetType="TextBox" x:Key="FieldBox">
+      <Setter Property="Height" Value="34"/>
+      <Setter Property="Padding" Value="10,6"/>
+      <Setter Property="BorderBrush" Value="#D5DEE8"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Background" Value="#F7FAFC"/>
+      <Setter Property="FontSize" Value="13"/>
+    </Style>
+    <Style TargetType="PasswordBox" x:Key="FieldPass">
+      <Setter Property="Height" Value="34"/>
+      <Setter Property="Padding" Value="10,6"/>
+      <Setter Property="BorderBrush" Value="#D5DEE8"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Background" Value="#F7FAFC"/>
+      <Setter Property="FontSize" Value="13"/>
+    </Style>
+  </Page.Resources>
+
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel Margin="4,0,12,12">
+      <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+        <Border Width="32" Height="32" CornerRadius="16" Background="#1A2744" Margin="0,0,10,0">
+          <TextBlock Text="✦" Foreground="White" FontSize="14"
+                     HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <StackPanel VerticalAlignment="Center">
+          <TextBlock Text="Ассистент" FontSize="22" FontWeight="SemiBold" Foreground="#1A2744"/>
+        </StackPanel>
+      </StackPanel>
+
+      <TextBlock Text="Ключ организации настраивает IT. Архитектор открывает чат на ленте и пишет запросы."
+                 Foreground="#5B6B7C" Margin="0,0,0,16" TextWrapping="Wrap" FontSize="12.5"/>
+
+      <Border Background="#F0F4F8" BorderBrush="#D5DEE8" BorderThickness="1"
+              CornerRadius="12" Padding="16" Margin="0,0,0,14">
+        <StackPanel>
+          <TextBlock Text="Подключение к модели" FontSize="15" FontWeight="SemiBold"
+                     Foreground="#1A2744" Margin="0,0,0,12"/>
+
+          <TextBlock Text="API key" FontSize="12" Foreground="#5B6B7C" Margin="0,0,0,4"/>
+          <PasswordBox x:Name="ApiKeyBox" Style="{StaticResource FieldPass}"/>
+
+          <TextBlock Text="Base URL (OpenAI-compatible)" FontSize="12" Foreground="#5B6B7C"
+                     Margin="0,12,0,4"/>
+          <TextBox x:Name="BaseUrlBox" Style="{StaticResource FieldBox}"
+                   Text="https://api.openai.com/v1"/>
+
+          <TextBlock Text="Model" FontSize="12" Foreground="#5B6B7C" Margin="0,12,0,4"/>
+          <TextBox x:Name="ModelBox" Style="{StaticResource FieldBox}" Text="gpt-4o-mini"/>
+
+          <CheckBox x:Name="RequireConfirmCheckBox"
+                    Content="Подтверждать создание / удаление / массовые правки"
+                    IsChecked="True" Margin="0,16,0,0" FontSize="12.5" Foreground="#1A2744"/>
+        </StackPanel>
+      </Border>
+
+      <StackPanel Orientation="Horizontal">
+        <Button Content="Сохранить" Width="128" Height="36" Click="SaveButton_Click"
+                Background="#1A2744" Foreground="White" FontWeight="SemiBold" BorderThickness="0"
+                Cursor="Hand"/>
+        <TextBlock x:Name="SaveStatusText" Margin="14,0,0,0" VerticalAlignment="Center"
+                   Foreground="#1F6B4A" FontWeight="SemiBold"/>
+      </StackPanel>
+    </StackPanel>
+  </ScrollViewer>
+</Page>

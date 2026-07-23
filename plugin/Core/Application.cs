@@ -17,13 +17,26 @@ namespace revit_mcp_plugin.Core
         public Result OnStartup(UIControlledApplication application)
         {
             _application = application;
+
+            AssistantUiHost.Register(application);
+
             RibbonPanel mcpPanel = application.CreateRibbonPanel(RibbonStatusManager.PanelName);
+
+            PushButtonData assistantButtonData = new PushButtonData(
+                "ID_EXCMD_SHOW_ASSISTANT",
+                "AI-\r\nассистент",
+                Assembly.GetExecutingAssembly().Location,
+                "revit_mcp_plugin.Core.ShowAssistantCommand");
+            assistantButtonData.ToolTip = "Открыть панель AI-ассистента внутри Revit";
+            assistantButtonData.Image = new BitmapImage(new Uri("/RevitMCPPlugin;component/Core/Ressources/ai-16.png", UriKind.RelativeOrAbsolute));
+            assistantButtonData.LargeImage = new BitmapImage(new Uri("/RevitMCPPlugin;component/Core/Ressources/ai-32.png", UriKind.RelativeOrAbsolute));
+            mcpPanel.AddItem(assistantButtonData);
 
             PushButtonData pushButtonData = new PushButtonData("ID_EXCMD_TOGGLE_REVIT_MCP", "Revit MCP\r\n Switch",
                 Assembly.GetExecutingAssembly().Location, "revit_mcp_plugin.Core.MCPServiceConnection");
             pushButtonData.ToolTip = "Open / Close mcp server";
-            pushButtonData.Image = new BitmapImage(new Uri("/RevitMCPPlugin;component/Core/Ressources/icon-16.png", UriKind.RelativeOrAbsolute));
-            pushButtonData.LargeImage = new BitmapImage(new Uri("/RevitMCPPlugin;component/Core/Ressources/icon-32.png", UriKind.RelativeOrAbsolute));
+            pushButtonData.Image = new BitmapImage(new Uri("/RevitMCPPlugin;component/Core/Ressources/mcp-16.png", UriKind.RelativeOrAbsolute));
+            pushButtonData.LargeImage = new BitmapImage(new Uri("/RevitMCPPlugin;component/Core/Ressources/mcp-32.png", UriKind.RelativeOrAbsolute));
             mcpPanel.AddItem(pushButtonData);
 
             TextBoxData statusIndicatorData = new TextBoxData("ID_MCP_STATUS_INDICATOR");
@@ -83,6 +96,7 @@ namespace revit_mcp_plugin.Core
             }
 
             _lastActiveDocumentTitle = title;
+            AssistantUiHost.Refresh();
         }
 
         private void OnIdlingForAutoStart(object sender, Autodesk.Revit.UI.Events.IdlingEventArgs e)
@@ -97,9 +111,13 @@ namespace revit_mcp_plugin.Core
             RibbonStatusManager.Initialize(uiApp);
             RibbonStatusManager.UpdateStatus(SocketService.Instance.IsRunning);
             uiApp.ViewActivated += OnViewActivated;
+            AssistantUiHost.Attach(uiApp);
 
             if (!PluginSettingsStore.GetAutoStartOnLaunch() || SocketService.Instance.IsRunning)
+            {
+                AssistantUiHost.Refresh();
                 return;
+            }
 
             try
             {
@@ -110,6 +128,8 @@ namespace revit_mcp_plugin.Core
             {
                 // Auto-start failure is non-fatal; user can start manually via Switch.
             }
+
+            AssistantUiHost.Refresh();
         }
 
         public Result OnShutdown(UIControlledApplication application)

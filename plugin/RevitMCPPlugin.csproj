@@ -64,6 +64,10 @@
     <ItemGroup>
         <Resource Include="Core\Ressources\icon-16.png"/>
         <Resource Include="Core\Ressources\icon-32.png"/>
+        <Resource Include="Core\Ressources\ai-16.png"/>
+        <Resource Include="Core\Ressources\ai-32.png"/>
+        <Resource Include="Core\Ressources\mcp-16.png"/>
+        <Resource Include="Core\Ressources\mcp-32.png"/>
     </ItemGroup>
     <ItemGroup>
         <Resource Include="Core\Ressources\settings-16.png"/>
@@ -71,6 +75,7 @@
     </ItemGroup>
     <ItemGroup>
         <PackageReference Include="Newtonsoft.Json" Version="13.0.3"/>
+        <PackageReference Include="System.Net.Http" Version="4.3.4"/>
     </ItemGroup>
     <ItemGroup>
         <None Update="mcp-servers-for-revit.addin">

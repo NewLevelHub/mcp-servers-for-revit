@@ -31,6 +31,7 @@ namespace revit_mcp_plugin.Core
                 }
 
                 RibbonStatusManager.UpdateStatus(service.IsRunning);
+                AssistantUiHost.Refresh();
 
                 return Result.Succeeded;
             }

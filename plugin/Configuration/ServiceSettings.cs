@@ -29,5 +29,20 @@ namespace revit_mcp_plugin.Configuration
         [JsonProperty("autoStartOnLaunch")]
         public bool AutoStartOnLaunch { get; set; } = true;
 
+        /// <summary>OpenAI-compatible API key (organization). Architect does not configure this.</summary>
+        [JsonProperty("assistantApiKey")]
+        public string AssistantApiKey { get; set; } = "";
+
+        /// <summary>Base URL, e.g. https://api.openai.com/v1 or https://openrouter.ai/api/v1</summary>
+        [JsonProperty("assistantApiBaseUrl")]
+        public string AssistantApiBaseUrl { get; set; } = "https://api.openai.com/v1";
+
+        /// <summary>Model id for the in-Revit assistant.</summary>
+        [JsonProperty("assistantModel")]
+        public string AssistantModel { get; set; } = "gpt-4o-mini";
+
+        /// <summary>When true, create/delete/mass edits require confirmation in the chat pane.</summary>
+        [JsonProperty("assistantRequireConfirmations")]
+        public bool AssistantRequireConfirmations { get; set; } = true;
     }
 }
