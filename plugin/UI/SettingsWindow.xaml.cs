@@ -9,19 +9,23 @@ namespace revit_mcp_plugin.UI
     public partial class SettingsWindow : Window
     {
         private CommandSetSettingsPage commandSetPage;
+        private AssistantSettingsPage assistantPage;
         private bool isInitialized = false;
 
         public SettingsWindow()
         {
             InitializeComponent();
 
-            // 初始化页面
             commandSetPage = new CommandSetSettingsPage();
+            assistantPage = new AssistantSettingsPage();
 
-            // 加载默认页面
             ContentFrame.Navigate(commandSetPage);
 
-            Loaded += (sender, args) => commandSetPage.ReloadCommandSets();
+            Loaded += (sender, args) =>
+            {
+                commandSetPage.ReloadCommandSets();
+                assistantPage.Reload();
+            };
 
             isInitialized = true;
         }
@@ -33,6 +37,11 @@ namespace revit_mcp_plugin.UI
             if (NavListBox.SelectedItem == CommandSetItem)
             {
                 ContentFrame.Navigate(commandSetPage);
+            }
+            else if (NavListBox.SelectedItem == AssistantItem)
+            {
+                assistantPage.Reload();
+                ContentFrame.Navigate(assistantPage);
             }
         }
     }
