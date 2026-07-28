@@ -41,8 +41,11 @@ namespace revit_mcp_plugin.Configuration
         [JsonProperty("assistantModel")]
         public string AssistantModel { get; set; } = "gpt-4o-mini";
 
-        /// <summary>When true, create/delete/mass edits require confirmation in the chat pane.</summary>
+        /// <summary>
+        /// When true, only delete / send_code_to_revit ask for confirmation in the chat pane.
+        /// Creates, dimensions, tags run without a prompt.
+        /// </summary>
         [JsonProperty("assistantRequireConfirmations")]
-        public bool AssistantRequireConfirmations { get; set; } = true;
+        public bool AssistantRequireConfirmations { get; set; } = false;
     }
 }

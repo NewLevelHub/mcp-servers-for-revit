@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -6,9 +9,11 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using Microsoft.Win32;
 using revit_mcp_plugin.Configuration;
 using revit_mcp_plugin.Core;
 using revit_mcp_plugin.Core.Assistant;
@@ -19,6 +24,7 @@ namespace revit_mcp_plugin.UI.Assistant
     {
         private UIApplication _uiApp;
         private readonly LocalAgentHost _agent = new LocalAgentHost();
+        private readonly List<ChatAttachment> _pendingAttachments = new List<ChatAttachment>();
         private CancellationTokenSource _runCts;
         private TaskCompletionSource<bool> _confirmTcs;
         private bool _busy;
@@ -29,11 +35,20 @@ namespace revit_mcp_plugin.UI.Assistant
             Loaded += OnLoaded;
             _agent.StatusChanged += OnAgentStatus;
             _agent.ConfirmationRequested += OnConfirmationRequested;
+            _agent.HistoryTrimmed += OnHistoryTrimmed;
             BuildChips();
+            ShowWelcomeMessage();
+            SetStatus("Готов", StatusTone.Ok);
+        }
+
+        private void ShowWelcomeMessage()
+        {
             AddBotMessage(
                 "Напишите запрос обычным языком или выберите сценарий ниже.\n" +
-                "Пример: «Проверь этаж и подпиши нарушения».");
-            SetStatus("Готов", StatusTone.Ok);
+                "Enter — отправить, Shift+Enter — новая строка.\n" +
+                "Файл: 📎, перетащить в чат или Ctrl+V (скрин).\n" +
+                "Пример: «Проверь этаж и подпиши нарушения».\n\n" +
+                "Если диалог стал длинным — нажмите «+ Новый», чтобы очистить историю.");
         }
 
         public void AttachUiApplication(UIApplication uiApp)
@@ -89,6 +104,44 @@ namespace revit_mcp_plugin.UI.Assistant
             RefreshContextAndBanner();
         }
 
+        private void NewChatButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_busy)
+            {
+                try { _runCts?.Cancel(); } catch { /* ignore */ }
+                try { _confirmTcs?.TrySetResult(false); } catch { /* ignore */ }
+            }
+
+            StartNewChat(showNotice: true);
+        }
+
+        private void StartNewChat(bool showNotice)
+        {
+            _agent.ClearHistory();
+            MessagesPanel.Children.Clear();
+            ConfirmBar.Visibility = System.Windows.Visibility.Collapsed;
+            InputBox.Clear();
+            ClearPendingAttachments();
+            ShowWelcomeMessage();
+            if (showNotice)
+            {
+                AddBotMessage("Новый чат. Предыдущая история очищена (на диск не сохранялась).");
+            }
+            RefreshContextAndBanner();
+        }
+
+        private void OnHistoryTrimmed()
+        {
+            // Don't interrupt an in-flight turn with a mid-stream system bubble.
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (_busy) return;
+                AddBotMessage(
+                    "Часть ранних сообщений убрана из памяти (длинный диалог). " +
+                    "Последний запрос сохранён. Чтобы начать с нуля — «+ Новый».");
+            }));
+        }
+
         private void BuildChips()
         {
             ChipsPanel.Children.Clear();
@@ -115,7 +168,7 @@ namespace revit_mcp_plugin.UI.Assistant
                     Content = content,
                     Style = (Style)FindResource("ChipButton"),
                     Tag = preset,
-                    ToolTip = preset.Label
+                    ToolTip = string.IsNullOrWhiteSpace(preset.Hint) ? preset.Label : preset.Hint
                 };
                 btn.Click += Chip_Click;
                 ChipsPanel.Children.Add(btn);
@@ -130,16 +183,66 @@ namespace revit_mcp_plugin.UI.Assistant
             InputBox.Text = preset.Prompt;
             InputBox.CaretIndex = InputBox.Text.Length;
             InputBox.Focus();
-            // Auto-send for one-click pilot UX
-            _ = StartRunAsync(preset.Prompt);
+            var attachments = _pendingAttachments.Count > 0 ? _pendingAttachments.ToList() : null;
+            ClearPendingAttachments();
+            InputBox.Clear();
+
+            if (string.Equals(preset.Id, "norm_audit", StringComparison.OrdinalIgnoreCase))
+            {
+                _ = StartNormAuditAsync(preset.Prompt);
+                return;
+            }
+
+            _ = StartRunAsync(preset.Prompt, attachments, ScenarioPresets.BuildAgentMessage(preset));
+        }
+
+        private async Task StartNormAuditAsync(string displayText)
+        {
+            if (_busy) return;
+            _busy = true;
+            SetBusyUi(true);
+            AddUserMessage(displayText, null);
+            RefreshContextAndBanner();
+            SetStatus("Проверка норм…", StatusTone.Busy);
+
+            try
+            {
+                var (reply, done) = await Task.Run(() => NormAuditPresetRunner.RunHighlight(annotate: true))
+                    .ConfigureAwait(true);
+
+                var text = reply;
+                if (done != null && done.Count > 0)
+                {
+                    text += Environment.NewLine + Environment.NewLine +
+                            "Сделано: " + string.Join(" · ", LocalAgentHost.CollapseDoneSummary(done));
+                }
+
+                AddBotMessage(text);
+                SetStatus("Готов", StatusTone.Ok);
+            }
+            catch (Exception ex)
+            {
+                AddBotMessage("Ошибка проверки норм: " + ex.Message);
+                SetStatus("Ошибка", StatusTone.Warn);
+            }
+            finally
+            {
+                _busy = false;
+                SetBusyUi(false);
+                RefreshContextAndBanner();
+            }
         }
 
         private void SendButton_Click(object sender, RoutedEventArgs e)
         {
             var text = (InputBox.Text ?? "").Trim();
-            if (string.IsNullOrEmpty(text) || _busy) return;
+            if (_busy) return;
+            if (string.IsNullOrEmpty(text) && _pendingAttachments.Count == 0) return;
+
+            var attachments = _pendingAttachments.ToList();
             InputBox.Clear();
-            _ = StartRunAsync(text);
+            ClearPendingAttachments();
+            _ = StartRunAsync(string.IsNullOrEmpty(text) ? "Смотри вложение." : text, attachments);
         }
 
         private void CancelButton_Click(object sender, RoutedEventArgs e)
@@ -148,16 +251,288 @@ namespace revit_mcp_plugin.UI.Assistant
             try { _confirmTcs?.TrySetResult(false); } catch { /* ignore */ }
         }
 
-        private void InputBox_KeyDown(object sender, KeyEventArgs e)
+        private void AttachButton_Click(object sender, RoutedEventArgs e)
         {
-            if (e.Key == Key.Enter && Keyboard.Modifiers == ModifierKeys.Control)
+            if (_busy) return;
+
+            var dlg = new OpenFileDialog
             {
-                e.Handled = true;
-                SendButton_Click(sender, e);
+                Title = "Прикрепить файл",
+                Filter =
+                    "Все поддерживаемые|" +
+                    "*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp;*.pdf;" +
+                    "*.doc;*.docx;*.rtf;*.odt;" +
+                    "*.xls;*.xlsx;*.csv;*.tsv;" +
+                    "*.ppt;*.pptx;" +
+                    "*.txt;*.md;*.json;*.xml;*.html;*.htm;*.log|" +
+                    "Изображения|*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp|" +
+                    "PDF|*.pdf|" +
+                    "Word|*.doc;*.docx;*.rtf;*.odt|" +
+                    "Excel|*.xls;*.xlsx;*.csv;*.tsv|" +
+                    "PowerPoint|*.ppt;*.pptx|" +
+                    "Текст|*.txt;*.md;*.json;*.xml;*.html;*.htm;*.log",
+                Multiselect = true
+            };
+
+            if (dlg.ShowDialog() != true)
+                return;
+
+            foreach (var path in dlg.FileNames)
+                TryAddAttachmentFromPath(path);
+        }
+
+        private void InputBox_PreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.V && Keyboard.Modifiers == ModifierKeys.Control)
+            {
+                if (TryPasteClipboardImage())
+                    e.Handled = true;
+                return;
             }
+
             if (e.Key == Key.Escape)
             {
                 CancelButton_Click(sender, e);
+                return;
+            }
+
+            // Enter = send (как в обычном чате). Shift+Enter = новая строка.
+            if (e.Key == Key.Enter || e.Key == Key.Return)
+            {
+                if (Keyboard.Modifiers == ModifierKeys.Shift)
+                    return; // allow newline
+
+                e.Handled = true;
+                SendButton_Click(sender, e);
+            }
+        }
+
+        private void Attachment_DragOver(object sender, DragEventArgs e)
+        {
+            if (_busy)
+            {
+                e.Effects = DragDropEffects.None;
+                e.Handled = true;
+                return;
+            }
+
+            if (e.Data.GetDataPresent(DataFormats.FileDrop))
+            {
+                e.Effects = DragDropEffects.Copy;
+                e.Handled = true;
+            }
+        }
+
+        private void Attachment_Drop(object sender, DragEventArgs e)
+        {
+            if (_busy) return;
+            if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+
+            var files = e.Data.GetData(DataFormats.FileDrop) as string[];
+            if (files == null || files.Length == 0) return;
+
+            foreach (var path in files)
+                TryAddAttachmentFromPath(path);
+
+            e.Handled = true;
+            InputBox.Focus();
+        }
+
+        private bool TryPasteClipboardImage()
+        {
+            if (_busy) return false;
+            try
+            {
+                if (!Clipboard.ContainsImage())
+                    return false;
+
+                var image = Clipboard.GetImage();
+                if (image == null)
+                    return false;
+
+                var bytes = EncodeBitmapSourceAsJpeg(DownscaleIfNeeded(image, 1280), 75);
+                var attachment = ChatAttachment.FromBytes(
+                    "screenshot-" + DateTime.Now.ToString("HHmmss") + ".jpg",
+                    "image/jpeg",
+                    bytes);
+                return TryAddAttachment(attachment);
+            }
+            catch (Exception ex)
+            {
+                AddBotMessage("Не удалось вставить скрин: " + ex.Message);
+                return true; // consumed paste attempt
+            }
+        }
+
+        private void TryAddAttachmentFromPath(string path)
+        {
+            try
+            {
+                if (!ChatAttachment.IsSupportedPath(path))
+                {
+                    AddBotMessage("Пропуск: формат не поддерживается — " + Path.GetFileName(path) +
+                                  ". Можно: " + ChatAttachment.SupportedTypesHint + ".");
+                    return;
+                }
+
+                var attachment = ChatAttachment.FromFile(path);
+                if (attachment.IsImage)
+                    attachment = MaybeDownscaleImageAttachment(attachment);
+
+                TryAddAttachment(attachment);
+            }
+            catch (Exception ex)
+            {
+                AddBotMessage("Не удалось прикрепить файл: " + ex.Message);
+            }
+        }
+
+        private bool TryAddAttachment(ChatAttachment attachment)
+        {
+            var error = ChatAttachment.ValidateBatch(_pendingAttachments, attachment);
+            if (error != null)
+            {
+                AddBotMessage(error);
+                return false;
+            }
+
+            _pendingAttachments.Add(attachment);
+            RefreshAttachmentStrip();
+            return true;
+        }
+
+        private void ClearPendingAttachments()
+        {
+            _pendingAttachments.Clear();
+            RefreshAttachmentStrip();
+        }
+
+        private void RefreshAttachmentStrip()
+        {
+            AttachmentStrip.Children.Clear();
+            if (_pendingAttachments.Count == 0)
+            {
+                AttachmentStrip.Visibility = System.Windows.Visibility.Collapsed;
+                return;
+            }
+
+            AttachmentStrip.Visibility = System.Windows.Visibility.Visible;
+            for (var i = 0; i < _pendingAttachments.Count; i++)
+            {
+                var a = _pendingAttachments[i];
+                var chip = new Border
+                {
+                    CornerRadius = new CornerRadius(10),
+                    Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xE8, 0xEE, 0xF4)),
+                    BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xD5, 0xDE, 0xE8)),
+                    BorderThickness = new Thickness(1),
+                    Padding = new Thickness(8, 4, 4, 4),
+                    Margin = new Thickness(0, 0, 6, 6),
+                    ToolTip = a.DisplayLabel
+                };
+
+                var row = new StackPanel { Orientation = Orientation.Horizontal };
+                row.Children.Add(new TextBlock
+                {
+                    Text = a.KindLabel + " · " + TruncateName(a.FileName, 22),
+                    FontSize = 11.5,
+                    Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1A, 0x27, 0x44)),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 0, 4, 0)
+                });
+
+                var remove = new Button
+                {
+                    Content = "×",
+                    Padding = new Thickness(6, 0, 6, 0),
+                    FontSize = 14,
+                    FontWeight = FontWeights.SemiBold,
+                    Background = Brushes.Transparent,
+                    BorderThickness = new Thickness(0),
+                    Cursor = Cursors.Hand,
+                    Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x5B, 0x6B, 0x7C)),
+                    ToolTip = "Убрать"
+                };
+                remove.Click += (s, ev) =>
+                {
+                    if (_busy) return;
+                    _pendingAttachments.Remove(a);
+                    RefreshAttachmentStrip();
+                };
+                row.Children.Add(remove);
+                chip.Child = row;
+                AttachmentStrip.Children.Add(chip);
+            }
+        }
+
+        private static string TruncateName(string name, int max)
+        {
+            if (string.IsNullOrEmpty(name) || name.Length <= max)
+                return name ?? "файл";
+            return name.Substring(0, max - 1) + "…";
+        }
+
+        private static ChatAttachment MaybeDownscaleImageAttachment(ChatAttachment attachment)
+        {
+            try
+            {
+                var bmp = new BitmapImage();
+                using (var ms = new MemoryStream(attachment.Data))
+                {
+                    bmp.BeginInit();
+                    bmp.CacheOption = BitmapCacheOption.OnLoad;
+                    bmp.StreamSource = ms;
+                    bmp.EndInit();
+                    bmp.Freeze();
+                }
+
+                var scaled = DownscaleIfNeeded(bmp, 1280);
+                // JPEG is much smaller than PNG for photos — fewer API failures on size limits.
+                var jpeg = EncodeBitmapSourceAsJpeg(scaled, 75);
+                if (jpeg == null || jpeg.Length == 0)
+                    return attachment;
+
+                var name = Path.GetFileNameWithoutExtension(attachment.FileName) + ".jpg";
+                return ChatAttachment.FromBytes(name, "image/jpeg", jpeg);
+            }
+            catch
+            {
+                return attachment;
+            }
+        }
+
+        private static BitmapSource DownscaleIfNeeded(BitmapSource source, int maxEdge)
+        {
+            if (source == null) return null;
+            var w = source.PixelWidth;
+            var h = source.PixelHeight;
+            if (w <= maxEdge && h <= maxEdge)
+                return source;
+
+            var scale = Math.Min((double)maxEdge / w, (double)maxEdge / h);
+            var transformed = new TransformedBitmap(source, new ScaleTransform(scale, scale));
+            transformed.Freeze();
+            return transformed;
+        }
+
+        private static byte[] EncodeBitmapSourceAsJpeg(BitmapSource source, int quality)
+        {
+            if (source == null) return null;
+            // Ensure a format JPEG encoder accepts.
+            BitmapSource ready = source;
+            if (source.Format != PixelFormats.Bgr24 && source.Format != PixelFormats.Bgra32
+                && source.Format != PixelFormats.Rgb24)
+            {
+                ready = new FormatConvertedBitmap(source, PixelFormats.Bgr24, null, 0);
+                ready.Freeze();
+            }
+
+            var encoder = new JpegBitmapEncoder { QualityLevel = Math.Max(40, Math.Min(95, quality)) };
+            encoder.Frames.Add(BitmapFrame.Create(ready));
+            using (var ms = new MemoryStream())
+            {
+                encoder.Save(ms);
+                return ms.ToArray();
             }
         }
 
@@ -201,19 +576,36 @@ namespace revit_mcp_plugin.UI.Assistant
             _confirmTcs?.TrySetResult(false);
         }
 
-        private async Task StartRunAsync(string userText)
+        private async Task StartRunAsync(
+            string displayText,
+            IList<ChatAttachment> attachments,
+            string agentText = null)
         {
             if (_busy) return;
+
+            if (ShouldRunDirectNormAudit(displayText))
+            {
+                await StartNormAuditAsync(displayText).ConfigureAwait(true);
+                return;
+            }
+
             _busy = true;
             SetBusyUi(true);
-            AddUserMessage(userText);
+            AddUserMessage(displayText, attachments);
             RefreshContextAndBanner();
 
+            var toAgent = string.IsNullOrWhiteSpace(agentText) ? displayText : agentText;
             _runCts = new CancellationTokenSource();
             try
             {
-                var result = await _agent.RunAsync(userText, BuildViewContextLine(), _runCts.Token)
+                var result = await _agent.RunAsync(toAgent, BuildViewContextLine(), attachments, _runCts.Token)
                     .ConfigureAwait(true);
+
+                if (result.Cancelled)
+                {
+                    AddBotMessage("Остановлено.");
+                    return;
+                }
 
                 var reply = result.Reply ?? "";
                 if (result.DoneSummary != null && result.DoneSummary.Count > 0)
@@ -222,7 +614,7 @@ namespace revit_mcp_plugin.UI.Assistant
                     sb.AppendLine(reply);
                     sb.AppendLine();
                     sb.Append("Сделано: ");
-                    sb.Append(string.Join(" · ", result.DoneSummary));
+                    sb.Append(string.Join(" · ", LocalAgentHost.CollapseDoneSummary(result.DoneSummary)));
                     reply = sb.ToString();
                 }
 
@@ -281,13 +673,18 @@ namespace revit_mcp_plugin.UI.Assistant
             SendButton.IsEnabled = !busy;
             CancelButton.IsEnabled = busy;
             InputBox.IsEnabled = !busy;
-            foreach (Button chip in ChipsPanel.Children)
-                chip.IsEnabled = !busy;
+            AttachButton.IsEnabled = !busy;
+            NewChatButton.IsEnabled = true; // allow abort+reset even while running
+            foreach (var child in ChipsPanel.Children)
+            {
+                if (child is Button chip)
+                    chip.IsEnabled = !busy;
+            }
         }
 
-        private void AddUserMessage(string text)
+        private void AddUserMessage(string text, IList<ChatAttachment> attachments = null)
         {
-            MessagesPanel.Children.Add(new ChatBubble(text, fromUser: true));
+            MessagesPanel.Children.Add(new ChatBubble(text, fromUser: true, attachments));
             ScrollToEnd();
         }
 
@@ -332,6 +729,26 @@ namespace revit_mcp_plugin.UI.Assistant
             {
                 return "Документ: — · Вид: —";
             }
+        }
+
+        private static bool ShouldRunDirectNormAudit(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+
+            var t = text.ToLowerInvariant();
+            if (t.Contains("удали разметку") || t.Contains("сними разметку") || t.Contains("убери разметку"))
+                return false;
+
+            var norm =
+                t.Contains("наруш") || t.Contains("норм") || t.Contains("гост") || t.Contains("сп ")
+                || t.Contains("санпин") || t.Contains("эвак") || t.Contains("глубин");
+            var action =
+                t.Contains("провер") || t.Contains("покаж") || t.Contains("покрас")
+                || t.Contains("залей") || t.Contains("подсвет") || t.Contains("этаж")
+                || t.Contains("активн");
+
+            return norm && action;
         }
     }
 }

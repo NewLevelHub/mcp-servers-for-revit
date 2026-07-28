@@ -4,7 +4,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              mc:Ignorable="d"
-             Title="Settings" Height="520" Width="880"
+             Title="Настройки" Height="520" Width="880"
              FontFamily="Segoe UI"
              Background="White">
     <Grid>
@@ -50,7 +50,7 @@
                         </Style>
                     </ListBox.ItemContainerStyle>
                     <ListBoxItem x:Name="CommandSetItem" IsSelected="True">
-                        <TextBlock Text="⚙  CommandSet"/>
+                        <TextBlock Text="⚙  Наборы команд"/>
                     </ListBoxItem>
                     <ListBoxItem x:Name="AssistantItem">
                         <TextBlock Text="✦  Ассистент"/>

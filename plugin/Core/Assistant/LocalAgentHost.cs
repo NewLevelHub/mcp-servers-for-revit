@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
@@ -28,21 +30,41 @@ namespace revit_mcp_plugin.Core.Assistant
     /// </summary>
     public sealed class LocalAgentHost
     {
-        public const string SystemPrompt =
-            "Ты AI-ассистент архитектора внутри Autodesk Revit. " +
-            "Отвечай кратко по-русски (1–3 предложения + при необходимости список «сделано»). " +
-            "Не упоминай JSON, названия tool, MCP, Cursor, stack trace. " +
-            "Работай только через доступные tools в открытой модели (команды Revit). " +
-            "Для нормоконтроля вызывай check_evacuation_width / check_room_depth / check_min_dimensions / check_fire_doors, " +
-            "затем create_filled_regions и create_text_notes. " +
-            "Типы семейств бери из проекта. Нормы не выдумывай. " +
-            "Единицы: мм, м², м³. Перед созданием при необходимости вызови get_current_view_info.";
+        public const string SystemPrompt = AssistantSystemPrompt.Text;
 
         private readonly List<JObject> _history = new List<JObject>();
         private readonly object _historyLock = new object();
 
+        /// <summary>
+        /// Keep this many previous user turns (+ the current one is never trimmed).
+        /// One scenario creates many assistant/tool messages — counting raw messages was too aggressive.
+        /// </summary>
+        public const int MaxPreviousUserTurns = 4;
+
+        /// <summary>Rough character budget for all non-system content sent to the model.</summary>
+        public const int MaxHistoryChars = 120000;
+
+        /// <summary>Cap each tool result stored in history (full payloads blow the budget in one round).</summary>
+        public const int MaxToolResultChars = 4000;
+
+        /// <summary>Obsolete name kept for any external references; prefer MaxPreviousUserTurns.</summary>
+        public const int MaxRecentMessages = 80;
+
         public event Action<string> StatusChanged;
         public event Func<PendingToolConfirmation, Task<bool>> ConfirmationRequested;
+        /// <summary>Raised when older messages were dropped to keep context within limits.</summary>
+        public event Action HistoryTrimmed;
+
+        public int HistoryMessageCount
+        {
+            get
+            {
+                lock (_historyLock)
+                {
+                    return _history.Count;
+                }
+            }
+        }
 
         public void ClearHistory()
         {
@@ -52,9 +74,425 @@ namespace revit_mcp_plugin.Core.Assistant
             }
         }
 
+        /// <summary>
+        /// Drop oldest complete user turns so the prompt stays within budgets.
+        /// Never splits assistant tool_calls from their tool results; never trims the current turn.
+        /// </summary>
+        public bool TrimHistoryIfNeeded()
+        {
+            lock (_historyLock)
+            {
+                return TrimHistoryUnlocked();
+            }
+        }
+
+        private bool TrimHistoryUnlocked()
+        {
+            if (_history.Count == 0)
+                return false;
+
+            EnsureSystemFirstUnlocked();
+            var droppedUserTurns = false;
+
+            while (NeedsTrimUnlocked())
+            {
+                // Prefer stripping base64 from older turns before dropping whole turns.
+                // Compaction alone does NOT mean the chat is "full" for the user.
+                if (CompactMultimodalUnlocked(keepLastUserIntact: true))
+                    continue;
+
+                // Drop the oldest complete turn (user … next user), never the latest user turn.
+                var userIndexes = new List<int>();
+                for (var i = 0; i < _history.Count; i++)
+                {
+                    if (IsRole(_history[i], "user"))
+                        userIndexes.Add(i);
+                }
+
+                // Need at least one older turn besides the current (last) user message.
+                if (userIndexes.Count <= 1)
+                {
+                    // Only current turn left — shrink oversized tool payloads instead of breaking structure.
+                    if (!CompactOldestToolPayloadUnlocked())
+                        break;
+                    continue;
+                }
+
+                var dropFrom = userIndexes[0];
+                var dropToExclusive = userIndexes[1];
+                var removeCount = dropToExclusive - dropFrom;
+                if (removeCount <= 0)
+                    break;
+
+                _history.RemoveRange(dropFrom, removeCount);
+                droppedUserTurns = true;
+            }
+
+            SanitizeToolPairsUnlocked();
+            EnsureSystemFirstUnlocked();
+            return droppedUserTurns;
+        }
+
+        private bool NeedsTrimUnlocked()
+        {
+            var userTurns = 0;
+            var chars = 0;
+            foreach (var m in _history)
+            {
+                if (IsRole(m, "user"))
+                    userTurns++;
+                chars += EstimateChars(m);
+            }
+
+            // userTurns includes the current request; allow that + MaxPreviousUserTurns older ones.
+            return userTurns > MaxPreviousUserTurns + 1 || chars > MaxHistoryChars;
+        }
+
+        private void EnsureSystemFirstUnlocked()
+        {
+            var system = _history.Find(m => IsRole(m, "system"));
+            if (system == null)
+                return;
+
+            _history.RemoveAll(m => IsRole(m, "system"));
+            _history.Insert(0, system);
+        }
+
+        /// <summary>
+        /// OpenAI requires every tool message to follow an assistant message with matching tool_calls.
+        /// Drop orphans left by older buggy trims or partial failures.
+        /// </summary>
+        private void SanitizeToolPairsUnlocked()
+        {
+            var i = 0;
+            while (i < _history.Count)
+            {
+                var msg = _history[i];
+                if (!IsRole(msg, "tool"))
+                {
+                    i++;
+                    continue;
+                }
+
+                var prev = i - 1;
+                while (prev >= 0 && IsRole(_history[prev], "tool"))
+                    prev--;
+
+                var ok = false;
+                if (prev >= 0 && IsRole(_history[prev], "assistant"))
+                {
+                    var calls = _history[prev]["tool_calls"] as JArray;
+                    var callId = msg["tool_call_id"]?.ToString();
+                    if (calls != null && !string.IsNullOrEmpty(callId))
+                    {
+                        foreach (var c in calls)
+                        {
+                            if (string.Equals(c?["id"]?.ToString(), callId, StringComparison.Ordinal))
+                            {
+                                ok = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (!ok)
+                {
+                    _history.RemoveAt(i);
+                    continue;
+                }
+
+                i++;
+            }
+
+            // Incomplete crash/cancel recovery: assistant tool_calls missing any tool result.
+            // OpenAI rejects the next turn if even one call id has no matching tool message.
+            for (var idx = _history.Count - 1; idx >= 0; idx--)
+            {
+                var assistantMsg = _history[idx];
+                if (!IsRole(assistantMsg, "assistant"))
+                    continue;
+                var calls = assistantMsg["tool_calls"] as JArray;
+                if (calls == null || calls.Count == 0)
+                    continue;
+
+                var needed = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var c in calls)
+                {
+                    var id = c?["id"]?.ToString();
+                    if (!string.IsNullOrEmpty(id))
+                        needed.Add(id);
+                }
+
+                if (needed.Count == 0)
+                {
+                    _history.RemoveAt(idx);
+                    continue;
+                }
+
+                var end = idx + 1;
+                while (end < _history.Count && IsRole(_history[end], "tool"))
+                {
+                    var callId = _history[end]["tool_call_id"]?.ToString();
+                    if (!string.IsNullOrEmpty(callId))
+                        needed.Remove(callId);
+                    end++;
+                }
+
+                if (needed.Count > 0)
+                {
+                    // Drop the incomplete assistant + its partial tool results.
+                    _history.RemoveRange(idx, end - idx);
+                }
+            }
+        }
+
+        private bool CompactOldestToolPayloadUnlocked()
+        {
+            for (var i = 0; i < _history.Count; i++)
+            {
+                if (!IsRole(_history[i], "tool"))
+                    continue;
+                var content = _history[i]["content"]?.ToString() ?? "";
+                if (content.Length <= 400)
+                    continue;
+                _history[i]["content"] = "{\"ok\":true,\"truncated\":true}";
+                return true;
+            }
+            return false;
+        }
+
+        private static bool IsRole(JObject message, string role)
+        {
+            return string.Equals(message?["role"]?.ToString(), role, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static int EstimateChars(JObject message)
+        {
+            if (message == null) return 0;
+            var n = 0;
+            var content = message["content"];
+            if (content is JArray parts)
+            {
+                // Do NOT count raw base64 — one photo/PDF would fake "context full"
+                // and drop earlier chat turns. Attachments cost a fixed budget here.
+                foreach (var part in parts)
+                {
+                    var type = part?["type"]?.ToString() ?? "";
+                    if (string.Equals(type, "text", StringComparison.OrdinalIgnoreCase))
+                        n += part["text"]?.ToString()?.Length ?? 0;
+                    else if (string.Equals(type, "image_url", StringComparison.OrdinalIgnoreCase))
+                        n += 3000;
+                    else if (string.Equals(type, "file", StringComparison.OrdinalIgnoreCase))
+                        n += 8000;
+                    else
+                        n += 500;
+                }
+            }
+            else if (content != null)
+            {
+                n += content.ToString().Length;
+            }
+
+            var toolCalls = message["tool_calls"]?.ToString();
+            if (toolCalls != null) n += Math.Min(toolCalls.Length, 4000);
+            return n;
+        }
+
+        private static string TruncateForHistory(string content)
+        {
+            if (string.IsNullOrEmpty(content))
+                return content ?? "";
+            if (content.Length <= MaxToolResultChars)
+                return content;
+            return content.Substring(0, MaxToolResultChars) + "…";
+        }
+
+        /// <summary>
+        /// Build OpenAI multimodal user content: text (+ extracted office text) + image_url.
+        /// Documents are inlined as text when possible — Chat Completions <c>file</c> parts
+        /// are unreliable on many OpenAI-compatible proxies.
+        /// PDF without local text still goes as a <c>file</c> part (needs OpenAI-compatible file support).
+        /// </summary>
+        internal static JToken BuildUserContent(string text, IList<ChatAttachment> attachments)
+        {
+            if (attachments == null || attachments.Count == 0)
+                return text ?? "";
+
+            var usable = attachments.Where(a => a?.Data != null && a.Data.Length > 0).ToList();
+            var docCount = usable.Count(a => !a.IsImage);
+            // Share extract budget across docs so file #2/#3 are not drowned by a long first Word.
+            var perDocBudget = docCount <= 0
+                ? DocumentTextExtractor.MaxExtractedChars
+                : Math.Max(6000, DocumentTextExtractor.MaxExtractedCharsTotal / docCount);
+
+            var textBuilder = new StringBuilder();
+            if (!string.IsNullOrWhiteSpace(text))
+                textBuilder.AppendLine(text.TrimEnd());
+
+            textBuilder.AppendLine();
+            textBuilder.AppendLine("[Вложения: " + usable.Count + " шт. " +
+                                   "Ты ВИДИШЬ/ЧИТАЕШЬ все. Если файлов несколько — ответь по КАЖДОМУ отдельным пунктом " +
+                                   "(1), (2), (3)… Не останавливайся на первом.]");
+
+            var imageParts = new JArray();
+            var pdfFileParts = new JArray();
+            var failedDocs = new List<string>();
+            var index = 0;
+
+            foreach (var a in usable)
+            {
+                index++;
+                var label = a.FileName ?? "файл";
+                textBuilder.AppendLine();
+                textBuilder.Append("=== ФАЙЛ ").Append(index).Append('/').Append(usable.Count)
+                    .Append(": ").Append(a.KindLabel).Append(" · ").Append(label).AppendLine(" ===");
+
+                if (a.IsImage)
+                {
+                    textBuilder.AppendLine("(изображение прикреплено ниже в запросе)");
+                    imageParts.Add(new JObject
+                    {
+                        ["type"] = "image_url",
+                        ["image_url"] = new JObject
+                        {
+                            ["url"] = a.ToDataUrl(),
+                            ["detail"] = "low"
+                        }
+                    });
+                    continue;
+                }
+
+                if (DocumentTextExtractor.TryExtract(a, perDocBudget, out var extracted, out var extractError))
+                {
+                    textBuilder.AppendLine("--- начало текста файла " + index + " ---");
+                    textBuilder.AppendLine(extracted);
+                    textBuilder.AppendLine("--- конец текста файла " + index + " (" + label + ") ---");
+                    continue;
+                }
+
+                if (a.IsPdf)
+                {
+                    textBuilder.AppendLine("(PDF прикреплён файлом — разбери его содержимое)");
+                    pdfFileParts.Add(new JObject
+                    {
+                        ["type"] = "file",
+                        ["file"] = new JObject
+                        {
+                            ["filename"] = label.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)
+                                ? label
+                                : label + ".pdf",
+                            ["file_data"] = a.ToDataUrl()
+                        }
+                    });
+                    continue;
+                }
+
+                failedDocs.Add(label + (string.IsNullOrEmpty(extractError) ? "" : " (" + extractError + ")"));
+                textBuilder.AppendLine(string.IsNullOrEmpty(extractError)
+                    ? "не удалось прочитать этот файл"
+                    : "не удалось прочитать: " + extractError);
+            }
+
+            if (failedDocs.Count > 0)
+            {
+                textBuilder.AppendLine();
+                textBuilder.AppendLine("Не удалось разобрать: " + string.Join("; ", failedDocs));
+            }
+
+            if (usable.Count > 1)
+            {
+                textBuilder.AppendLine();
+                textBuilder.AppendLine("Напоминание: в ответе кратко пройдись по всем " + usable.Count +
+                                       " файлам по порядку, не только по первому.");
+            }
+
+            var parts = new JArray
+            {
+                new JObject
+                {
+                    ["type"] = "text",
+                    ["text"] = textBuilder.ToString().Trim()
+                }
+            };
+
+            foreach (var img in imageParts)
+                parts.Add(img);
+            foreach (var pdf in pdfFileParts)
+                parts.Add(pdf);
+
+            if (parts.Count == 1)
+                return parts[0]["text"]?.ToString() ?? text ?? "";
+
+            return parts;
+        }
+
+        /// <summary>
+        /// Drop base64 payloads from user turns so history stays within token/char budgets.
+        /// When <paramref name="keepLastUserIntact"/> is true, the latest user message is kept
+        /// (needed while the current API round still needs the images/PDF).
+        /// </summary>
+        private bool CompactMultimodalUnlocked(bool keepLastUserIntact)
+        {
+            var lastUser = -1;
+            if (keepLastUserIntact)
+            {
+                for (var i = _history.Count - 1; i >= 0; i--)
+                {
+                    if (IsRole(_history[i], "user"))
+                    {
+                        lastUser = i;
+                        break;
+                    }
+                }
+            }
+
+            for (var i = 0; i < _history.Count; i++)
+            {
+                if (i == lastUser) continue;
+                if (!IsRole(_history[i], "user")) continue;
+                if (!(_history[i]["content"] is JArray parts)) continue;
+
+                var labels = new List<string>();
+                string textPart = null;
+                foreach (var part in parts)
+                {
+                    var type = part?["type"]?.ToString();
+                    if (string.Equals(type, "text", StringComparison.OrdinalIgnoreCase))
+                        textPart = part["text"]?.ToString() ?? "";
+                    else if (string.Equals(type, "image_url", StringComparison.OrdinalIgnoreCase))
+                        labels.Add("изображение");
+                    else if (string.Equals(type, "file", StringComparison.OrdinalIgnoreCase))
+                        labels.Add(part["file"]?["filename"]?.ToString() ?? "файл");
+                }
+
+                if (labels.Count == 0)
+                    continue;
+
+                var stub = textPart ?? "";
+                if (!string.IsNullOrWhiteSpace(stub))
+                    stub += "\n\n";
+                stub += "[Вложения предыдущего сообщения, данные убраны из памяти: " +
+                        string.Join(", ", labels) + "]";
+                _history[i]["content"] = stub;
+                return true;
+            }
+
+            return false;
+        }
+
         public async Task<AgentTurnResult> RunAsync(
             string userMessage,
             string viewContext,
+            CancellationToken cancellationToken)
+        {
+            return await RunAsync(userMessage, viewContext, null, cancellationToken).ConfigureAwait(false);
+        }
+
+        public async Task<AgentTurnResult> RunAsync(
+            string userMessage,
+            string viewContext,
+            IList<ChatAttachment> attachments,
             CancellationToken cancellationToken)
         {
             var settings = PluginSettingsStore.LoadSettings();
@@ -63,7 +501,7 @@ namespace revit_mcp_plugin.Core.Assistant
                 return new AgentTurnResult
                 {
                     Failed = true,
-                    Reply = "Нужен API-ключ организации. Откройте Settings → Ассистент и вставьте ключ (это делает IT)."
+                    Reply = "Нужен API-ключ организации. Откройте Настройки → Ассистент и вставьте ключ (это делает IT)."
                 };
             }
 
@@ -95,148 +533,298 @@ namespace revit_mcp_plugin.Core.Assistant
                     });
                 }
 
-                var content = userMessage ?? "";
+                var text = userMessage ?? "";
                 if (!string.IsNullOrWhiteSpace(viewContext))
-                    content = "[Контекст вида]\n" + viewContext + "\n\n[Запрос]\n" + content;
+                    text = "[Контекст вида]\n" + viewContext + "\n\n[Запрос]\n" + text;
+
+                // Strip base64 from ALL prior user turns before a new (possibly heavy) message.
+                while (CompactMultimodalUnlocked(keepLastUserIntact: false)) { /* keep going */ }
 
                 _history.Add(new JObject
                 {
                     ["role"] = "user",
-                    ["content"] = content
+                    ["content"] = BuildUserContent(text, attachments)
                 });
+
+                if (TrimHistoryUnlocked())
+                {
+                    try { HistoryTrimmed?.Invoke(); }
+                    catch { /* UI may be disposed */ }
+                }
             }
 
-            const int maxRounds = 12;
-            for (var round = 0; round < maxRounds; round++)
+            const int maxRounds = 30;
+            var toolResultCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            try
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                RaiseStatus("Думает…");
-
-                JArray messages;
-                lock (_historyLock)
-                {
-                    messages = new JArray(_history.ToArray());
-                }
-
-                JObject completion;
-                try
-                {
-                    completion = await client.ChatCompletionsAsync(messages, tools, cancellationToken)
-                        .ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    return new AgentTurnResult
-                    {
-                        Failed = true,
-                        Reply = ex.Message,
-                        DoneSummary = done
-                    };
-                }
-
-                var choice = completion["choices"]?[0]?["message"] as JObject;
-                if (choice == null)
-                {
-                    return new AgentTurnResult
-                    {
-                        Failed = true,
-                        Reply = "Пустой ответ от ИИ. Попробуйте ещё раз.",
-                        DoneSummary = done
-                    };
-                }
-
-                lock (_historyLock)
-                {
-                    _history.Add((JObject)choice.DeepClone());
-                }
-
-                var toolCalls = choice["tool_calls"] as JArray;
-                if (toolCalls == null || toolCalls.Count == 0)
-                {
-                    var text = choice["content"]?.ToString()?.Trim();
-                    if (string.IsNullOrWhiteSpace(text))
-                        text = done.Count > 0 ? "Готово." : "Готово. Дополнительных действий не требуется.";
-
-                    RaiseStatus("Готов");
-                    return new AgentTurnResult
-                    {
-                        Reply = text,
-                        DoneSummary = done
-                    };
-                }
-
-                foreach (JToken callTok in toolCalls)
+                for (var round = 0; round < maxRounds; round++)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var call = callTok as JObject;
-                    if (call == null) continue;
+                    RaiseStatus("Думает…");
 
-                    var callId = call["id"]?.ToString() ?? Guid.NewGuid().ToString("N");
-                    var fn = call["function"] as JObject;
-                    var name = fn?["name"]?.ToString() ?? "";
-                    var argsJson = fn?["arguments"]?.ToString() ?? "{}";
-
-                    if (settings.AssistantRequireConfirmations && ToolCatalog.RequiresConfirmation(name))
+                    JArray messages;
+                    lock (_historyLock)
                     {
-                        var pending = new PendingToolConfirmation
+                        if (TrimHistoryUnlocked())
                         {
-                            ToolName = name,
-                            ArgumentsJson = argsJson,
-                            Summary = BuildConfirmSummary(name, argsJson)
-                        };
-
-                        RaiseStatus("Нужно подтверждение");
-                        var handler = ConfirmationRequested;
-                        var approved = handler != null && await handler(pending).ConfigureAwait(false);
-                        if (!approved)
-                        {
-                            var cancelPayload = new JObject
-                            {
-                                ["cancelled"] = true,
-                                ["message"] = "Архитектор отменил действие."
-                            };
-                            AppendToolResult(callId, cancelPayload.ToString());
-                            done.Add("отменено: " + name);
-                            continue;
+                            try { HistoryTrimmed?.Invoke(); }
+                            catch { /* ignore */ }
                         }
+                        messages = new JArray(_history.ToArray());
                     }
 
-                    RaiseStatus("Выполняет…");
-                    string rawResult;
+                    JObject completion;
                     try
                     {
-                        rawResult = await Task.Run(
-                            () => SocketService.Instance.ExecuteJsonRpcLocal(name, argsJson),
-                            cancellationToken).ConfigureAwait(false);
+                        completion = await client.ChatCompletionsAsync(messages, tools, cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        return CancelledResult(done);
                     }
                     catch (Exception ex)
                     {
-                        rawResult = new JObject
+                        if (IsCancel(ex, cancellationToken))
+                            return CancelledResult(done);
+
+                        return new AgentTurnResult
                         {
-                            ["jsonrpc"] = "2.0",
-                            ["error"] = new JObject
-                            {
-                                ["message"] = ex.Message
-                            }
-                        }.ToString();
+                            Failed = true,
+                            Reply = ex.Message,
+                            DoneSummary = done
+                        };
                     }
 
-                    var (ok, summary, forModel) = ParseToolResponse(name, rawResult);
-                    AppendToolResult(callId, forModel);
-                    if (ok)
-                        done.Add(summary);
-                    else
-                        done.Add("ошибка: " + summary);
-                }
-            }
+                    var choice = completion["choices"]?[0]?["message"] as JObject;
+                    if (choice == null)
+                    {
+                        return new AgentTurnResult
+                        {
+                            Failed = true,
+                            Reply = "Пустой ответ от ИИ. Попробуйте ещё раз.",
+                            DoneSummary = done
+                        };
+                    }
 
-            RaiseStatus("Готов");
+                    lock (_historyLock)
+                    {
+                        _history.Add((JObject)choice.DeepClone());
+                    }
+
+                    var toolCalls = choice["tool_calls"] as JArray;
+                    if (toolCalls == null || toolCalls.Count == 0)
+                    {
+                        var replyText = choice["content"]?.ToString()?.Trim();
+                        if (string.IsNullOrWhiteSpace(replyText))
+                            replyText = done.Count > 0 ? "Готово." : "Готово. Дополнительных действий не требуется.";
+
+                        RaiseStatus("Готов");
+                        return new AgentTurnResult
+                        {
+                            Reply = replyText,
+                            DoneSummary = done
+                        };
+                    }
+
+                    foreach (JToken callTok in toolCalls)
+                    {
+                        var call = callTok as JObject;
+                        if (call == null) continue;
+
+                        var callId = call["id"]?.ToString() ?? Guid.NewGuid().ToString("N");
+                        var fn = call["function"] as JObject;
+                        var name = fn?["name"]?.ToString() ?? "";
+                        var argsJson = fn?["arguments"]?.ToString() ?? "{}";
+
+                        if (cancellationToken.IsCancellationRequested)
+                        {
+                            AppendToolResult(callId, CancelledToolPayload());
+                            continue;
+                        }
+
+                        if (settings.AssistantRequireConfirmations && ToolCatalog.RequiresConfirmation(name, argsJson))
+                        {
+                            var pending = new PendingToolConfirmation
+                            {
+                                ToolName = name,
+                                ArgumentsJson = argsJson,
+                                Summary = BuildConfirmSummary(name, argsJson)
+                            };
+
+                            RaiseStatus("Нужно подтверждение");
+                            var handler = ConfirmationRequested;
+                            var approved = handler != null && await handler(pending).ConfigureAwait(false);
+                            if (!approved)
+                            {
+                                AppendToolResult(callId, new JObject
+                                {
+                                    ["cancelled"] = true,
+                                    ["message"] = "Архитектор отменил действие."
+                                }.ToString());
+                                done.Add("отменено: " + name);
+                                continue;
+                            }
+                        }
+
+                        RaiseStatus("Выполняет…");
+                        string rawResult;
+                        var toolName = ResolveToolAlias(name);
+                        var enrichedArgs = NormCheckDefaults.EnrichArgs(toolName, argsJson);
+                        enrichedArgs = CreateElementArgsNormalizer.Normalize(toolName, enrichedArgs);
+                        enrichedArgs = InjectMissingTypeIds(toolResultCache, toolName, enrichedArgs);
+                        try
+                        {
+                            if (HasNormalizeError(enrichedArgs, out var normalizeMsg))
+                            {
+                                rawResult = new JObject
+                                {
+                                    ["jsonrpc"] = "2.0",
+                                    ["error"] = new JObject { ["message"] = normalizeMsg }
+                                }.ToString();
+                            }
+                            else if (TryGetCachedToolResult(toolResultCache, toolName, enrichedArgs, out var cached))
+                            {
+                                rawResult = cached;
+                            }
+                            else
+                            {
+                                rawResult = await Task.Run(
+                                    () => ExecuteAssistantTool(toolName, enrichedArgs),
+                                    cancellationToken).ConfigureAwait(false);
+                                RememberCachedToolResult(toolResultCache, toolName, enrichedArgs, rawResult);
+                            }
+                            if (toolName.Equals("check_fire_doors", StringComparison.OrdinalIgnoreCase))
+                                rawResult = FireDoorRulesApplier.EnrichRawResult(rawResult);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            AppendToolResult(callId, CancelledToolPayload());
+                            // Fill remaining sibling calls so history stays valid for the next turn.
+                            FillRemainingToolResults(toolCalls, callTok);
+                            return CancelledResult(done);
+                        }
+                        catch (Exception ex)
+                        {
+                            if (IsCancel(ex, cancellationToken))
+                            {
+                                AppendToolResult(callId, CancelledToolPayload());
+                                FillRemainingToolResults(toolCalls, callTok);
+                                return CancelledResult(done);
+                            }
+
+                            rawResult = new JObject
+                            {
+                                ["jsonrpc"] = "2.0",
+                                ["error"] = new JObject
+                                {
+                                    ["message"] = ex.Message
+                                }
+                            }.ToString();
+                        }
+
+                        rawResult = NormCheckDefaults.AttachSourceToResult(name, enrichedArgs, rawResult);
+                        var bridged = NormCheckHighlightBridge.AfterCheckTool(toolName, rawResult);
+                        rawResult = bridged.RawResult;
+                        var highlightExtra = bridged.DoneExtra;
+
+                        var (ok, summary, forModel) = ParseToolResponse(name, rawResult);
+                        AppendToolResult(callId, forModel);
+                        if (ok)
+                        {
+                            done.Add(string.IsNullOrWhiteSpace(highlightExtra)
+                                ? summary
+                                : summary + " · " + highlightExtra);
+                        }
+                        else
+                            done.Add("ошибка: " + summary);
+                    }
+
+                    if (cancellationToken.IsCancellationRequested)
+                        return CancelledResult(done);
+                }
+
+                RaiseStatus("Готов");
+                return new AgentTurnResult
+                {
+                    Failed = true,
+                    Reply = "Слишком много шагов в одном запросе. Уточните задачу или разбейте на части.",
+                    DoneSummary = done
+                };
+            }
+            catch (OperationCanceledException)
+            {
+                return CancelledResult(done);
+            }
+            finally
+            {
+                FinishTurnCleanup();
+            }
+        }
+
+        private static AgentTurnResult CancelledResult(IList<string> done)
+        {
             return new AgentTurnResult
             {
-                Failed = true,
-                Reply = "Слишком много шагов в одном запросе. Уточните задачу или разбейте на части.",
-                DoneSummary = done
+                Cancelled = true,
+                Reply = "Остановлено.",
+                DoneSummary = done ?? new List<string>()
             };
+        }
+
+        private static bool IsCancel(Exception ex, CancellationToken token)
+        {
+            // HttpClient timeout also throws TaskCanceledException — only treat as cancel
+            // when the user/token actually requested cancellation.
+            if (!token.IsCancellationRequested)
+                return false;
+            return ex is OperationCanceledException
+                   || ex?.InnerException is OperationCanceledException
+                   || ex is TaskCanceledException;
+        }
+
+        private static string CancelledToolPayload()
+        {
+            return new JObject
+            {
+                ["cancelled"] = true,
+                ["message"] = "Остановлено пользователем."
+            }.ToString();
+        }
+
+        /// <summary>
+        /// After cancel mid-batch, stub any tool_calls that still lack a result.
+        /// </summary>
+        private void FillRemainingToolResults(JArray toolCalls, JToken afterCall)
+        {
+            var seen = false;
+            foreach (JToken callTok in toolCalls)
+            {
+                if (!seen)
+                {
+                    if (ReferenceEquals(callTok, afterCall))
+                        seen = true;
+                    continue;
+                }
+
+                var call = callTok as JObject;
+                if (call == null) continue;
+                var callId = call["id"]?.ToString() ?? Guid.NewGuid().ToString("N");
+                AppendToolResult(callId, CancelledToolPayload());
+            }
+        }
+
+        /// <summary>
+        /// After a turn finishes, drop base64 from the just-answered user message so the next
+        /// photo/PDF does not look like the chat is already "full". Also repair incomplete tool pairs.
+        /// </summary>
+        private void FinishTurnCleanup()
+        {
+            lock (_historyLock)
+            {
+                while (CompactMultimodalUnlocked(keepLastUserIntact: false)) { /* strip all attachments now that the turn is done */ }
+                SanitizeToolPairsUnlocked();
+            }
         }
 
         private void AppendToolResult(string callId, string content)
@@ -247,7 +835,7 @@ namespace revit_mcp_plugin.Core.Assistant
                 {
                     ["role"] = "tool",
                     ["tool_call_id"] = callId,
-                    ["content"] = content ?? ""
+                    ["content"] = TruncateForHistory(content ?? "")
                 });
             }
         }
@@ -284,10 +872,38 @@ namespace revit_mcp_plugin.Core.Assistant
             }
         }
 
-        private static string FriendlyToolName(string name)
+        private static string FriendlyToolName(string name) => ToolCatalog.FriendlyName(name);
+
+        /// <summary>
+        /// Collapse consecutive identical done lines: «размеры помещений» ×5 → «размеры помещений ×5».
+        /// </summary>
+        public static IList<string> CollapseDoneSummary(IList<string> items)
         {
-            if (string.IsNullOrEmpty(name)) return "операция";
-            return name.Replace('_', ' ');
+            var result = new List<string>();
+            if (items == null || items.Count == 0)
+                return result;
+
+            string current = null;
+            var count = 0;
+            foreach (var raw in items)
+            {
+                var item = raw ?? "";
+                if (current != null && string.Equals(item, current, StringComparison.Ordinal))
+                {
+                    count++;
+                    continue;
+                }
+
+                if (current != null)
+                    result.Add(count > 1 ? $"{current} ×{count}" : current);
+                current = item;
+                count = 1;
+            }
+
+            if (current != null)
+                result.Add(count > 1 ? $"{current} ×{count}" : current);
+
+            return result;
         }
 
         private static (bool ok, string summary, string forModel) ParseToolResponse(string toolName, string raw)
@@ -302,11 +918,36 @@ namespace revit_mcp_plugin.Core.Assistant
                     return (false, human, new JObject { ["ok"] = false, ["error"] = human }.ToString());
                 }
 
-                var result = jo["result"];
-                var compact = result == null ? "ok" : CompactResult(toolName, result);
-                var forModel = result?.ToString(Newtonsoft.Json.Formatting.None) ?? "{\"ok\":true}";
-                if (forModel.Length > 12000)
-                    forModel = forModel.Substring(0, 12000) + "…";
+                var result = ExtractResultPayload(jo);
+                if (result is JObject resultObj)
+                {
+                    var successToken = resultObj["Success"] ?? resultObj["success"] ?? resultObj["ok"];
+                    if (successToken != null && successToken.Type == JTokenType.Boolean && !successToken.Value<bool>())
+                    {
+                        var msg = resultObj["Message"]?.ToString()
+                            ?? resultObj["message"]?.ToString()
+                            ?? "неуспех";
+                        var human = ToolCatalog.HumanizeFailure(toolName, msg);
+                        var failPayload = new JObject
+                        {
+                            ["ok"] = false,
+                            ["error"] = human,
+                            ["result"] = resultObj
+                        };
+                        return (false, human, failPayload.ToString(Newtonsoft.Json.Formatting.None));
+                    }
+                }
+
+                if (result == null)
+                {
+                    var human = ToolCatalog.HumanizeFailure(toolName, "пустой ответ");
+                    return (false, human, new JObject { ["ok"] = false, ["error"] = human }.ToString());
+                }
+
+                var compact = CompactResult(toolName, result);
+                var forModel = result.ToString(Newtonsoft.Json.Formatting.None);
+                forModel = SlimFamilyTypesForModel(toolName, forModel);
+                forModel = TruncateForHistory(forModel);
                 return (true, compact, forModel);
             }
             catch
@@ -316,13 +957,37 @@ namespace revit_mcp_plugin.Core.Assistant
             }
         }
 
+        /// <summary>
+        /// In-Revit tools (run_norm_audit, annotate_*) return bare JSON without jsonrpc result wrapper.
+        /// </summary>
+        private static JToken ExtractResultPayload(JObject jo)
+        {
+            if (jo == null)
+                return null;
+            if (jo["result"] != null)
+                return jo["result"];
+            if (jo["Success"] != null || jo["success"] != null || jo["findings"] != null || jo["summary"] != null)
+                return jo;
+            return null;
+        }
+
         private static string CompactResult(string toolName, JToken result)
         {
             if (result is JArray arr)
                 return $"{FriendlyToolName(toolName)}: {arr.Count}";
             if (result is JObject obj)
             {
+                if (toolName.Equals("run_norm_audit", StringComparison.OrdinalIgnoreCase))
+                {
+                    var s = obj["summary"]?.ToString();
+                    if (!string.IsNullOrWhiteSpace(s))
+                        return "проверка норм: " + s;
+                }
                 if (obj["count"] != null) return $"{FriendlyToolName(toolName)}: {obj["count"]}";
+                if (obj["createdCount"] != null) return $"{FriendlyToolName(toolName)}: {obj["createdCount"]}";
+                if (obj["nonCompliantCount"] != null)
+                    return $"{FriendlyToolName(toolName)}: нарушений {obj["nonCompliantCount"]}";
+                if (obj["rules"] is JArray rulesArr) return $"{FriendlyToolName(toolName)}: {rulesArr.Count}";
                 if (obj["created"] is JArray created) return $"{FriendlyToolName(toolName)}: {created.Count}";
                 if (obj["Success"] != null || obj["success"] != null)
                 {
@@ -331,6 +996,279 @@ namespace revit_mcp_plugin.Core.Assistant
                 }
             }
             return FriendlyToolName(toolName);
+        }
+
+        private static string InjectMissingTypeIds(
+            Dictionary<string, string> cache,
+            string toolName,
+            string argsJson)
+        {
+            if (cache == null || cache.Count == 0)
+                return argsJson;
+            if (!toolName.Equals("create_line_based_element", StringComparison.OrdinalIgnoreCase)
+                && !toolName.Equals("create_point_based_element", StringComparison.OrdinalIgnoreCase)
+                && !toolName.Equals("create_surface_based_element", StringComparison.OrdinalIgnoreCase))
+                return argsJson;
+
+            JObject args;
+            try { args = JObject.Parse(argsJson ?? "{}"); }
+            catch { return argsJson; }
+
+            var data = args["data"] as JArray;
+            if (data == null || data.Count == 0)
+                return argsJson;
+
+            var wallTypeId = FindCachedTypeId(cache, preferWall: true);
+            var anyTypeId = FindCachedTypeId(cache, preferWall: false);
+            var changed = false;
+
+            foreach (var itemTok in data)
+            {
+                var item = itemTok as JObject;
+                if (item == null) continue;
+                var tid = item["typeId"]?.Value<long?>() ?? item["TypeId"]?.Value<long?>();
+                if (tid.HasValue && tid.Value > 0)
+                    continue;
+
+                long? pick = null;
+                if (toolName.Equals("create_line_based_element", StringComparison.OrdinalIgnoreCase))
+                    pick = wallTypeId ?? anyTypeId;
+                else
+                    pick = anyTypeId ?? wallTypeId;
+
+                if (pick.HasValue && pick.Value > 0)
+                {
+                    item["typeId"] = pick.Value;
+                    changed = true;
+                }
+            }
+
+            return changed ? args.ToString(Newtonsoft.Json.Formatting.None) : argsJson;
+        }
+
+        private static long? FindCachedTypeId(Dictionary<string, string> cache, bool preferWall)
+        {
+            foreach (var kv in cache)
+            {
+                if (kv.Key.IndexOf("get_available_family_types", StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+                try
+                {
+                    var token = JToken.Parse(kv.Value);
+                    // Unwrap JSON-RPC result if present
+                    if (token is JObject root && root["result"] != null)
+                        token = root["result"];
+
+                    JArray types = token as JArray;
+                    if (types == null && token is JObject obj)
+                        types = (obj["types"] ?? obj["Types"] ?? obj["familyTypes"] ?? obj["Response"]) as JArray;
+
+                    if (types == null)
+                        continue;
+
+                    foreach (var t in types.OfType<JObject>().OrderByDescending(o => preferWall && IsLikelyWallType(o)))
+                    {
+                        if (preferWall && !IsLikelyWallType(t))
+                            continue;
+                        var id = t["typeId"] ?? t["TypeId"] ?? t["FamilyTypeId"] ?? t["familyTypeId"] ?? t["id"] ?? t["Id"];
+                        if (id != null && long.TryParse(id.ToString(), out var n) && n > 0)
+                            return n;
+                    }
+                }
+                catch
+                {
+                    // ignore bad cache entry
+                }
+            }
+
+            return null;
+        }
+
+        private static bool TryGetCachedToolResult(
+            Dictionary<string, string> cache,
+            string toolName,
+            string argsJson,
+            out string rawResult)
+        {
+            rawResult = null;
+            if (!IsCacheableReadTool(toolName))
+                return false;
+            var key = CacheKey(toolName, argsJson);
+            return cache.TryGetValue(key, out rawResult);
+        }
+
+        private static void RememberCachedToolResult(
+            Dictionary<string, string> cache,
+            string toolName,
+            string argsJson,
+            string rawResult)
+        {
+            if (!IsCacheableReadTool(toolName) || string.IsNullOrEmpty(rawResult))
+                return;
+            cache[CacheKey(toolName, argsJson)] = rawResult;
+        }
+
+        private static bool IsCacheableReadTool(string toolName)
+        {
+            if (string.IsNullOrWhiteSpace(toolName))
+                return false;
+            switch (toolName.Trim().ToLowerInvariant())
+            {
+                case "get_current_view_info":
+                case "get_available_family_types":
+                case "get_document_styles":
+                case "query_norm_rules":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static string CacheKey(string toolName, string argsJson)
+        {
+            return toolName.Trim().ToLowerInvariant() + "|" + (argsJson ?? "{}").Trim();
+        }
+
+        private static bool HasNormalizeError(string argsJson, out string message)
+        {
+            message = null;
+            try
+            {
+                var jo = JObject.Parse(argsJson ?? "{}");
+                message = jo["_normalizeError"]?.ToString();
+                return !string.IsNullOrWhiteSpace(message);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Keep wall/door typeIds visible — prefer Wall types when present.
+        /// </summary>
+        private static string SlimFamilyTypesForModel(string toolName, string forModel)
+        {
+            if (!toolName.Equals("get_available_family_types", StringComparison.OrdinalIgnoreCase))
+                return forModel;
+
+            try
+            {
+                var token = JToken.Parse(forModel);
+                JArray types = null;
+                if (token is JArray arr)
+                    types = arr;
+                else if (token is JObject obj)
+                    types = (obj["types"] ?? obj["Types"] ?? obj["familyTypes"] ?? obj["items"] ?? obj["Response"]) as JArray;
+
+                if (types == null || types.Count == 0)
+                    return forModel;
+
+                // Prefer walls first so model doesn't pick a door typeId for Wall.Create
+                var ordered = types
+                    .OfType<JObject>()
+                    .OrderByDescending(IsLikelyWallType)
+                    .ThenBy(o => o["name"]?.ToString() ?? o["Name"]?.ToString() ?? "")
+                    .Take(30)
+                    .ToList();
+
+                var slim = new JArray();
+                foreach (var o in ordered)
+                {
+                    slim.Add(new JObject
+                    {
+                        ["typeId"] = o["typeId"] ?? o["TypeId"] ?? o["FamilyTypeId"] ?? o["familyTypeId"] ?? o["id"] ?? o["Id"],
+                        ["name"] = o["name"] ?? o["Name"] ?? o["typeName"] ?? o["TypeName"],
+                        ["familyName"] = o["familyName"] ?? o["FamilyName"],
+                        ["category"] = o["category"] ?? o["Category"]
+                    });
+                }
+
+                var firstWall = ordered.FirstOrDefault(IsLikelyWallType);
+                var suggested = firstWall?["typeId"] ?? firstWall?["TypeId"] ?? firstWall?["FamilyTypeId"]
+                    ?? firstWall?["id"]
+                    ?? slim.FirstOrDefault()?["typeId"];
+
+                return new JObject
+                {
+                    ["ok"] = true,
+                    ["count"] = types.Count,
+                    ["shown"] = slim.Count,
+                    ["suggestedWallTypeId"] = suggested,
+                    ["types"] = slim,
+                    ["hint"] = "Для стен используй suggestedWallTypeId или typeId из types[] где category/family содержит Wall. " +
+                               "Передай typeId числом в create_line_based_element."
+                }.ToString(Newtonsoft.Json.Formatting.None);
+            }
+            catch
+            {
+                return forModel;
+            }
+        }
+
+        private static bool IsLikelyWallType(JObject o)
+        {
+            if (o == null) return false;
+            var blob = string.Join(" ",
+                o["category"]?.ToString() ?? "",
+                o["Category"]?.ToString() ?? "",
+                o["familyName"]?.ToString() ?? "",
+                o["FamilyName"]?.ToString() ?? "",
+                o["name"]?.ToString() ?? "",
+                o["Name"]?.ToString() ?? "");
+            return blob.IndexOf("Wall", StringComparison.OrdinalIgnoreCase) >= 0
+                || blob.IndexOf("OST_Walls", StringComparison.OrdinalIgnoreCase) >= 0
+                || blob.IndexOf("Стен", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static string ResolveToolAlias(string toolName)
+        {
+            if (string.IsNullOrWhiteSpace(toolName))
+                return toolName;
+
+            switch (toolName.Trim().ToLowerInvariant())
+            {
+                case "tag_all_rooms": return "tag_rooms";
+                case "tag_all_walls": return "tag_walls";
+                case "color_elements": return "color_splash";
+                default: return toolName.Trim();
+            }
+        }
+
+        private static string ExecuteAssistantTool(string toolName, string argsJson)
+        {
+            if (toolName.Equals("query_norm_rules", StringComparison.OrdinalIgnoreCase))
+                return NormCatalogStore.ExecuteQueryTool(argsJson);
+
+            if (toolName.Equals("run_norm_audit", StringComparison.OrdinalIgnoreCase))
+                return WrapLocalToolResult(NormAuditOrchestrator.Run(argsJson));
+
+            if (toolName.Equals("annotate_norm_findings", StringComparison.OrdinalIgnoreCase))
+                return WrapLocalToolResult(AnnotateNormFindingsHelper.Run(argsJson));
+
+            return SocketService.Instance.ExecuteJsonRpcLocal(toolName, argsJson);
+        }
+
+        private static string WrapLocalToolResult(string body)
+        {
+            if (string.IsNullOrWhiteSpace(body))
+                return body;
+            try
+            {
+                var jo = JObject.Parse(body);
+                if (jo["result"] != null || jo["error"] != null)
+                    return body;
+                return new JObject
+                {
+                    ["jsonrpc"] = "2.0",
+                    ["id"] = "local",
+                    ["result"] = jo
+                }.ToString(Newtonsoft.Json.Formatting.None);
+            }
+            catch
+            {
+                return body;
+            }
         }
     }
 }

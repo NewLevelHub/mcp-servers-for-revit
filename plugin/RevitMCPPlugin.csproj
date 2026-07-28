@@ -76,9 +76,14 @@
     <ItemGroup>
         <PackageReference Include="Newtonsoft.Json" Version="13.0.3"/>
         <PackageReference Include="System.Net.Http" Version="4.3.4"/>
+        <PackageReference Include="System.IO.Compression" Version="4.3.0"/>
+        <PackageReference Include="System.IO.Compression.ZipFile" Version="4.3.0"/>
     </ItemGroup>
     <ItemGroup>
         <None Update="mcp-servers-for-revit.addin">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Update="Resources\norm-catalog.json">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </None>
     </ItemGroup>
@@ -87,6 +92,8 @@
             <RootItem Include="$(ProjectDir)*.addin"/>
             <AddinItem Include="$(TargetDir)*.dll"/>
             <AddinItem Include="$(TargetDir)*.pdb"/>
+            <CatalogItem Include="$(TargetDir)Resources\norm-catalog.json" Condition="Exists('$(TargetDir)Resources\norm-catalog.json')"/>
+            <CatalogItem Include="$(ProjectDir)Resources\norm-catalog.json" Condition="Exists('$(ProjectDir)Resources\norm-catalog.json')"/>
         </ItemGroup>
 
         <PropertyGroup>
@@ -96,6 +103,7 @@
 
         <Copy SourceFiles="@(RootItem)" DestinationFolder="$(RootDir)"/>
         <Copy SourceFiles="@(AddinItem)" DestinationFolder="$(AddinDir)"/>
+        <Copy SourceFiles="@(CatalogItem)" DestinationFolder="$(AddinDir)Resources\" SkipUnchangedFiles="true"/>
 
         <ItemGroup>
             <AddinFiles Include="$(RootDir)**\*.*"/>

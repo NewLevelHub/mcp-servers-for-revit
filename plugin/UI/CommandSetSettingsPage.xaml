@@ -15,22 +15,22 @@
         </Grid.RowDefinitions>
         <!-- Title -->
         <StackPanel Grid.Row="0" Margin="0,0,0,15">
-            <TextBlock Text="Command Set Settings" FontSize="22" FontWeight="SemiBold"/>
-            <TextBlock Text="Select the commands you want to enable" 
+            <TextBlock Text="Наборы команд" FontSize="22" FontWeight="SemiBold"/>
+            <TextBlock Text="Выберите команды, которые нужно включить" 
                        Foreground="#666666" Margin="0,5,0,0"/>
         </StackPanel>
         <!-- MCP Server Settings -->
         <Border Grid.Row="1" BorderBrush="#e0e0e0" BorderThickness="1" Margin="0,0,0,15" Padding="12">
             <StackPanel>
-                <TextBlock Text="MCP Server" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                <TextBlock Text="Сервер MCP" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
                 <CheckBox x:Name="AutoStartCheckBox"
-                          Content="Start MCP server automatically when Revit opens"
-                          ToolTip="When enabled, the MCP server starts as soon as Revit is ready."/>
-                <TextBlock Text="Command timing and diagnostics are written to the Logs folder."
+                          Content="Запускать сервер MCP автоматически при открытии Revit"
+                          ToolTip="При включении сервер MCP стартует сразу после готовности Revit."/>
+                <TextBlock Text="Время выполнения команд и диагностика записываются в папку Logs."
                            Foreground="#666666" Margin="0,10,0,6" TextWrapping="Wrap"/>
-                <Button Content="Open Logs Folder" Width="140" Height="28" HorizontalAlignment="Left"
+                <Button Content="Открыть папку логов" Width="160" Height="28" HorizontalAlignment="Left"
                         Click="OpenLogsFolderButton_Click"
-                        ToolTip="Open the folder containing command-metrics JSONL files for slow-command analysis."/>
+                        ToolTip="Открыть папку с JSONL-файлами метрик команд для анализа медленных команд."/>
             </StackPanel>
         </Border>
         <!-- Main Content Area -->
@@ -46,7 +46,7 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-                    <TextBlock Grid.Row="0" Text="Available Command Sets" Padding="10,8" 
+                    <TextBlock Grid.Row="0" Text="Доступные наборы" Padding="10,8" 
                                Background="#f0f0f0" FontWeight="SemiBold"/>
                     <ListBox Grid.Row="1" x:Name="CommandSetListBox" 
                              SelectionChanged="CommandSetListBox_SelectionChanged"
@@ -73,12 +73,12 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
                     <TextBlock Grid.Row="0" x:Name="FeaturesHeaderTextBlock" 
-                               Text="Feature List" Padding="10,8" 
+                               Text="Список команд" Padding="10,8" 
                                Background="#f0f0f0" FontWeight="SemiBold"/>
                     <ListView Grid.Row="1" x:Name="FeaturesListView" BorderThickness="0">
                         <ListView.View>
                             <GridView>
-                                <GridViewColumn Header="Enable" Width="50">
+                                <GridViewColumn Header="Вкл." Width="50">
                                     <GridViewColumn.CellTemplate>
                                         <DataTemplate>
                                             <CheckBox IsChecked="{Binding Enabled, Mode=TwoWay}"
@@ -89,7 +89,7 @@
                                                             <DataTrigger Binding="{Binding IsBuiltIn}" Value="True">
                                                                 <Setter Property="IsEnabled" Value="False"/>
                                                                 <Setter Property="ToolTip"
-                                                                        Value="Built-in plugin command — always enabled"/>
+                                                                        Value="Встроенная команда плагина — всегда включена"/>
                                                             </DataTrigger>
                                                         </Style.Triggers>
                                                     </Style>
@@ -98,16 +98,16 @@
                                         </DataTemplate>
                                     </GridViewColumn.CellTemplate>
                                 </GridViewColumn>
-                                <GridViewColumn Header="Name" Width="150" 
+                                <GridViewColumn Header="Имя" Width="150" 
                                                DisplayMemberBinding="{Binding CommandName}"/>
-                                <GridViewColumn Header="Description" Width="280" 
+                                <GridViewColumn Header="Описание" Width="280" 
                                                DisplayMemberBinding="{Binding Description}"/>
                             </GridView>
                         </ListView.View>
                     </ListView>
                     <!-- Displayed when no command set is selected -->
                     <TextBlock Grid.Row="1" x:Name="NoSelectionTextBlock"
-                              Text="Please select a command set from the left to view its commands" 
+                              Text="Выберите набор команд слева, чтобы увидеть список команд" 
                               HorizontalAlignment="Center" VerticalAlignment="Center"
                               Foreground="#999" FontSize="14" TextWrapping="Wrap"
                               Visibility="Collapsed"/>
@@ -116,11 +116,11 @@
         </Grid>
         <!-- Bottom Buttons -->
         <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,15,0,0">
-            <Button Content="Open CommandSet Folder" Width="150" Height="30" Margin="0,0,10,0" Click="OpenFolderButton_Click"/>
-            <Button Content="Refresh" Width="80" Height="30" Margin="0,0,10,0" Click="RefreshButton_Click"/>
-            <Button Content="Select All" Width="80" Height="30" Margin="0,0,10,0" Click="SelectAllButton_Click"/>
-            <Button Content="Deselect All" Width="80" Height="30" Margin="0,0,10,0" Click="UnselectAllButton_Click"/>
-            <Button Content="Save" Width="80" Height="30" Background="#0078D7" Foreground="White" 
+            <Button Content="Открыть папку CommandSet" Width="180" Height="30" Margin="0,0,10,0" Click="OpenFolderButton_Click"/>
+            <Button Content="Обновить" Width="90" Height="30" Margin="0,0,10,0" Click="RefreshButton_Click"/>
+            <Button Content="Выбрать все" Width="100" Height="30" Margin="0,0,10,0" Click="SelectAllButton_Click"/>
+            <Button Content="Снять все" Width="100" Height="30" Margin="0,0,10,0" Click="UnselectAllButton_Click"/>
+            <Button Content="Сохранить" Width="100" Height="30" Background="#0078D7" Foreground="White" 
                    Click="SaveButton_Click"/>
         </StackPanel>
     </Grid>

@@ -47,20 +47,20 @@
           <TextBlock Text="Подключение к модели" FontSize="15" FontWeight="SemiBold"
                      Foreground="#1A2744" Margin="0,0,0,12"/>
 
-          <TextBlock Text="API key" FontSize="12" Foreground="#5B6B7C" Margin="0,0,0,4"/>
+          <TextBlock Text="Ключ API" FontSize="12" Foreground="#5B6B7C" Margin="0,0,0,4"/>
           <PasswordBox x:Name="ApiKeyBox" Style="{StaticResource FieldPass}"/>
 
-          <TextBlock Text="Base URL (OpenAI-compatible)" FontSize="12" Foreground="#5B6B7C"
+          <TextBlock Text="Базовый URL (совместимый с OpenAI)" FontSize="12" Foreground="#5B6B7C"
                      Margin="0,12,0,4"/>
           <TextBox x:Name="BaseUrlBox" Style="{StaticResource FieldBox}"
                    Text="https://api.openai.com/v1"/>
 
-          <TextBlock Text="Model" FontSize="12" Foreground="#5B6B7C" Margin="0,12,0,4"/>
+          <TextBlock Text="Модель" FontSize="12" Foreground="#5B6B7C" Margin="0,12,0,4"/>
           <TextBox x:Name="ModelBox" Style="{StaticResource FieldBox}" Text="gpt-4o-mini"/>
 
           <CheckBox x:Name="RequireConfirmCheckBox"
-                    Content="Подтверждать создание / удаление / массовые правки"
-                    IsChecked="True" Margin="0,16,0,0" FontSize="12.5" Foreground="#1A2744"/>
+                    Content="Подтверждать только удаление и выполнение кода"
+                    IsChecked="False" Margin="0,16,0,0" FontSize="12.5" Foreground="#1A2744"/>
         </StackPanel>
       </Border>
 

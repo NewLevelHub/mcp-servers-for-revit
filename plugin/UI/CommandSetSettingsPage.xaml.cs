@@ -1,5 +1,6 @@
 ﻿using Newtonsoft.Json;
 using revit_mcp_plugin.Configuration;
+using revit_mcp_plugin.Core;
 using revit_mcp_plugin.Utils;
 using System;
 using System.Collections.Generic;
@@ -232,13 +233,13 @@ namespace revit_mcp_plugin.UI
                 // If no command sets found, display a message
                 if (commandSets.Count == 0)
                 {
-                    MessageBox.Show("No command sets found. Please check if the Commands folder exists and contains valid command sets.",
-                                  "No Command Sets", MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBox.Show("Наборы команд не найдены. Проверьте, что папка Commands существует и содержит корректные наборы.",
+                                  "Наборы команд", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error loading command sets: {ex.Message}", "Error",
+                MessageBox.Show($"Ошибка загрузки наборов команд: {ex.Message}", "Ошибка",
                                 MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -250,7 +251,7 @@ namespace revit_mcp_plugin.UI
             if (selectedCommandSet != null)
             {
                 NoSelectionTextBlock.Visibility = Visibility.Collapsed;
-                FeaturesHeaderTextBlock.Text = $"{selectedCommandSet.Name} - Command List";
+                FeaturesHeaderTextBlock.Text = $"{selectedCommandSet.Name} — список команд";
                 // Load commands from selected command set
                 foreach (var command in selectedCommandSet.Commands)
                 {
@@ -260,7 +261,7 @@ namespace revit_mcp_plugin.UI
             else
             {
                 NoSelectionTextBlock.Visibility = Visibility.Visible;
-                FeaturesHeaderTextBlock.Text = "Command List";
+                FeaturesHeaderTextBlock.Text = "Список команд";
             }
         }
 
@@ -408,12 +409,12 @@ namespace revit_mcp_plugin.UI
                 }
                 // 序列化并保存到文件
                 SaveRegistry(registry);
-                MessageBox.Show($"Settings saved successfully!\n\nEnabled {enabledCount} commands:\n{enabledFeaturesText}",
-                              "Settings Saved", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show($"Настройки сохранены.\n\nВключено команд: {enabledCount}\n{enabledFeaturesText}",
+                              "Сохранено", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error saving settings: {ex.Message}", "Error",
+                MessageBox.Show($"Ошибка сохранения настроек: {ex.Message}", "Ошибка",
                               MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -438,7 +439,7 @@ namespace revit_mcp_plugin.UI
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error opening Commands folder: {ex.Message}", "Error",
+                MessageBox.Show($"Ошибка открытия папки Commands: {ex.Message}", "Ошибка",
                               MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -451,10 +452,11 @@ namespace revit_mcp_plugin.UI
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error opening Logs folder: {ex.Message}", "Error",
+                MessageBox.Show($"Ошибка открытия папки логов: {ex.Message}", "Ошибка",
                               MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
+
     }
 
     // Data models
