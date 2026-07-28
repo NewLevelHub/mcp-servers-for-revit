@@ -14,6 +14,7 @@ import {
 } from "./rulesStore.js";
 import { ensureCuratedResidentialRoomNorms } from "./normAudit/curatedResidentialRoomNorms.js";
 import { ensureCuratedGost21101Rules } from "./curatedGost21101Rules.js";
+import { exportNormCatalog } from "./exportNormCatalog.js";
 
 type Database = DatabaseConstructor.Database;
 
@@ -158,6 +159,23 @@ export async function seedNormLibrary(
   const curatedGost = ensureCuratedGost21101Rules(db);
   inserted += curatedGost.inserted;
   updated += curatedGost.updated;
+
+  // Keep in-Revit assistant catalog in sync after every seed.
+  try {
+    await exportNormCatalog(db);
+  } catch (error) {
+    // Seed itself succeeded; export is best-effort for the plugin.
+    const detail = error instanceof Error ? error.message : String(error);
+    files.push({
+      fileName: "(export norm-catalog.json)",
+      document: "plugin catalog",
+      ruleCount: 0,
+      inserted: 0,
+      updated: 0,
+      skipped: true,
+      warnings: [`exportNormCatalog failed: ${detail}`],
+    });
+  }
 
   return {
     normativesDir,

@@ -22,8 +22,13 @@ export interface NormAuditCheckerDef {
     | "railing_height"
   >;
   title: string;
-  /** Substrings matched against user topics (lowercase). Empty topics → all. */
+  /** Substrings matched against user topics (lowercase). Empty topics → all (except optInOnly). */
   topicHints: string[];
+  /**
+   * If true, checker is skipped on full audit (no topics).
+   * Used for МГН / accessibility — only when user asks topics=["мгн"] etc.
+   */
+  optInOnly?: boolean;
 }
 
 /** Phase 1 checkers wrapped by run_norm_audit. */
@@ -106,31 +111,30 @@ export const PHASE1_CHECKERS: readonly NormAuditCheckerDef[] = [
   {
     checkType: "mgn_room_geometry",
     title: "МГН: разворот кресла-коляски, коридоры, санузлы",
+    optInOnly: true,
     topicHints: [
       "мгн",
-      "доступ",
+      "доступност",
       "инвалид",
       "коляск",
       "кресло",
       "разворот",
       "accessibility",
       "мүгедек",
-      "1500",
-      "1,5 м",
     ],
   },
   {
     checkType: "mgn_door_width",
     title: "МГН: ширина дверей доступных путей (0,9 м)",
+    optInOnly: true,
     topicHints: [
       "мгн",
-      "доступ",
+      "доступност",
       "инвалид",
       "коляск",
       "accessibility",
       "мүгедек",
-      "двер",
-      "0,9",
+      "зона маневрирован",
     ],
   },
   {
@@ -258,6 +262,13 @@ export const PHASE2_SKIPPED: readonly NormAuditSkippedRule[] = [
       "Отдельный checker мин. ширины прохода (если не покрыто коридором) ещё не реализован (Phase 2).",
     topics: ["ширина прохода"],
   },
+  {
+    checkType: "mgn_door_maneuvering",
+    reason:
+      "Проверки МГН / доступности (СП РК 3.06-101-2012*) по умолчанию выключены для обычного жилья. " +
+      "Запустите с topics=[\"мгн\"] или «проверь доступность МГН».",
+    topics: ["мгн", "доступност", "accessibility"],
+  },
 ] as const;
 
 export const AUDIT_SCOPE_NOTE =
@@ -287,9 +298,11 @@ export function topicMatchesHints(
 export function selectPhase1Checkers(
   topics?: string[]
 ): NormAuditCheckerDef[] {
-  return PHASE1_CHECKERS.filter((checker) =>
-    topicMatchesHints(topics, checker.topicHints)
-  );
+  const hasTopics = Boolean(topics && topics.length > 0);
+  return PHASE1_CHECKERS.filter((checker) => {
+    if (checker.optInOnly && !hasTopics) return false;
+    return topicMatchesHints(topics, checker.topicHints);
+  });
 }
 
 export function selectSkippedRules(
@@ -298,10 +311,15 @@ export function selectSkippedRules(
   // Always surface Phase-2 gaps when running a full audit (no topic filter).
   // With a topic filter, only show skipped rules that match the request —
   // so «проверь двери» honestly says door clear width is not implemented.
+  // МГН opt-in skip is shown on full audit, but not when topics already ask for МГН.
   if (!topics || topics.length === 0) {
     return [...PHASE2_SKIPPED];
   }
-  return PHASE2_SKIPPED.filter((rule) =>
-    topicMatchesHints(topics, rule.topics)
-  );
+  return PHASE2_SKIPPED.filter((rule) => {
+    if (rule.checkType === "mgn_door_maneuvering") {
+      // User explicitly asked for МГН — checker runs, do not list as skipped.
+      if (topicMatchesHints(topics, rule.topics)) return false;
+    }
+    return topicMatchesHints(topics, rule.topics);
+  });
 }

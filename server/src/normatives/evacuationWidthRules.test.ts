@@ -67,4 +67,15 @@ describe("evacuationWidthRules", () => {
 
     assert.equal(rules.length, 0);
   });
+
+  it("ignores light-pocket glazed door width mistaken for corridor", () => {
+    const rules = extractEvacuationWidthRulesFromText(
+      "Роль светового кармана может выполнять лестничная клетка, отделенная от коридора " +
+        "или проходного лифтового холла остекленной дверью шириной не менее 1,2 м.",
+      "СП РК 3.02-101-2012",
+      "SP_RK_3.02-101-2012_27.04.2021.pdf"
+    );
+
+    assert.equal(rules.length, 0);
+  });
 });

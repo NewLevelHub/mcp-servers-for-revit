@@ -723,3 +723,15 @@ export function queryNormRules(
     .slice(0, limit)
     .map((item) => item.rule);
 }
+
+/** All rules for offline catalog export (in-Revit assistant). */
+export function listAllNormRules(db: Database): StoredNormRule[] {
+  ensureNormRulesSchema(db);
+  const rows = db
+    .prepare(
+      `SELECT * FROM norm_rules
+       ORDER BY document, clause, object, rule_type`
+    )
+    .all() as NormRuleRow[];
+  return rows.map(rowToStoredRule);
+}

@@ -134,11 +134,13 @@ describe("checklist integration", () => {
     assert.equal(skippedTypes.includes("mgn_door_maneuvering"), false);
   });
 
-  it("full audit (no topics) includes МГН checkers", () => {
+  it("full audit (no topics) excludes МГН checkers and lists them as skipped", () => {
     const checkers = selectPhase1Checkers(undefined);
     const types = checkers.map((checker) => checker.checkType);
-    assert.ok(types.includes("mgn_room_geometry"));
-    assert.ok(types.includes("mgn_door_width"));
+    assert.equal(types.includes("mgn_room_geometry"), false);
+    assert.equal(types.includes("mgn_door_width"), false);
+    const skipped = selectSkippedRules();
+    assert.ok(skipped.some((s) => s.checkType === "mgn_door_maneuvering"));
   });
 });
 

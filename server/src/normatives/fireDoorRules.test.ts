@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { applyFireDoorRules, detectDoorScenarios } from "./applyFireDoorRules.js";
 import {
   extractFireDoorRulesFromText,
+  isFireDoorRequirementQuote,
   loadFireDoorRulesFromNormatives,
   normalizeDocumentName,
   resolveNormativesDir,
@@ -28,8 +29,23 @@ describe("fireDoorRules", () => {
     );
 
     assert.ok(rules.length >= 1);
-    assert.match(rules[0].source.quote, /двер/i);
+    assert.match(rules[0].source.quote, /самозакрывающ|противопожарн/i);
     assert.ok(rules[0].source.document.includes("3.02-101"));
+  });
+
+  it("rejects evacuation path-length snippets as fire-door rules", () => {
+    const text =
+      "Если помещение предназначено для сна, то путь эвакуации по горизонтальному " +
+      "проходу от двери этого помещения до защищенного эвакуационного выхода, " +
+      "ведущего к лестничной клетке, должен иметь протяженность не более 30 м.";
+
+    assert.equal(isFireDoorRequirementQuote(text), false);
+    const rules = extractFireDoorRulesFromText(
+      text,
+      "СП РК 3.02-109-2012",
+      "SP_RK_3.02-109-2012_07.08.2018.pdf"
+    );
+    assert.equal(rules.length, 0);
   });
 
   it("loads rules from repo normatives directory", async () => {
@@ -42,12 +58,14 @@ describe("fireDoorRules", () => {
 
     assert.equal(resolvedDir, normativesDir);
     assert.ok(rules.length > 0);
-    assert.ok(rules.some((rule) => /двер/i.test(rule.source.quote)));
+    assert.ok(
+      rules.every((rule) => isFireDoorRequirementQuote(rule.source.quote))
+    );
   });
 });
 
 describe("applyFireDoorRules", () => {
-  it("marks corridor-to-apartment door as requiring fire rating with norm citation", () => {
+  it("marks stair-to-corridor door as requiring fire rating with norm citation", () => {
     const rules = extractFireDoorRulesFromText(
       "5.3.4 Двери в ограждениях противопожарных преград, отделяющих пожарные отсеки, должны быть противопожарными.",
       "СН РК 3.02-09-2019",
@@ -63,8 +81,8 @@ describe("applyFireDoorRules", () => {
           family: "Door",
           type: "900",
           level: "1",
-          fromRoom: "Коридор",
-          toRoom: "Квартира 1",
+          fromRoom: "Лестничная клетка",
+          toRoom: "Коридор",
           isOnEgressPath: true,
           isMarkedAsFireDoor: false,
           markSource: "none",
@@ -79,6 +97,47 @@ describe("applyFireDoorRules", () => {
     assert.equal(result.doors[0].requiresFireDoor, true);
     assert.match(result.doors[0].source.quote, /противопожарн/i);
     assert.equal(result.doors[0].compliant, false);
+  });
+
+  it("does not flag apartment entrance (прихожая↔коридор) from path-length quotes", () => {
+    const junk = extractFireDoorRulesFromText(
+      "Если помещение предназначено для сна, то путь эвакуации по горизонтальному " +
+        "проходу от двери этого помещения до защищенного эвакуационного выхода, " +
+        "ведущего к лестничной клетке, должен иметь протяженность не более 30 м.",
+      "СП РК 3.02-109-2012",
+      "SP_RK_3.02-109-2012_07.08.2018.pdf"
+    );
+    assert.equal(junk.length, 0);
+
+    const realRules = extractFireDoorRulesFromText(
+      "5.3.4 Двери в ограждениях противопожарных преград, отделяющих пожарные отсеки, должны быть противопожарными.",
+      "СН РК 3.02-09-2019",
+      "СН РК_3.02-09-2019.pdf"
+    );
+
+    const result = applyFireDoorRules(
+      [
+        {
+          id: 667528,
+          uniqueId: "u667528",
+          mark: "366",
+          family: "Door",
+          type: "1050",
+          level: "2 этаж",
+          fromRoom: "Прихожая 183",
+          toRoom: "Межквартирный коридор 167",
+          isOnEgressPath: true,
+          isMarkedAsFireDoor: false,
+          markSource: "none",
+          currentFireRating: "",
+          scheduleNote: "",
+        },
+      ],
+      realRules
+    );
+
+    assert.equal(result.doors[0].requiresFireDoor, false);
+    assert.equal(result.requiredFireDoors, 0);
   });
 
   it("detects stair-to-corridor scenario", () => {

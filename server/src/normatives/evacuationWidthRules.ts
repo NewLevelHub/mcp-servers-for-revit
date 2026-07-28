@@ -40,7 +40,7 @@ const MIN_WIDTH_RE =
 
 /** Ventilation / air-exchange tables often contain «60 м³/ч» near the word «коридор». */
 const NON_WIDTH_CONTEXT_RE =
-  /м\s*3\s*\/?\s*ч|м³\/ч|воздухообмен|кратност|вытяжн|приток|температур|конфорочн|плит[а-яё]*/i;
+  /м\s*3\s*\/?\s*ч|м³\/ч|воздухообмен|кратност|вытяжн|приток|температур|конфорочн|плит[а-яё]*|светов[а-яё]*\s+карман|остекленн[а-яё]*\s+двер/i;
 
 const MIN_PLAUSIBLE_CORRIDOR_WIDTH_MM = 800;
 const MAX_PLAUSIBLE_CORRIDOR_WIDTH_MM = 6000;
