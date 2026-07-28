@@ -10,14 +10,51 @@ public static class ElementParameterHelper
         if (string.IsNullOrWhiteSpace(parameterName))
             return null;
 
-        var direct = element.LookupParameter(parameterName);
-        if (direct != null)
-            return direct;
+        foreach (var candidate in ExpandParameterAliases(parameterName))
+        {
+            var direct = element.LookupParameter(candidate);
+            if (direct != null)
+                return direct;
 
-        return element.Parameters
-            .Cast<Parameter>()
-            .FirstOrDefault(param =>
-                string.Equals(param.Definition.Name, parameterName, StringComparison.OrdinalIgnoreCase));
+            var byName = element.Parameters
+                .Cast<Parameter>()
+                .FirstOrDefault(param =>
+                    string.Equals(param.Definition.Name, candidate, StringComparison.OrdinalIgnoreCase));
+            if (byName != null)
+                return byName;
+        }
+
+        // Built-in: Room Bounding / Граница помещения on walls
+        if (IsRoomBoundingAlias(parameterName) && element is Wall)
+        {
+            var bip = element.get_Parameter(BuiltInParameter.WALL_ATTR_ROOM_BOUNDING);
+            if (bip != null)
+                return bip;
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<string> ExpandParameterAliases(string parameterName)
+    {
+        yield return parameterName;
+        if (IsRoomBoundingAlias(parameterName))
+        {
+            yield return "Room Bounding";
+            yield return "Граница помещения";
+        }
+    }
+
+    private static bool IsRoomBoundingAlias(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return false;
+        var n = name.Trim();
+        return n.Equals("Room Bounding", StringComparison.OrdinalIgnoreCase)
+            || n.Equals("Граница помещения", StringComparison.OrdinalIgnoreCase)
+            || n.Equals("WALL_ATTR_ROOM_BOUNDING", StringComparison.OrdinalIgnoreCase)
+            || (n.IndexOf("границ", StringComparison.OrdinalIgnoreCase) >= 0
+                && n.IndexOf("помещен", StringComparison.OrdinalIgnoreCase) >= 0);
     }
 
     public static ElementParameterInfo ToParameterInfo(Parameter parameter, Document doc, bool slim = false)

@@ -15,6 +15,8 @@ namespace RevitMCPCommandSet.Services;
 public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExternalEventHandler
 {
     public const string DefaultCommentTag = "MCP-ANN";
+    /// <summary>Fallback when Comments is read-only on TextNote (some ADSK templates).</summary>
+    private const string TextMarkerSuffix = "\u200B\u200B";
     public const string DefaultTextTypeName = "ADSK_Замечания";
     /// <summary>Margin beyond plan+grids to the text column (model mm).</summary>
     public const double DefaultOutsideMarginMm = 4000;
@@ -36,6 +38,7 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
     private List<TextNotePlacementInfo> _notes = new();
     private List<DetailLinePlacementInfo> _lines = new();
     private bool _clearPrevious = true;
+    private bool _clearOnly;
     private string _commentTag = DefaultCommentTag;
     private string _defaultTextTypeName = DefaultTextTypeName;
     private long _viewId = -1;
@@ -56,7 +59,8 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
         string placement = DefaultPlacement,
         double marginMm = 0,
         double paperWidthMm = 0,
-        double textSizeMm = 0)
+        double textSizeMm = 0,
+        bool clearOnly = false)
     {
         _notes = (notes ?? Enumerable.Empty<TextNotePlacementInfo>())
             .Where(n => n != null && !string.IsNullOrWhiteSpace(n.Text))
@@ -65,6 +69,7 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
             .Where(l => l?.FromMm != null && l.ToMm != null)
             .ToList();
         _clearPrevious = clearPrevious;
+        _clearOnly = clearOnly;
         _commentTag = string.IsNullOrWhiteSpace(commentTag) ? DefaultCommentTag : commentTag.Trim();
         _defaultTextTypeName = string.IsNullOrWhiteSpace(defaultTextTypeName)
             ? DefaultTextTypeName
@@ -103,13 +108,37 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
                 return;
             }
 
-            if (_notes.Count == 0 && _lines.Count == 0 && !_clearPrevious)
+            if (_notes.Count == 0 && _lines.Count == 0 && !_clearPrevious && !_clearOnly)
             {
                 ResultInfo = new
                 {
                     success = false,
-                    message = "Pass notes[] and/or lines[], or clearPrevious=true to remove prior MCP annotations."
+                    message = "Pass notes[] and/or lines[], or clearPrevious/clearOnly=true to remove prior MCP annotations."
                 };
+                return;
+            }
+
+            // clearOnly: remove MCP annotations without creating notes or touching TextNoteType.
+            if (_clearOnly)
+            {
+                using (var tx = new Transaction(Doc, "MCP Clear Text Notes"))
+                {
+                    tx.Start();
+                    var clearedIds = ClearPreviousAnnotations(view, aggressive: true);
+                    tx.Commit();
+                    ResultInfo = new
+                    {
+                        success = true,
+                        clearOnly = true,
+                        view = view.Name,
+                        viewId = view.Id.GetValue(),
+                        commentTag = _commentTag,
+                        createdNoteCount = 0,
+                        createdLineCount = 0,
+                        deletedPreviousCount = clearedIds.Count,
+                        deletedPreviousIds = clearedIds
+                    };
+                }
                 return;
             }
 
@@ -137,7 +166,7 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
                 tx.Start();
 
                 if (_clearPrevious)
-                    deletedIds = ClearPreviousAnnotations(view);
+                    deletedIds = ClearPreviousAnnotations(view, aggressive: false);
 
                 // Paper height 2.5 mm on ADSK_Замечания (keeps GOST Common / red from type).
                 EnsureTextSizeMm(sharedTypeId, _textSizeMm);
@@ -299,7 +328,7 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
             {
                 success = createdNotes.Count > 0
                     || createdLines.Count > 0
-                    || (_clearPrevious && deletedIds.Count > 0 && _notes.Count == 0 && _lines.Count == 0),
+                    || (_clearPrevious && _notes.Count == 0 && _lines.Count == 0),
                 view = view.Name,
                 viewId = view.Id.GetValue(),
                 commentTag = _commentTag,
@@ -359,7 +388,8 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
     }
 
     /// <summary>
-    /// Plan outline in model mm: crop + rooms + grids (axes) + leader targets.
+    /// Plan outline in model mm: rooms + walls + grids + leader targets (not view crop —
+    /// crop on some floors is huge and pushes callout text far from leaders).
     /// </summary>
     private (double MinX, double MaxX, double MinY, double MaxY) GetPlanBoundsMm(
         View view,
@@ -388,23 +418,6 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
             Acc(bb.Max);
         }
 
-        try
-        {
-            if (view.CropBoxActive && view.CropBox != null)
-            {
-                var crop = view.CropBox;
-                var tf = crop.Transform;
-                Acc(tf.OfPoint(new XYZ(crop.Min.X, crop.Min.Y, crop.Min.Z)));
-                Acc(tf.OfPoint(new XYZ(crop.Max.X, crop.Min.Y, crop.Min.Z)));
-                Acc(tf.OfPoint(new XYZ(crop.Min.X, crop.Max.Y, crop.Min.Z)));
-                Acc(tf.OfPoint(new XYZ(crop.Max.X, crop.Max.Y, crop.Min.Z)));
-            }
-        }
-        catch
-        {
-            // ignore
-        }
-
         foreach (var r in resolved)
         {
             Acc(r.LeaderEnd);
@@ -418,7 +431,14 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
             AccBox(room.get_BoundingBox(view) ?? room.get_BoundingBox(null));
         }
 
-        // Axes / grids — annotations must sit outside these too
+        foreach (var wall in new FilteredElementCollector(Doc, view.Id)
+                     .OfCategory(BuiltInCategory.OST_Walls)
+                     .WhereElementIsNotElementType())
+        {
+            AccBox(wall.get_BoundingBox(view) ?? wall.get_BoundingBox(null));
+        }
+
+        // Axes / grids — annotations must sit outside bubble extent
         foreach (var grid in new FilteredElementCollector(Doc, view.Id)
                      .OfClass(typeof(Grid))
                      .Cast<Grid>())
@@ -469,9 +489,29 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
                 right.Add((i, yMm));
         }
 
-        // Do NOT subtract box width on the left — Right alignment puts Coord at the plan-facing edge.
+        // Anchor columns near leader targets on each side (not only global bbox —
+        // avoids huge offset when crop region is wider than the building).
         var leftX = bounds.MinX - _marginMm;
+        if (left.Count > 0)
+        {
+            var extremeLeftMm = left.Min(t =>
+            {
+                var p = resolved[t.Index].LeaderEnd ?? resolved[t.Index].ElementPoint;
+                return p != null ? p.X * 304.8 : bounds.MinX;
+            });
+            leftX = Math.Max(extremeLeftMm - _marginMm, bounds.MinX - _marginMm);
+        }
+
         var rightX = bounds.MaxX + _marginMm;
+        if (right.Count > 0)
+        {
+            var extremeRightMm = right.Max(t =>
+            {
+                var p = resolved[t.Index].LeaderEnd ?? resolved[t.Index].ElementPoint;
+                return p != null ? p.X * 304.8 : bounds.MaxX;
+            });
+            rightX = Math.Min(extremeRightMm + _marginMm, bounds.MaxX + _marginMm);
+        }
 
         PlaceSideColumn(result, left, leftX, "left", bounds);
         PlaceSideColumn(result, right, rightX, "right", bounds);
@@ -628,7 +668,7 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
             NormalizeText(info.Text),
             options);
 
-        TagComments(created, _commentTag);
+        TagMcpAnnotation(created, _commentTag);
 
         var hasLeader = false;
         if (leaderEnd != null && leaderEnd.DistanceTo(textOrigin) > 1e-6)
@@ -851,26 +891,71 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
         return Math.Min(Math.Max(requestedFeet, minW), maxW);
     }
 
-    private List<long> ClearPreviousAnnotations(View view)
+    private sealed class NoteClearContext
+    {
+        public BoundingBoxXYZ Bbox;
+        public IList<XYZ> AnchorPoints = new List<XYZ>();
+    }
+
+    private List<long> ClearPreviousAnnotations(View view, bool aggressive)
     {
         var deleted = new List<long>();
-        var toDelete = new List<ElementId>();
+        var toDelete = new HashSet<ElementId>();
+        var noteContexts = new List<NoteClearContext>();
 
         foreach (var note in new FilteredElementCollector(Doc, view.Id)
                      .OfClass(typeof(TextNote))
                      .Cast<TextNote>())
         {
-            if (CommentsStartWithTag(note))
-                toDelete.Add(note.Id);
+            if (!IsMcpAnnotation(note, aggressive))
+                continue;
+
+            toDelete.Add(note.Id);
+            noteContexts.Add(BuildNoteClearContext(note, view));
         }
 
-        // Detail lines / curves tagged by us
+        // Detail lines / curves tagged by us, or leaders tied to norm callouts (aggressive)
         foreach (var curve in new FilteredElementCollector(Doc, view.Id)
                      .OfClass(typeof(CurveElement))
                      .Cast<CurveElement>())
         {
-            if (CommentsStartWithTag(curve))
+            if (IsTaggedMcp(curve))
+            {
                 toDelete.Add(curve.Id);
+                continue;
+            }
+
+            if (!aggressive || noteContexts.Count == 0)
+                continue;
+
+            if (IsDetailLeaderForNotes(curve, noteContexts, view))
+                toDelete.Add(curve.Id);
+        }
+
+        if (aggressive && TryGetPlanBoundsFeet(view, out var planMinX, out var planMaxX, out var planMinY, out var planMaxY))
+        {
+            var allCurves = new FilteredElementCollector(Doc, view.Id)
+                .OfClass(typeof(CurveElement))
+                .Cast<CurveElement>()
+                .ToList();
+
+            foreach (var curve in allCurves)
+            {
+                if (toDelete.Contains(curve.Id))
+                    continue;
+                if (IsTaggedMcp(curve))
+                {
+                    toDelete.Add(curve.Id);
+                    continue;
+                }
+
+                if (!(curve.GeometryCurve is Line line))
+                    continue;
+                if (IsLikelyLeftoverMcpLeaderLine(line, planMinX, planMaxX, planMinY, planMaxY))
+                    toDelete.Add(curve.Id);
+            }
+
+            ExpandConnectedLeaderSegments(allCurves, toDelete);
         }
 
         if (toDelete.Count == 0)
@@ -879,22 +964,341 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
         foreach (var id in toDelete)
             deleted.Add(id.GetValue());
 
-        Doc.Delete(toDelete);
+        Doc.Delete(toDelete.ToList());
         return deleted;
+    }
+
+    private NoteClearContext BuildNoteClearContext(TextNote note, View view)
+    {
+        var ctx = new NoteClearContext();
+        var z = view.Origin.Z;
+        ctx.AnchorPoints.Add(new XYZ(note.Coord.X, note.Coord.Y, z));
+        ctx.Bbox = note.get_BoundingBox(view);
+        if (ctx.Bbox != null)
+        {
+            ctx.AnchorPoints.Add(new XYZ(ctx.Bbox.Min.X, ctx.Bbox.Min.Y, z));
+            ctx.AnchorPoints.Add(new XYZ(ctx.Bbox.Max.X, ctx.Bbox.Max.Y, z));
+            ctx.AnchorPoints.Add(new XYZ(ctx.Bbox.Min.X, ctx.Bbox.Max.Y, z));
+            ctx.AnchorPoints.Add(new XYZ(ctx.Bbox.Max.X, ctx.Bbox.Min.Y, z));
+            ctx.AnchorPoints.Add(new XYZ(
+                (ctx.Bbox.Min.X + ctx.Bbox.Max.X) / 2.0,
+                (ctx.Bbox.Min.Y + ctx.Bbox.Max.Y) / 2.0,
+                z));
+        }
+
+        try
+        {
+            foreach (var leader in note.GetLeaders())
+            {
+                if (leader?.End != null)
+                    ctx.AnchorPoints.Add(new XYZ(leader.End.X, leader.End.Y, z));
+                if (leader?.Elbow != null)
+                    ctx.AnchorPoints.Add(new XYZ(leader.Elbow.X, leader.Elbow.Y, z));
+            }
+        }
+        catch
+        {
+            // ignore — detail leaders are matched by bbox/points
+        }
+
+        return ctx;
+    }
+
+    private static bool IsDetailLeaderForNotes(CurveElement curve, IList<NoteClearContext> contexts, View view)
+    {
+        if (curve?.GeometryCurve is not Line line)
+            return false;
+
+        var lengthMm = line.Length * 304.8;
+        if (lengthMm > 20000)
+            return false;
+
+        var z = view.Origin.Z;
+        var a = new XYZ(line.GetEndPoint(0).X, line.GetEndPoint(0).Y, z);
+        var b = new XYZ(line.GetEndPoint(1).X, line.GetEndPoint(1).Y, z);
+        const double pointTolFeet = 1500.0 / 304.8;
+        const double bboxPadFeet = 800.0 / 304.8;
+
+        foreach (var ctx in contexts)
+        {
+            foreach (var anchor in ctx.AnchorPoints)
+            {
+                var p = new XYZ(anchor.X, anchor.Y, z);
+                if (p.DistanceTo(a) <= pointTolFeet || p.DistanceTo(b) <= pointTolFeet)
+                    return true;
+            }
+
+            if (ctx.Bbox != null
+                && (PointInExpandedBox(a, ctx.Bbox, bboxPadFeet, z)
+                    || PointInExpandedBox(b, ctx.Bbox, bboxPadFeet, z)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool PointInExpandedBox(XYZ point, BoundingBoxXYZ bbox, double padFeet, double z)
+    {
+        return point.X >= bbox.Min.X - padFeet
+               && point.X <= bbox.Max.X + padFeet
+               && point.Y >= bbox.Min.Y - padFeet
+               && point.Y <= bbox.Max.Y + padFeet;
+    }
+
+    private bool TryGetPlanBoundsFeet(
+        View view,
+        out double minX,
+        out double maxX,
+        out double minY,
+        out double maxY)
+    {
+        minX = maxX = minY = maxY = 0;
+        var mnX = double.PositiveInfinity;
+        var mxX = double.NegativeInfinity;
+        var mnY = double.PositiveInfinity;
+        var mxY = double.NegativeInfinity;
+        var any = false;
+
+        void Acc(BoundingBoxXYZ bb)
+        {
+            if (bb == null)
+                return;
+            mnX = Math.Min(mnX, bb.Min.X);
+            mxX = Math.Max(mxX, bb.Max.X);
+            mnY = Math.Min(mnY, bb.Min.Y);
+            mxY = Math.Max(mxY, bb.Max.Y);
+            any = true;
+        }
+
+        foreach (var room in new FilteredElementCollector(Doc, view.Id)
+                     .OfCategory(BuiltInCategory.OST_Rooms)
+                     .WhereElementIsNotElementType())
+        {
+            Acc(room.get_BoundingBox(view));
+        }
+
+        foreach (var wall in new FilteredElementCollector(Doc, view.Id)
+                     .OfCategory(BuiltInCategory.OST_Walls)
+                     .WhereElementIsNotElementType())
+        {
+            Acc(wall.get_BoundingBox(view));
+        }
+
+        if (!any)
+            return false;
+
+        minX = mnX;
+        maxX = mxX;
+        minY = mnY;
+        maxY = mxY;
+        return true;
+    }
+
+    private static bool IsLikelyLeftoverMcpLeaderLine(
+        Line line,
+        double planMinX,
+        double planMaxX,
+        double planMinY,
+        double planMaxY)
+    {
+        var lengthMm = line.Length * 304.8;
+        if (lengthMm > 25000)
+            return false;
+
+        var a = line.GetEndPoint(0);
+        var b = line.GetEndPoint(1);
+
+        if (IsOrphanOutsideLeader(line, planMinX, planMaxX, planMinY, planMaxY))
+            return true;
+
+        if (lengthMm > 15000)
+            return false;
+
+        const double edgeFeet = 500.0 / 304.8;
+        const double columnFeet = (DefaultOutsideMarginMm + 2000.0) / 304.8;
+
+        bool InLeftColumn(double x) => x < planMinX - edgeFeet;
+        bool InRightColumn(double x) => x > planMaxX + edgeFeet;
+        bool InTopBand(double y) => y > planMaxY + edgeFeet;
+        bool InBottomBand(double y) => y < planMinY - edgeFeet;
+
+        if (InLeftColumn(a.X) || InLeftColumn(b.X)
+            || InRightColumn(a.X) || InRightColumn(b.X)
+            || InTopBand(a.Y) || InTopBand(b.Y)
+            || InBottomBand(a.Y) || InBottomBand(b.Y))
+        {
+            return true;
+        }
+
+        // Short stub fully in the outside margin (both ends left/right of plan)
+        if (a.X < planMinX - columnFeet && b.X < planMinX - columnFeet)
+            return true;
+        if (a.X > planMaxX + columnFeet && b.X > planMaxX + columnFeet)
+            return true;
+
+        return false;
+    }
+
+    private static void ExpandConnectedLeaderSegments(
+        IList<CurveElement> allCurves,
+        HashSet<ElementId> toDelete)
+    {
+        const double tolFeet = 600.0 / 304.8;
+        var anchorPoints = new List<XYZ>();
+
+        foreach (var curve in allCurves)
+        {
+            if (!toDelete.Contains(curve.Id))
+                continue;
+            if (!(curve.GeometryCurve is Line line))
+                continue;
+            anchorPoints.Add(line.GetEndPoint(0));
+            anchorPoints.Add(line.GetEndPoint(1));
+        }
+
+        if (anchorPoints.Count == 0)
+            return;
+
+        var changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach (var curve in allCurves)
+            {
+                if (toDelete.Contains(curve.Id))
+                    continue;
+                if (!(curve.GeometryCurve is Line line))
+                    continue;
+                if (line.Length * 304.8 > 15000)
+                    continue;
+
+                var a = line.GetEndPoint(0);
+                var b = line.GetEndPoint(1);
+                foreach (var p in anchorPoints)
+                {
+                    if (p.DistanceTo(a) <= tolFeet || p.DistanceTo(b) <= tolFeet)
+                    {
+                        toDelete.Add(curve.Id);
+                        anchorPoints.Add(a);
+                        anchorPoints.Add(b);
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    private static bool IsOrphanOutsideLeader(
+        Line line,
+        double planMinX,
+        double planMaxX,
+        double planMinY,
+        double planMaxY)
+    {
+        const double marginFeet = 2500.0 / 304.8;
+        var a = line.GetEndPoint(0);
+        var b = line.GetEndPoint(1);
+
+        bool Outside(double x, double y) =>
+            x < planMinX - marginFeet
+            || x > planMaxX + marginFeet
+            || y < planMinY - marginFeet
+            || y > planMaxY + marginFeet;
+
+        return Outside(a.X, a.Y) != Outside(b.X, b.Y);
     }
 
     private bool CommentsStartWithTag(Element element)
     {
+        return IsTaggedMcp(element);
+    }
+
+    private bool IsTaggedMcp(Element element)
+    {
         var c = element.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString()
                 ?? string.Empty;
-        return c.StartsWith(_commentTag, StringComparison.OrdinalIgnoreCase);
+        if (c.StartsWith(_commentTag, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        var mark = element.get_Parameter(BuiltInParameter.ALL_MODEL_MARK)?.AsString()
+                   ?? string.Empty;
+        return mark.StartsWith(_commentTag, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool IsMcpAnnotation(TextNote note, bool aggressive)
+    {
+        if (note == null)
+            return false;
+        if (CommentsStartWithTag(note))
+            return true;
+        var text = note.Text ?? string.Empty;
+        if (text.EndsWith(TextMarkerSuffix, StringComparison.Ordinal))
+            return true;
+        if (!aggressive)
+            return false;
+        return LooksLikeNormViolationNote(text);
+    }
+
+    private static bool LooksLikeNormViolationNote(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+        var t = text.ToLowerInvariant();
+
+        if (t.Contains("превыш") || t.Contains("наруш"))
+            return true;
+        if (t.Contains("глубин") && (t.Contains("свету") || t.Contains("комнат")))
+            return true;
+        if (t.Contains(" · ") && (t.Contains("п.") || t.Contains("сп рк") || t.Contains("гост")))
+            return true;
+        if ((t.Contains("п. ") || t.Contains("п.")) &&
+            (t.Contains("сп рк") || t.Contains("гост") || t.Contains("4.")))
+            return true;
+
+        if (!t.Contains("мм"))
+            return false;
+        return t.Contains("превыш")
+               || t.Contains("наруш")
+               || t.Contains(" · ")
+               || t.Contains("п. ")
+               || t.Contains("сп рк")
+               || t.Contains("гост");
     }
 
     private static void TagComments(Element element, string tag)
     {
         var comments = element.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS);
         if (comments != null && !comments.IsReadOnly)
+        {
             comments.Set(tag);
+            return;
+        }
+
+        var mark = element.get_Parameter(BuiltInParameter.ALL_MODEL_MARK);
+        if (mark != null && !mark.IsReadOnly)
+            mark.Set(tag);
+    }
+
+    private void TagMcpAnnotation(TextNote note, string tag)
+    {
+        if (note == null)
+            return;
+        TagComments(note, tag);
+        if (CommentsStartWithTag(note))
+            return;
+        try
+        {
+            var text = note.Text ?? string.Empty;
+            if (!text.EndsWith(TextMarkerSuffix, StringComparison.Ordinal))
+                note.Text = text + TextMarkerSuffix;
+        }
+        catch
+        {
+            // ignore — clear may still find by norm text when clearOnly aggressive
+        }
     }
 
     private View ResolveView()

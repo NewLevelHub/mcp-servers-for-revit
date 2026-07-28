@@ -49,7 +49,7 @@ namespace RevitMCPCommandSet.Services
                 Result = new AIResult<string>
                 {
                     Success = true,
-                    Message = $"成功执行操作",
+                    Message = $"Операция выполнена",
                 };
             }
             catch (Exception ex)
@@ -57,7 +57,7 @@ namespace RevitMCPCommandSet.Services
                 Result = new AIResult<string>
                 {
                     Success = false,
-                    Message = $"操作元素时出错: {ex.Message}",
+                    Message = $"Ошибка операции с элементом: {ex.Message}",
                 };
             }
             finally
@@ -82,7 +82,7 @@ namespace RevitMCPCommandSet.Services
         /// </summary>
         public string GetName()
         {
-            return "操作元素";
+            return "Операция с элементом";
         }
 
         /// <summary>
@@ -94,14 +94,47 @@ namespace RevitMCPCommandSet.Services
         public static bool ExecuteElementOperation(UIDocument uidoc, OperationSetting setting)
         {
             // 检查参数有效性
-            if (uidoc == null || uidoc.Document == null || setting == null || setting.ElementIds == null ||
-                (setting.ElementIds.Count == 0 && setting.Action.ToLower() != "resetisolate"))
-                throw new Exception("参数无效：文档为空或没有指定要操作的图元");
+            if (uidoc == null || uidoc.Document == null || setting == null)
+                throw new Exception("Неверные параметры: нет открытого документа.");
+
+            var actionName = setting.Action ?? "";
+            var allowsEmptyIds = actionName.Equals("ResetIsolate", StringComparison.OrdinalIgnoreCase)
+                || actionName.Equals("ResetOverrides", StringComparison.OrdinalIgnoreCase);
+            if (setting.ElementIds == null)
+                setting.ElementIds = new List<int>();
+
+            // SetColor: allow categoryNames on the active view when elementIds omitted.
+            var allowsCategoryOnly = actionName.Equals("SetColor", StringComparison.OrdinalIgnoreCase)
+                && setting.CategoryNames != null
+                && setting.CategoryNames.Count > 0;
+
+            if (!allowsEmptyIds && !allowsCategoryOnly && setting.ElementIds.Count == 0)
+                throw new Exception("Не указаны elementIds для операции. Для дверей передайте id из doorElementIds аудита.");
+            if (actionName.Equals("ResetOverrides", StringComparison.OrdinalIgnoreCase)
+                && setting.ElementIds.Count == 0
+                && (setting.CategoryNames == null || setting.CategoryNames.Count == 0))
+            {
+                throw new Exception("ResetOverrides: укажите elementIds или categoryNames (Doors, Windows, Ramps).");
+            }
 
             Document doc = uidoc.Document;
 
-            // 将int类型的元素ID转换为ElementId类型
-            ICollection<ElementId> elementIds = setting.ElementIds.Select(id => new ElementId(id)).ToList();
+            // 将int类型的元素ID转换为ElementId类型；或按 категориям на активном виде (SetColor).
+            ICollection<ElementId> elementIds;
+            if (setting.ElementIds.Count > 0)
+            {
+                elementIds = setting.ElementIds.Select(id => new ElementId(id)).ToList();
+            }
+            else if (allowsCategoryOnly)
+            {
+                elementIds = CollectCategoryElementIds(doc, doc.ActiveView, setting.CategoryNames);
+                if (elementIds.Count == 0)
+                    throw new Exception("На активном виде нет элементов выбранных категорий.");
+            }
+            else
+            {
+                elementIds = Array.Empty<ElementId>();
+            }
 
             // 解析操作类型
             ElementOperationType action;
@@ -305,6 +338,19 @@ namespace RevitMCPCommandSet.Services
                     }
                     return true;
 
+                case ElementOperationType.ResetOverrides:
+                    using (Transaction trans = new Transaction(doc, "Reset view overrides"))
+                    {
+                        trans.Start();
+                        var resetCount = ResetElementOverrides(
+                            doc,
+                            doc.ActiveView,
+                            elementIds,
+                            setting.CategoryNames);
+                        trans.Commit();
+                    }
+                    return true;
+
                 default:
                     throw new Exception($"未支持的操作类型：{setting.Action}");
             }
@@ -357,6 +403,89 @@ namespace RevitMCPCommandSet.Services
             {
                 doc.ActiveView.SetElementOverrides(id, overrideSettings);
             }
+        }
+
+        private static ICollection<ElementId> CollectCategoryElementIds(
+            Document doc,
+            View view,
+            IList<string> categoryNames)
+        {
+            var ids = new HashSet<ElementId>();
+            if (categoryNames == null)
+                return ids;
+
+            foreach (var name in categoryNames)
+            {
+                var bic = ResolveBuiltInCategory(name);
+                if (bic == null)
+                    continue;
+                foreach (var id in new FilteredElementCollector(doc, view.Id)
+                             .OfCategory(bic.Value)
+                             .WhereElementIsNotElementType()
+                             .ToElementIds())
+                {
+                    ids.Add(id);
+                }
+            }
+
+            return ids;
+        }
+
+        private static int ResetElementOverrides(
+            Document doc,
+            View view,
+            ICollection<ElementId> explicitIds,
+            IList<string> categoryNames)
+        {
+            var ids = new HashSet<ElementId>(explicitIds ?? Array.Empty<ElementId>());
+            if (ids.Count == 0 && categoryNames != null)
+            {
+                foreach (var name in categoryNames)
+                {
+                    var bic = ResolveBuiltInCategory(name);
+                    if (bic == null)
+                        continue;
+                    foreach (var id in new FilteredElementCollector(doc, view.Id)
+                                 .OfCategory(bic.Value)
+                                 .WhereElementIsNotElementType()
+                                 .ToElementIds())
+                    {
+                        ids.Add(id);
+                    }
+                }
+            }
+
+            var empty = new OverrideGraphicSettings();
+            var count = 0;
+            foreach (var id in ids)
+            {
+                if (id == null || id == ElementId.InvalidElementId)
+                    continue;
+                view.SetElementOverrides(id, empty);
+                count++;
+            }
+
+            return count;
+        }
+
+        private static BuiltInCategory? ResolveBuiltInCategory(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return null;
+            var n = name.Trim().ToLowerInvariant();
+            if (n is "door" or "doors" or "двер" or "двери")
+                return BuiltInCategory.OST_Doors;
+            if (n is "window" or "windows" or "окн")
+                return BuiltInCategory.OST_Windows;
+            if (n is "ramp" or "ramps" or "пандус")
+                return BuiltInCategory.OST_Ramps;
+            if (n is "stair" or "stairs" or "лестниц")
+                return BuiltInCategory.OST_Stairs;
+            if (n is "room" or "rooms" or "помещ")
+                return BuiltInCategory.OST_Rooms;
+            if (Enum.TryParse<BuiltInCategory>(name, true, out var parsed))
+                return parsed;
+            return null;
         }
 
     }

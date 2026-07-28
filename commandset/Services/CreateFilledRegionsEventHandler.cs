@@ -25,6 +25,7 @@ namespace RevitMCPCommandSet.Services
         private string _filledRegionTypeName = string.Empty;
         private string _colorPreset = "red";
         private bool _clearPrevious = true;
+        private bool _clearOnly;
         private string _commentTag = DefaultCommentTag;
 
         public object ResultInfo { get; private set; }
@@ -35,7 +36,8 @@ namespace RevitMCPCommandSet.Services
             string filledRegionTypeName,
             string colorPreset,
             bool clearPrevious,
-            string commentTag)
+            string commentTag,
+            bool clearOnly = false)
         {
             _roomIds = (roomIds ?? Enumerable.Empty<long>()).Where(id => id > 0).Distinct().ToList();
             _roomNames = (roomNames ?? Enumerable.Empty<string>())
@@ -46,6 +48,7 @@ namespace RevitMCPCommandSet.Services
             _filledRegionTypeName = filledRegionTypeName?.Trim() ?? string.Empty;
             _colorPreset = string.IsNullOrWhiteSpace(colorPreset) ? "red" : colorPreset.Trim().ToLowerInvariant();
             _clearPrevious = clearPrevious;
+            _clearOnly = clearOnly;
             _commentTag = string.IsNullOrWhiteSpace(commentTag) ? DefaultCommentTag : commentTag.Trim();
             _resetEvent.Reset();
         }
@@ -70,6 +73,28 @@ namespace RevitMCPCommandSet.Services
                         success = false,
                         message = $"Active view must be a floor plan. Got: {view.ViewType} «{view.Name}»."
                     };
+                    return;
+                }
+
+                // clearOnly: remove prior MCP-FR regions without painting every room.
+                if (_clearOnly)
+                {
+                    using (var tx = new Transaction(Doc, "MCP Clear Filled Regions"))
+                    {
+                        tx.Start();
+                        var clearedIds = ClearPreviousRegions(view);
+                        tx.Commit();
+                        ResultInfo = new
+                        {
+                            success = true,
+                            clearOnly = true,
+                            view = view.Name,
+                            commentTag = _commentTag,
+                            createdCount = 0,
+                            deletedPreviousCount = clearedIds.Count,
+                            deletedPreviousIds = clearedIds
+                        };
+                    }
                     return;
                 }
 
@@ -101,7 +126,7 @@ namespace RevitMCPCommandSet.Services
                     ResultInfo = new
                     {
                         success = false,
-                        message = "No rooms resolved. Pass roomIds and/or roomNames for rooms visible on the active plan."
+                        message = "Укажите roomIds или roomNames — без них заливка всех помещений на виде запрещена."
                     };
                     return;
                 }
@@ -198,7 +223,8 @@ namespace RevitMCPCommandSet.Services
 
             if (_roomIds.Count == 0 && _roomNames.Count == 0)
             {
-                return onView;
+                // Never paint every room on the plan when ids were omitted (common LLM mistake).
+                return new List<Room>();
             }
 
             var byId = new HashSet<long>(_roomIds);

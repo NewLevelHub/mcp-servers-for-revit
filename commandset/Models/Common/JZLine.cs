@@ -111,8 +111,16 @@ public class JZLine
     /// </summary>
     public static Line ToLine(JZLine jzLine)
     {
-        if (jzLine.P0 == null || jzLine.P1 == null) return null;
+        if (jzLine == null)
+            throw new ArgumentNullException(nameof(jzLine), "locationLine is required (p0 and p1 in mm).");
+        if (jzLine.P0 == null || jzLine.P1 == null)
+            throw new ArgumentException("locationLine.p0 and locationLine.p1 are required (mm).");
 
-        return Line.CreateBound(JZPoint.ToXYZ(jzLine.P0), JZPoint.ToXYZ(jzLine.P1));
+        var p0 = JZPoint.ToXYZ(jzLine.P0);
+        var p1 = JZPoint.ToXYZ(jzLine.P1);
+        if (p0.DistanceTo(p1) < 1e-6)
+            throw new ArgumentException("locationLine length is zero — p0 and p1 must differ.");
+
+        return Line.CreateBound(p0, p1);
     }
 }

@@ -1,5 +1,7 @@
+using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using RevitMCPCommandSet.Models.Common;
+using RevitMCPCommandSet.Utils;
 using RevitMCPSDK.API.Interfaces;
 
 namespace RevitMCPCommandSet.Services
@@ -35,6 +37,16 @@ namespace RevitMCPCommandSet.Services
                 var uiDoc = app.ActiveUIDocument;
                 var doc = uiDoc.Document;
                 var activeView = doc.ActiveView;
+                string levelName = null;
+                long? levelId = null;
+                double? levelElevationMm = null;
+
+                if (activeView is ViewPlan viewPlan && viewPlan.GenLevel != null)
+                {
+                    levelName = viewPlan.GenLevel.Name;
+                    levelId = viewPlan.GenLevel.Id.GetValue();
+                    levelElevationMm = RevitUnitConversion.ToMillimeters(viewPlan.GenLevel.Elevation);
+                }
 
                 ResultInfo = new CurrentViewInfo
                 {
@@ -49,6 +61,9 @@ namespace RevitMCPCommandSet.Services
                     IsTemplate = activeView.IsTemplate,
                     Scale = activeView.Scale,
                     DetailLevel = activeView.DetailLevel.ToString(),
+                    LevelName = levelName ?? string.Empty,
+                    LevelId = levelId,
+                    LevelElevationMm = levelElevationMm
                 };
             }
             catch (Exception ex)

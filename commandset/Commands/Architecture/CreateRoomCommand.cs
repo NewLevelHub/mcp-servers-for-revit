@@ -40,7 +40,7 @@ namespace RevitMCPCommandSet.Commands.Architecture
                 _handler.SetParameters(data);
 
                 // Trigger external event and wait for completion
-                if (RaiseAndWaitForCompletion(15000)) // 15 second timeout
+                if (RaiseAndWaitForCompletion(60000)) // 60 s — batch + large models
                 {
                     return _handler.Result;
                 }
