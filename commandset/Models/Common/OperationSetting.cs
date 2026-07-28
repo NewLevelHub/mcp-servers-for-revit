@@ -61,6 +61,11 @@ namespace RevitMCPCommandSet.Models.Common
         /// 重置隔离（显示所有图元）
         /// </summary>
         ResetIsolate,
+
+        /// <summary>
+        /// Сброс графики элемента на виде (после SetColor нормоконтроля).
+        /// </summary>
+        ResetOverrides,
     }
 
 
@@ -92,5 +97,12 @@ namespace RevitMCPCommandSet.Models.Common
         /// </summary>
         [JsonProperty("colorValue")]
         public int[] ColorValue { get; set; } = new int[] { 255, 0, 0 }; // 默认红色
+
+        /// <summary>
+        /// For ResetOverrides: reset all elements of these categories on the active view
+        /// (e.g. Doors, Windows, Ramps, Stairs). Used when elementIds is empty.
+        /// </summary>
+        [JsonProperty("categoryNames")]
+        public List<string> CategoryNames { get; set; } = new List<string>();
     }
 }

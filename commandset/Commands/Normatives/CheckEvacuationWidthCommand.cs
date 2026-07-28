@@ -23,6 +23,9 @@ namespace RevitMCPCommandSet.Commands.Normatives
                 double? minWidthMm = parameters?["minWidthMm"]?.Value<double?>();
                 string mode = parameters?["mode"]?.Value<string>() ?? CheckEvacuationWidthEventHandler.ModeReport;
                 string levelName = parameters?["levelName"]?.Value<string>() ?? string.Empty;
+                long? levelId = parameters?["levelId"]?.Value<long?>();
+                long? viewId = parameters?["viewId"]?.Value<long?>();
+                bool filterByActiveView = parameters?["filterByActiveView"]?.Value<bool>() ?? true;
                 string roomNameFilter = parameters?["roomNameFilter"]?.Value<string>() ?? string.Empty;
                 bool includeCompliant = parameters?["includeCompliant"]?.Value<bool>() ?? false;
                 bool corridorOnly = parameters?["corridorOnly"]?.Value<bool>() ?? true;
@@ -63,7 +66,10 @@ namespace RevitMCPCommandSet.Commands.Normatives
                     corridorOnly,
                     highlightColor,
                     highlightTarget,
-                    compliantHighlightColor);
+                    compliantHighlightColor,
+                    levelId,
+                    viewId,
+                    filterByActiveView);
 
                 if (RaiseAndWaitForCompletion(60000))
                 {

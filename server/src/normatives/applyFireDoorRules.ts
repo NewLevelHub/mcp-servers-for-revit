@@ -1,4 +1,5 @@
 import type { FireDoorNormRule, FireDoorScenario } from "./fireDoorRules.js";
+import { isFireDoorRequirementQuote } from "./fireDoorRules.js";
 
 export type FireDoorMarkSource = "none" | "parameter" | "schedule_note" | "both";
 
@@ -93,19 +94,22 @@ function isResidentialSpace(roomName: string): boolean {
     normalized.includes("спальн") ||
     normalized.includes("гостин") ||
     normalized.includes("кухн") ||
+    normalized.includes("прихож") ||
     normalized.includes("apartment") ||
     normalized.includes("bedroom") ||
     normalized.includes("living")
   );
 }
 
+/**
+ * Door scenarios that can require a fire door.
+ * Do NOT flag every «прихожая ↔ межквартирный коридор» as ПД: that previously
+ * paired path-length PDF snippets («30 м от двери спальни») with apartment entries.
+ * Require stair / vestibule-hall / explicit evacuation-exit geometry + a real ПД quote.
+ */
 export function detectDoorScenarios(door: DoorFireFacts): FireDoorScenario[] {
   const { fromRoom, toRoom, isOnEgressPath } = door;
   const scenarios = new Set<FireDoorScenario>();
-
-  if (isOnEgressPath || containsEgressKeyword(fromRoom) || containsEgressKeyword(toRoom)) {
-    scenarios.add("egress-route");
-  }
 
   const fromEgress =
     containsEgressKeyword(fromRoom) || isStairwell(fromRoom) || isVestibule(fromRoom);
@@ -113,21 +117,23 @@ export function detectDoorScenarios(door: DoorFireFacts): FireDoorScenario[] {
     containsEgressKeyword(toRoom) || isStairwell(toRoom) || isVestibule(toRoom);
   const fromResidential = isResidentialSpace(fromRoom);
   const toResidential = isResidentialSpace(toRoom);
+  const fromVestibule = isVestibule(fromRoom);
+  const toVestibule = isVestibule(toRoom);
 
   if (
-    (fromEgress && toResidential) ||
-    (toEgress && fromResidential) ||
-    (isStairwell(fromRoom) && containsEgressKeyword(toRoom)) ||
-    (isStairwell(toRoom) && containsEgressKeyword(fromRoom))
-  ) {
-    scenarios.add("between-compartments");
-  }
-
-  if (
-    (isStairwell(fromRoom) && (containsEgressKeyword(toRoom) || toResidential)) ||
-    (isStairwell(toRoom) && (containsEgressKeyword(fromRoom) || fromResidential))
+    (isStairwell(fromRoom) && (containsEgressKeyword(toRoom) || toResidential || toVestibule)) ||
+    (isStairwell(toRoom) && (containsEgressKeyword(fromRoom) || fromResidential || fromVestibule))
   ) {
     scenarios.add("stair-to-corridor");
+  }
+
+  // Vestibule / lift hall doors on egress (not interior apartment-only pairs).
+  if (
+    (fromVestibule || toVestibule) &&
+    !(fromResidential && toResidential) &&
+    (isOnEgressPath || fromEgress || toEgress)
+  ) {
+    scenarios.add("between-compartments");
   }
 
   if (/выход|exit/i.test(`${fromRoom} ${toRoom}`) && (fromEgress || toEgress)) {
@@ -141,8 +147,11 @@ function pickRuleForScenarios(
   scenarios: FireDoorScenario[],
   rules: FireDoorNormRule[]
 ): FireDoorNormRule | null {
+  const usable = rules.filter((rule) =>
+    isFireDoorRequirementQuote(rule.source.quote)
+  );
   const rulesByScenario = new Map<FireDoorScenario, FireDoorNormRule[]>();
-  for (const rule of rules) {
+  for (const rule of usable) {
     const bucket = rulesByScenario.get(rule.scenario) ?? [];
     bucket.push(rule);
     rulesByScenario.set(rule.scenario, bucket);
@@ -154,8 +163,15 @@ function pickRuleForScenarios(
     if (bucket && bucket.length > 0) return bucket[0];
   }
 
-  if (rules.length > 0 && scenarios.length > 0) {
-    return rules[0];
+  // Strong geometry (stair / compartment / exit) may use any real ПД quote as citation.
+  const strong = scenarios.some(
+    (s) =>
+      s === "stair-to-corridor" ||
+      s === "between-compartments" ||
+      s === "evacuation-exit"
+  );
+  if (strong && usable.length > 0) {
+    return usable[0];
   }
 
   return null;
@@ -165,9 +181,12 @@ export function applyFireDoorRules(
   doors: DoorFireFacts[],
   rules: FireDoorNormRule[]
 ): FireDoorCheckSummary {
+  const usableRules = rules.filter((rule) =>
+    isFireDoorRequirementQuote(rule.source.quote)
+  );
   const enriched: FireDoorCheckItem[] = doors.map((door) => {
     const scenarios = detectDoorScenarios(door);
-    const matchedRule = pickRuleForScenarios(scenarios, rules);
+    const matchedRule = pickRuleForScenarios(scenarios, usableRules);
     const requiresFireDoor = matchedRule !== null && scenarios.length > 0;
     const markSource = door.markSource ?? "none";
     const scheduleNote = door.scheduleNote ?? "";
@@ -189,11 +208,11 @@ export function applyFireDoorRules(
 
   return {
     success: true,
-    message: `Проверено ${enriched.length} дверей по ${rules.length} правилам из normatives; требуется противопожарных: ${required.length}, несоответствий: ${nonCompliant.length}.`,
+    message: `Проверено ${enriched.length} дверей по ${usableRules.length} правилам из normatives; требуется противопожарных: ${required.length}, несоответствий: ${nonCompliant.length}.`,
     totalDoors: enriched.length,
     requiredFireDoors: required.length,
     nonCompliantCount: nonCompliant.length,
     doors: enriched,
-    appliedRules: rules,
+    appliedRules: usableRules,
   };
 }

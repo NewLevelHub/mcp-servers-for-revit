@@ -6,7 +6,10 @@
              mc:Ignorable="d"
              d:DesignHeight="720" d:DesignWidth="380"
              Background="#F0F4F8"
-             FontFamily="Segoe UI">
+             FontFamily="Segoe UI"
+             AllowDrop="True"
+             PreviewDragOver="Attachment_DragOver"
+             Drop="Attachment_Drop">
   <UserControl.Resources>
     <SolidColorBrush x:Key="Navy" Color="#1A2744"/>
     <SolidColorBrush x:Key="Steel" Color="#2F5D8A"/>
@@ -139,11 +142,35 @@
                      TextWrapping="Wrap" Margin="0,2,0,0"/>
         </StackPanel>
 
-        <Border x:Name="StatusPill" Grid.Column="2" CornerRadius="12" Padding="10,4"
-                Background="#3D7EA6" VerticalAlignment="Center">
-          <TextBlock x:Name="StatusText" Text="Готов" FontSize="11" FontWeight="SemiBold"
-                     Foreground="White"/>
-        </Border>
+        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button x:Name="NewChatButton" Content="+ Новый"
+                  ToolTip="Очистить историю и начать новый чат"
+                  Margin="0,0,8,0" Padding="10,5" FontSize="11" FontWeight="SemiBold"
+                  Cursor="Hand" Click="NewChatButton_Click"
+                  Background="#2F5D8A" Foreground="White" BorderThickness="0">
+            <Button.Template>
+              <ControlTemplate TargetType="Button">
+                <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="12"
+                        Padding="{TemplateBinding Padding}">
+                  <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <ControlTemplate.Triggers>
+                  <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="bd" Property="Background" Value="#3D7EA6"/>
+                  </Trigger>
+                  <Trigger Property="IsEnabled" Value="False">
+                    <Setter TargetName="bd" Property="Opacity" Value="0.4"/>
+                  </Trigger>
+                </ControlTemplate.Triggers>
+              </ControlTemplate>
+            </Button.Template>
+          </Button>
+          <Border x:Name="StatusPill" CornerRadius="12" Padding="10,4"
+                  Background="#3D7EA6" VerticalAlignment="Center">
+            <TextBlock x:Name="StatusText" Text="Готов" FontSize="11" FontWeight="SemiBold"
+                       Foreground="White"/>
+          </Border>
+        </StackPanel>
       </Grid>
     </Border>
 
@@ -174,7 +201,8 @@
 
       <!-- Chat card -->
       <Border Grid.Row="1" Background="White" BorderBrush="{StaticResource Line}"
-              BorderThickness="1" CornerRadius="14">
+              BorderThickness="1" CornerRadius="14"
+              AllowDrop="True" PreviewDragOver="Attachment_DragOver" Drop="Attachment_Drop">
         <Grid>
           <Grid.RowDefinitions>
             <RowDefinition Height="*"/>
@@ -213,30 +241,49 @@
 
     <!-- Composer -->
     <Border Grid.Row="2" Background="White" BorderBrush="{StaticResource Line}"
-            BorderThickness="0,1,0,0" Padding="12,10,12,12">
+            BorderThickness="0,1,0,0" Padding="12,10,12,12"
+            AllowDrop="True" PreviewDragOver="Attachment_DragOver" Drop="Attachment_Drop">
       <Grid>
-        <Grid.ColumnDefinitions>
-          <ColumnDefinition Width="*"/>
-          <ColumnDefinition Width="Auto"/>
-        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
 
-        <Border Background="#F7FAFC" BorderBrush="{StaticResource Line}" BorderThickness="1"
-                CornerRadius="12" Padding="2">
-          <TextBox x:Name="InputBox" MinHeight="52" MaxHeight="120"
-                   AcceptsReturn="True" TextWrapping="Wrap"
-                   VerticalScrollBarVisibility="Auto"
-                   BorderThickness="0" Background="Transparent"
-                   Padding="10,8" FontSize="13"
-                   VerticalContentAlignment="Top"
-                   KeyDown="InputBox_KeyDown"/>
-        </Border>
+        <WrapPanel x:Name="AttachmentStrip" Grid.Row="0" Margin="0,0,0,8"
+                   Visibility="Collapsed"/>
 
-        <StackPanel Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Bottom">
-          <Button x:Name="SendButton" Content="➤  Отправить" Style="{StaticResource PrimaryButton}"
-                  Click="SendButton_Click" Margin="0,0,0,6" MinWidth="110"/>
-          <Button x:Name="CancelButton" Content="⏹  Стоп" Style="{StaticResource GhostButton}"
-                  Click="CancelButton_Click" IsEnabled="False" MinWidth="110"/>
-        </StackPanel>
+        <Grid Grid.Row="1">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+
+          <Button x:Name="AttachButton" Grid.Column="0"
+                  Content="📎" ToolTip="Прикрепить файл или перетащить в чат (фото, PDF, Word, Excel…) · Ctrl+V — скрин"
+                  Style="{StaticResource GhostButton}" Padding="10,8" Margin="0,0,8,0"
+                  VerticalAlignment="Bottom" MinWidth="40" FontSize="16"
+                  Click="AttachButton_Click"/>
+
+          <Border Grid.Column="1" Background="#F7FAFC" BorderBrush="{StaticResource Line}" BorderThickness="1"
+                  CornerRadius="12" Padding="2">
+            <TextBox x:Name="InputBox" MinHeight="52" MaxHeight="120"
+                     AcceptsReturn="True" TextWrapping="Wrap"
+                     VerticalScrollBarVisibility="Auto"
+                     BorderThickness="0" Background="Transparent"
+                     Padding="10,8" FontSize="13"
+                     VerticalContentAlignment="Top"
+                     ToolTip="Enter — отправить · Shift+Enter — новая строка · можно перетащить файл в чат"
+                     PreviewKeyDown="InputBox_PreviewKeyDown"/>
+          </Border>
+
+          <StackPanel Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Bottom">
+            <Button x:Name="SendButton" Content="➤  Отправить" Style="{StaticResource PrimaryButton}"
+                    Click="SendButton_Click" Margin="0,0,0,6" MinWidth="110"/>
+            <Button x:Name="CancelButton" Content="⏹  Стоп" Style="{StaticResource GhostButton}"
+                    Click="CancelButton_Click" IsEnabled="False" MinWidth="110"/>
+          </StackPanel>
+        </Grid>
       </Grid>
     </Border>
   </Grid>

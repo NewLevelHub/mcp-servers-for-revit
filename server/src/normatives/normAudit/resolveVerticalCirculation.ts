@@ -92,6 +92,107 @@ export interface ResolvedStairRiserTreadLimits {
   treadRule?: StoredNormRule;
 }
 
+/** Bench / seating / rest furniture — not stair geometry (REV false positive). */
+function isBenchOrSeatRule(rule: StoredNormRule): boolean {
+  const blob = ruleBlob(rule);
+  return (
+    blob.includes("скамь") ||
+    blob.includes("скамей") ||
+    blob.includes("сидень") ||
+    blob.includes("подлокотник") ||
+    blob.includes("место отдыха") ||
+    blob.includes("местах отдыха") ||
+    blob.includes("bench") ||
+    blob.includes("seat") ||
+    blob.includes("armchair")
+  );
+}
+
+function mentionsStairGeometry(rule: StoredNormRule): boolean {
+  const blob = ruleBlob(rule);
+  return (
+    blob.includes("проступ") ||
+    blob.includes("подступен") ||
+    blob.includes("ступен") ||
+    blob.includes("лестниц") ||
+    blob.includes("баспалдақ") ||
+    blob.includes("марш") ||
+    blob.includes("tread") ||
+    blob.includes("riser")
+  );
+}
+
+/**
+ * Score a rule as max stair riser height (подступенок).
+ * Returns <=0 to disqualify (e.g. bench seat height).
+ */
+export function scoreStairRiserRule(rule: StoredNormRule): number {
+  if (isBenchOrSeatRule(rule)) return -1000;
+  if (!mentionsStairGeometry(rule)) return -1000;
+
+  let maxMm =
+    rule.type === "max_value" || rule.type === "range"
+      ? lengthMaxMm(rule)
+      : undefined;
+  // Some texts say «не более 0,19 м» stored oddly as exact/min
+  if (maxMm == null && rule.type === "max_value") {
+    maxMm = lengthMinMm(rule);
+  }
+  if (maxMm == null || maxMm < 140 || maxMm > 220) return -1000;
+
+  const blob = ruleBlob(rule);
+  let score = 40;
+  if (blob.includes("подступен")) score += 25;
+  if (blob.includes("ступен") || blob.includes("лестниц")) score += 15;
+  if (/3\.02-101|3\.06-31|3\.06-101/.test(rule.source.document)) score += 15;
+  if (rule.type === "max_value") score += 10;
+  if (maxMm >= 150 && maxMm <= 190) score += 10;
+  return score;
+}
+
+/**
+ * Score a rule as min stair tread depth (проступь).
+ * Returns <=0 to disqualify (e.g. 0,38 м bench height mistaken for tread).
+ */
+export function scoreStairTreadRule(rule: StoredNormRule): number {
+  if (isBenchOrSeatRule(rule)) return -1000;
+  if (rule.type === "max_value") return -1000;
+  if (!mentionsStairGeometry(rule)) return -1000;
+
+  const minMm = lengthMinMm(rule);
+  // Typical stair tread mins are ~250–300 mm; reject seat-height band (>350)
+  if (minMm == null || minMm < 200 || minMm > 350) return -1000;
+
+  const blob = ruleBlob(rule);
+  let score = 40;
+  if (blob.includes("проступ")) score += 30;
+  if (blob.includes("ступен") || blob.includes("лестниц")) score += 15;
+  if (/3\.02-101|3\.06-31|3\.06-101/.test(rule.source.document)) score += 15;
+  if (rule.type === "min_value") score += 10;
+  if (minMm >= 250 && minMm <= 300) score += 15;
+  return score;
+}
+
+export function pickBestStairRiserRule(
+  rules: StoredNormRule[]
+): StoredNormRule | null {
+  const ranked = rules
+    .map((rule) => ({ rule, score: scoreStairRiserRule(rule) }))
+    .filter((e) => e.score > 0)
+    .sort((a, b) => b.score - a.score);
+  return ranked[0]?.rule ?? null;
+}
+
+export function pickBestStairTreadRule(
+  rules: StoredNormRule[]
+): StoredNormRule | null {
+  const ranked = rules
+    .map((rule) => ({ rule, score: scoreStairTreadRule(rule) }))
+    .filter((e) => e.score > 0)
+    .sort((a, b) => b.score - a.score);
+  return ranked[0]?.rule ?? null;
+}
+
 export function resolveStairRiserTreadLimitsFromLibrary(
   db: Database
 ): ResolvedStairRiserTreadLimits | null {
@@ -106,40 +207,17 @@ export function resolveStairRiserTreadLimitsFromLibrary(
     "глубина ступени",
   ]);
 
+  const riserRule = pickBestStairRiserRule(riserRules);
+  const treadRule = pickBestStairTreadRule(treadRules);
+
   let maxRiserMm: number | undefined;
-  let riserRule: StoredNormRule | undefined;
-  for (const rule of riserRules) {
-    const max = lengthMaxMm(rule) ?? lengthMinMm(rule);
-    // Prefer max-style for riser; if only min found skip
-    if (rule.type === "max_value" || rule.type === "range") {
-      const v = lengthMaxMm(rule);
-      if (v != null && v >= 140 && v <= 220) {
-        maxRiserMm = v;
-        riserRule = rule;
-        break;
-      }
-    }
-    // Some texts say "не более 0,19 м"
-    if (rule.type === "max_value") {
-      const v = lengthMinMm(rule); // sometimes stored as exact
-      if (v != null && v >= 140 && v <= 220) {
-        maxRiserMm = v;
-        riserRule = rule;
-        break;
-      }
-    }
+  if (riserRule) {
+    maxRiserMm =
+      lengthMaxMm(riserRule) ??
+      (riserRule.type === "max_value" ? lengthMinMm(riserRule) : undefined);
   }
 
-  let minTreadMm: number | undefined;
-  let treadRule: StoredNormRule | undefined;
-  for (const rule of treadRules) {
-    const min = lengthMinMm(rule);
-    if (min != null && min >= 200 && min <= 400 && rule.type !== "max_value") {
-      minTreadMm = min;
-      treadRule = rule;
-      break;
-    }
-  }
+  const minTreadMm = treadRule ? lengthMinMm(treadRule) : undefined;
 
   if (maxRiserMm == null && minTreadMm == null) return null;
   return {
@@ -147,8 +225,8 @@ export function resolveStairRiserTreadLimitsFromLibrary(
     minTreadMm,
     riserSource: riserRule ? toAuditSource(riserRule.source) : undefined,
     treadSource: treadRule ? toAuditSource(treadRule.source) : undefined,
-    riserRule,
-    treadRule,
+    riserRule: riserRule ?? undefined,
+    treadRule: treadRule ?? undefined,
   };
 }
 

@@ -84,8 +84,8 @@
 
         <!-- Debug only: Copy to Revit Addins folder for local development -->
         <MakeDir Directories="$(RevitAddinsDir)$(RevitVersion)" Condition="$(Configuration.Contains('Debug'))" />
-        <Copy SourceFiles="@(CommandSetBinaries)" DestinationFolder="$(RevitAddinsDir)$(RevitVersion)\" Condition="$(Configuration.Contains('Debug'))" />
-        <Copy SourceFiles="@(CommandJsonFile)" DestinationFolder="$(RevitAddinsDir)" Condition="$(Configuration.Contains('Debug'))" />
+        <Copy SourceFiles="@(CommandSetBinaries)" DestinationFolder="$(RevitAddinsDir)$(RevitVersion)\" Condition="$(Configuration.Contains('Debug'))" ContinueOnError="true" />
+        <Copy SourceFiles="@(CommandJsonFile)" DestinationFolder="$(RevitAddinsDir)" Condition="$(Configuration.Contains('Debug'))" ContinueOnError="true" />
     </Target>
 
 </Project>

@@ -28,6 +28,7 @@ namespace RevitMCPCommandSet.Commands
                             ?? new List<DetailLinePlacementInfo>();
 
                 bool clearPrevious = parameters?["clearPrevious"]?.Value<bool>() ?? true;
+                bool clearOnly = parameters?["clearOnly"]?.Value<bool>() ?? false;
                 string commentTag = parameters?["commentTag"]?.Value<string>()
                                     ?? CreateTextNotesEventHandler.DefaultCommentTag;
                 string textTypeName = parameters?["textTypeName"]?.Value<string>()
@@ -58,7 +59,8 @@ namespace RevitMCPCommandSet.Commands
                     placement,
                     marginMm,
                     paperWidthMm,
-                    textSizeMm);
+                    textSizeMm,
+                    clearOnly);
 
                 if (RaiseAndWaitForCompletion(60000))
                     return _handler.ResultInfo;

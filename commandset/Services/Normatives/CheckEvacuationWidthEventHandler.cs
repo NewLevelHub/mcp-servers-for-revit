@@ -19,6 +19,10 @@ namespace RevitMCPCommandSet.Services.Normatives
         private double? _minWidthMm;
         private string _mode = ModeReport;
         private string _levelNameFilter = string.Empty;
+        private long? _levelIdFilter;
+        private long? _viewIdFilter;
+        private bool _filterByActiveView = true;
+        private LevelScopeHelper.Scope _scope;
         private string _roomNameFilter = string.Empty;
         private bool _includeCompliant;
         private bool _corridorOnly = true;
@@ -39,13 +43,19 @@ namespace RevitMCPCommandSet.Services.Normatives
             bool corridorOnly = true,
             int[] highlightColor = null,
             string highlightTarget = HighlightTargetViolations,
-            int[] compliantHighlightColor = null)
+            int[] compliantHighlightColor = null,
+            long? levelId = null,
+            long? viewId = null,
+            bool filterByActiveView = true)
         {
             _minWidthMm = minWidthMm;
             _mode = string.Equals(mode, ModeHighlight, StringComparison.OrdinalIgnoreCase)
                 ? ModeHighlight
                 : ModeReport;
             _levelNameFilter = levelName ?? string.Empty;
+            _levelIdFilter = levelId;
+            _viewIdFilter = viewId;
+            _filterByActiveView = filterByActiveView;
             _roomNameFilter = roomNameFilter ?? string.Empty;
             _includeCompliant = includeCompliant;
             _corridorOnly = corridorOnly;
@@ -92,6 +102,10 @@ namespace RevitMCPCommandSet.Services.Normatives
                 }
 
                 var doc = app.ActiveUIDocument.Document;
+                var activeView = app.ActiveUIDocument.ActiveView;
+                _scope = LevelScopeHelper.BuildScope(
+                    doc, activeView, _levelNameFilter, _levelIdFilter, _viewIdFilter, _filterByActiveView);
+
                 var rooms = new FilteredElementCollector(doc)
                     .OfCategory(BuiltInCategory.OST_Rooms)
                     .WhereElementIsNotElementType()
@@ -106,13 +120,10 @@ namespace RevitMCPCommandSet.Services.Normatives
 
                 foreach (var room in rooms)
                 {
-                    var levelName = room.Level?.Name ?? string.Empty;
-                    if (!string.IsNullOrWhiteSpace(_levelNameFilter) &&
-                        !string.Equals(levelName, _levelNameFilter, StringComparison.OrdinalIgnoreCase))
-                    {
+                    if (!LevelScopeHelper.RoomInScope(room, _scope))
                         continue;
-                    }
 
+                    var levelName = room.Level?.Name ?? string.Empty;
                     var roomName = room.get_Parameter(BuiltInParameter.ROOM_NAME)?.AsString() ?? string.Empty;
                     var roomPurpose = CorridorClassifier.ReadRoomPurpose(room);
                     if (!string.IsNullOrWhiteSpace(_roomNameFilter) &&

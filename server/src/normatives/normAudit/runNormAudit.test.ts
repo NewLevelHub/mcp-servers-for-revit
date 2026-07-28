@@ -607,28 +607,40 @@ function mockDeps(overrides: Partial<NormAuditDeps> = {}): NormAuditDeps {
 }
 
 describe("runNormAudit orchestrator", () => {
-  it("merges all Phase-1 checkers into one findings list with citations", async () => {
+  it("merges default Phase-1 checkers; МГН only with topics=['мгн']", async () => {
     const result = await runNormAudit({ scope: "floor" }, mockDeps());
 
     assert.equal(result.success, true);
     assert.equal(result.levelName, "1 этаж");
-    assert.equal(result.summary.checksRun, 17);
-    assert.ok(result.summary.violations >= 9);
+    assert.equal(result.summary.checksRun, 15);
+    assert.ok(
+      result.skippedRules.some((s) => s.checkType === "mgn_door_maneuvering")
+    );
+    assert.equal(
+      result.findings.some((f) => f.checkType.startsWith("mgn_")),
+      false
+    );
 
-    const mgnTambour = result.findings.find(
+    const mgn = await runNormAudit(
+      { scope: "floor", topics: ["мгн"] },
+      mockDeps()
+    );
+    assert.equal(mgn.success, true);
+
+    const mgnTambour = mgn.findings.find(
       (f) => f.checkType === "mgn_turning_circle" && f.elementId === 801
     );
     assert.ok(mgnTambour);
     assert.equal(mgnTambour!.requiredMm, 1500);
     assert.match(mgnTambour!.source.document, /3\.06-101-2012/);
 
-    const mgnDoor = result.findings.find(
+    const mgnDoor = mgn.findings.find(
       (f) => f.checkType === "mgn_door_width" && f.elementId === 901
     );
     assert.ok(mgnDoor);
     assert.match(mgnDoor!.source.quote, /0,9 м/);
 
-    const ramp = result.findings.find(
+    const ramp = mgn.findings.find(
       (f) => f.checkType === "mgn_ramp_slope" && f.elementId === 902
     );
     assert.ok(ramp);
@@ -636,7 +648,7 @@ describe("runNormAudit orchestrator", () => {
     assert.equal(ramp!.requiredMm, 5);
     assert.match(ramp!.source.clause, /4\.3\.2\.30/);
 
-    const maneuvering = result.findings.find(
+    const maneuvering = mgn.findings.find(
       (f) => f.checkType === "mgn_door_maneuvering" && f.elementId === 901
     );
     assert.ok(maneuvering);
@@ -933,6 +945,6 @@ describe("runNormAudit orchestrator", () => {
       })
     );
     assert.equal(result.success, false);
-    assert.equal(result.summary.checksFailed, 17);
+    assert.equal(result.summary.checksFailed, 15);
   });
 });

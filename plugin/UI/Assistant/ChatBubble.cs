@@ -1,12 +1,18 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using revit_mcp_plugin.Core.Assistant;
 
 namespace revit_mcp_plugin.UI.Assistant
 {
     public sealed class ChatBubble : Grid
     {
-        public ChatBubble(string text, bool fromUser)
+        public ChatBubble(string text, bool fromUser, IList<ChatAttachment> attachments = null)
         {
             Margin = new Thickness(0, 0, 0, 10);
             ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -14,7 +20,7 @@ namespace revit_mcp_plugin.UI.Assistant
             ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
             var avatar = CreateAvatar(fromUser);
-            var bubble = CreateBubble(text, fromUser);
+            var bubble = CreateBubble(text, fromUser, attachments);
 
             if (fromUser)
             {
@@ -61,11 +67,28 @@ namespace revit_mcp_plugin.UI.Assistant
             return circle;
         }
 
-        private static Border CreateBubble(string text, bool fromUser)
+        private static Border CreateBubble(string text, bool fromUser, IList<ChatAttachment> attachments)
         {
             var radius = fromUser
                 ? new CornerRadius(14, 14, 4, 14)
                 : new CornerRadius(14, 14, 14, 4);
+
+            var stack = new StackPanel();
+            if (attachments != null && attachments.Count > 0)
+            {
+                var wrap = new WrapPanel { Margin = new Thickness(0, 0, 0, string.IsNullOrWhiteSpace(text) ? 0 : 8) };
+                foreach (var a in attachments)
+                {
+                    if (a == null) continue;
+                    wrap.Children.Add(CreateAttachmentPreview(a, fromUser));
+                }
+                stack.Children.Add(wrap);
+            }
+
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                stack.Children.Add(CreateSelectableMessageText(text, fromUser));
+            }
 
             return new Border
             {
@@ -79,16 +102,121 @@ namespace revit_mcp_plugin.UI.Assistant
                     ? null
                     : new SolidColorBrush(Color.FromRgb(0xD5, 0xDE, 0xE8)),
                 BorderThickness = fromUser ? new Thickness(0) : new Thickness(1),
+                Child = stack
+            };
+        }
+
+        private static TextBox CreateSelectableMessageText(string text, bool fromUser)
+        {
+            var foreground = fromUser
+                ? Brushes.White
+                : new SolidColorBrush(Color.FromRgb(0x1F, 0x29, 0x33));
+
+            var box = new TextBox
+            {
+                Text = text,
+                TextWrapping = TextWrapping.Wrap,
+                IsReadOnly = true,
+                IsTabStop = false,
+                BorderThickness = new Thickness(0),
+                Background = Brushes.Transparent,
+                Foreground = foreground,
+                FontSize = 12.5,
+                Padding = new Thickness(0),
+                Margin = new Thickness(0),
+                Cursor = Cursors.IBeam,
+                FocusVisualStyle = null,
+                AcceptsReturn = true,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
+                VerticalAlignment = VerticalAlignment.Top
+            };
+
+            if (fromUser)
+            {
+                box.SelectionBrush = new SolidColorBrush(Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF));
+                box.SelectionTextBrush = new SolidColorBrush(Color.FromRgb(0x1F, 0x29, 0x33));
+            }
+
+            box.Loaded += (_, __) => ResizeMessageTextBox(box);
+            box.SizeChanged += (_, __) => ResizeMessageTextBox(box);
+            return box;
+        }
+
+        private static void ResizeMessageTextBox(TextBox box)
+        {
+            var width = box.ActualWidth;
+            if (width <= 0 || double.IsNaN(width))
+                width = 256;
+
+            box.Measure(new Size(width, double.PositiveInfinity));
+            var height = Math.Ceiling(box.DesiredSize.Height);
+            box.MinHeight = height;
+            box.MaxHeight = height;
+        }
+
+        private static FrameworkElement CreateAttachmentPreview(ChatAttachment attachment, bool fromUser)
+        {
+            if (attachment.IsImage && attachment.Data != null && attachment.Data.Length > 0)
+            {
+                try
+                {
+                    var bmp = new BitmapImage();
+                    using (var ms = new MemoryStream(attachment.Data))
+                    {
+                        bmp.BeginInit();
+                        bmp.CacheOption = BitmapCacheOption.OnLoad;
+                        bmp.StreamSource = ms;
+                        bmp.DecodePixelWidth = 160;
+                        bmp.EndInit();
+                        bmp.Freeze();
+                    }
+
+                    return new Border
+                    {
+                        CornerRadius = new CornerRadius(8),
+                        Margin = new Thickness(0, 0, 6, 6),
+                        BorderBrush = fromUser
+                            ? new SolidColorBrush(Color.FromArgb(0x66, 0xFF, 0xFF, 0xFF))
+                            : new SolidColorBrush(Color.FromRgb(0xD5, 0xDE, 0xE8)),
+                        BorderThickness = new Thickness(1),
+                        ClipToBounds = true,
+                        Child = new Image
+                        {
+                            Source = bmp,
+                            MaxWidth = 160,
+                            MaxHeight = 100,
+                            Stretch = Stretch.Uniform
+                        },
+                        ToolTip = attachment.DisplayLabel
+                    };
+                }
+                catch
+                {
+                    // fall through to chip
+                }
+            }
+
+            var fg = fromUser ? Brushes.White : new SolidColorBrush(Color.FromRgb(0x1A, 0x27, 0x44));
+            var bg = fromUser
+                ? new SolidColorBrush(Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF))
+                : new SolidColorBrush(Color.FromRgb(0xE8, 0xEE, 0xF4));
+
+            return new Border
+            {
+                CornerRadius = new CornerRadius(8),
+                Margin = new Thickness(0, 0, 6, 6),
+                Padding = new Thickness(8, 5, 8, 5),
+                Background = bg,
                 Child = new TextBlock
                 {
-                    Text = text ?? "",
-                    TextWrapping = TextWrapping.Wrap,
-                    Foreground = fromUser
-                        ? Brushes.White
-                        : new SolidColorBrush(Color.FromRgb(0x1F, 0x29, 0x33)),
-                    FontSize = 12.5,
-                    LineHeight = 18
-                }
+                    Text = attachment.KindLabel + " · " + (attachment.FileName ?? "файл"),
+                    FontSize = 11,
+                    Foreground = fg,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    MaxWidth = 180
+                },
+                ToolTip = attachment.DisplayLabel
             };
         }
     }

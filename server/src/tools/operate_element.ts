@@ -14,10 +14,15 @@ export function registerOperateElementTool(server: McpServer) {
               .number()
               .describe("A valid Revit element ID to operate on")
             )
-            .describe("Array of Revit element IDs to perform the specified action on"),
+            .default([])
+            .describe("Array of Revit element IDs to perform the specified action on. May be empty for ResetIsolate / ResetOverrides with categoryNames."),
           action: z
             .string()
-            .describe("The operation to perform on elements. Valid values: Select, SelectionBox, SetColor, SetTransparency, Delete, Hide, TempHide, Isolate, Unhide, ResetIsolate, Highlight. Select enables direct element selection in the active view. SelectionBox allows selection of elements by drawing a rectangular window in the view. SetColor changes the color of elements (requires elementColor parameter). SetTransparency adjusts element transparency (requires transparencyValue parameter). Highlight is a convenience operation that sets elements to red color (internally calls SetColor with red). Delete permanently removes elements from the project. Hide makes elements invisible in the current view until explicitly shown. TempHide temporarily hides elements in the current view. Isolate displays only selected elements while hiding all others. Unhide reveals previously hidden elements. ResetIsolate restores normal visibility to the view."),
+            .describe("The operation to perform on elements. Valid values: Select, SelectionBox, SetColor, SetTransparency, Delete, Hide, TempHide, Isolate, Unhide, ResetIsolate, ResetOverrides, Highlight. ResetOverrides clears view graphic overrides (after norm SetColor). Use categoryNames when elementIds is empty."),
+          categoryNames: z
+            .array(z.string())
+            .optional()
+            .describe("For ResetOverrides: reset all elements of these categories on the active view (e.g. Doors, Windows, Ramps)."),
           transparencyValue: z
             .number()
             .default(50)

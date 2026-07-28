@@ -1,6 +1,6 @@
 {
   "name": "RevitMCPCommandSet",
-  "description": "Basic command collection for Revit AI assistance",
+  "description": "Базовый набор команд для AI-ассистента Revit",
   "developer": {
     "name": "mcp-servers-for-revit",
     "email": "",
@@ -10,342 +10,342 @@
   "commands": [
     {
       "commandName": "say_hello",
-      "description": "Displays a greeting dialog",
+      "description": "Показать приветственное окно",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "get_available_family_types",
-      "description": "get available family types",
+      "description": "Получить доступные типы семейств",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "get_current_view_elements",
-      "description": "get current view elements",
+      "description": "Получить элементы текущего вида",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "get_current_view_info",
-      "description": "get current view info",
+      "description": "Получить сведения о текущем виде",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "get_selected_elements",
-      "description": "get selected elements",
+      "description": "Получить выделенные элементы",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_point_based_element",
-      "description": "Create point-based elements like furniture",
+      "description": "Создать точечные элементы (двери, окна, мебель)",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_line_based_element",
-      "description": "Create line based element such as wall",
+      "description": "Создать линейные элементы (стены, балки)",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_surface_based_element",
-      "description": "Create surface-based elements like floors",
+      "description": "Создать площадные элементы (полы, потолки, крыши)",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "color_splash",
-      "description": "Color elements by parameter value",
+      "description": "Раскрасить элементы по значению параметра",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_filled_regions",
-      "description": "Annotate Filled Region (Цветовая область) on room boundaries of the active floor plan",
+      "description": "Цветовая область по контуру помещений на активном плане этажа",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_text_notes",
-      "description": "Annotate Text notes with optional leaders (выноска) on the active floor plan",
+      "description": "Текстовые аннотации с выносками на активном плане этажа",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "tag_walls",
-      "description": "Tag all the walls in the model",
+      "description": "Промаркировать все стены в модели",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "delete_element",
-      "description": "Deletes elements using ElementId",
+      "description": "Удалить элементы по ElementId",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "ai_element_filter",
-      "description": "AI element filter for querying elements by criteria",
+      "description": "Фильтр элементов по критериям",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "operate_element",
-      "description": "Operate on elements (select, color, hide, isolate, etc)",
+      "description": "Операции с элементами (выделить, покрасить, скрыть, изолировать и т.д.)",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "export_room_data",
-      "description": "Extract all rooms with detailed properties including area, volume, perimeter, and parameters",
+      "description": "Экспорт помещений: площадь, объём, периметр и параметры",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "export_tep_data",
-      "description": "Aggregate structured TEP data: building footprint, total area, storey count, per-level areas, volume, rooms by purpose",
+      "description": "ТЭП: площадь застройки, общая площадь, этажность, площади по уровням, объём",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "export_room_finish_data",
-      "description": "Export room finish data: wall/floor/ceiling finish parameters (read-only); face materials opt-in, level filter and offset/limit pagination for large models",
+      "description": "Отделка помещений: параметры стен/полов/потолков (материалы граней — опционально)",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "export_apartment_data",
-      "description": "Квартирография/ТЭП: group rooms into apartments by apartment-number parameter, compute living/useful/total areas with СП РК 3.02-101-2012* А.8 coefficients (loggia 0.5, balcony/terrace 0.3, veranda 0.8), per-apartment list and summary by type",
+      "description": "Квартирография/ТЭП: группировка по номеру квартиры, жилая/полезная/общая площадь (СП РК 3.02-101-2012* А.8)",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "get_material_quantities",
-      "description": "Calculate material quantities and takeoffs with area and volume calculations per material",
+      "description": "Ведомость материалов: площади и объёмы по материалам",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "analyze_model_statistics",
-      "description": "Analyze model complexity with element counts by category, type, family, and level",
+      "description": "Статистика модели: количество элементов по категориям, типам, семействам, уровням",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "validate_schedule",
-      "description": "Compare schedule element counts against model elements for Doors, Windows, Floors, or CurtainWalls (doors/windows exclude slopes; curtain walls count systems, not panels)",
+      "description": "Сверка спецификации с моделью (двери, окна, полы, витражи)",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_curtain_wall_schedule",
-      "description": "Export structured curtain wall (витражи) schedule data: wall systems by Curtain type with mark, length x height, level, and count — panels and mullions excluded",
+      "description": "Спецификация витражей: системы по типу, марка, размер, уровень, количество",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "get_schedule_definition",
-      "description": "Read full ViewSchedule definition: fields, filters, sorts, groups, and display flags",
+      "description": "Чтение определения спецификации: поля, фильтры, сортировка, группировка",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_grid",
-      "description": "Create grid system with smart spacing generation for project layout (alphabetic/numeric naming)",
+      "description": "Создать координационные оси (авто по стенам или вручную)",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "configure_grid_display",
-      "description": "Configure 2D grid extents and bubble display on floor plans for existing grids",
+      "description": "Настроить экстенты и пузыри осей на планах этажей",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_structural_framing_system",
-      "description": "Create structural beam framing system with configurable spacing and direction",
+      "description": "Создать систему балочного перекрытия с шагом и направлением",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_room",
-      "description": "Create and place rooms at specified locations with custom names, numbers, and properties",
+      "description": "Создать помещения в указанных точках с именем и номером",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_stair",
-      "description": "Create a straight single-run stair between two levels using a StairsType from the project (normative width from server)",
+      "description": "Создать лестницу между уровнями по типу StairsType из проекта",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_railing",
-      "description": "Create a railing by path or hosted on a stair using a RailingType from the project",
+      "description": "Создать ограждение по траектории или на лестнице (RailingType из проекта)",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_floor_opening",
-      "description": "Cut a floor slab opening or create a vertical shaft between levels (stair/lift/MEP) — profile as rect or boundaryPoints in mm",
+      "description": "Вырез в плите или вертикальная шахта между уровнями (контур в мм)",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "tag_rooms",
-      "description": "Create tags for all rooms in the current view displaying room name and number",
+      "description": "Промаркировать все помещения на текущем виде",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_level",
-      "description": "Create levels at specified elevations with automatic floor plan view generation",
+      "description": "Создать уровни на заданных отметках с планами этажей",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "send_code_to_revit",
-      "description": "Execute dynamic C# code in Revit with access to the Document and Revit API",
+      "description": "Выполнить C#-код в Revit с доступом к Document и API",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_dimensions",
-      "description": "Create dimension annotations between elements or points in the current view",
+      "description": "Создать размеры между элементами или точками на текущем виде",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "dimension_room_walls",
-      "description": "Create chained wall dimensions for a room: interior width+depth chains by default, exterior only on explicit request",
+      "description": "Размеры помещения: внутренние цепочки ширины и глубины",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "dimension_grids",
-      "description": "Create exterior axial dimension chains offset from the full building envelope (inter-axis + overall; numbers bottom, letters left)",
+      "description": "Осевые размеры снаружи габарита здания (межосевые + габаритные)",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_door_schedule",
-      "description": "Export structured door schedule data for door blocks only (excludes slopes/reveals), and optionally create a real Revit ViewSchedule when createViewSchedule=true",
+      "description": "Спецификация дверей (без откосов); опционально создать ViewSchedule",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_window_schedule",
-      "description": "Export structured window schedule data for window blocks only (excludes slopes/sills), and optionally create a real Revit ViewSchedule when createViewSchedule=true",
+      "description": "Спецификация окон (без откосов/подоконников); опционально создать ViewSchedule",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_floor_schedule",
-      "description": "Export floor finish экспликация data: (полы)* only with areaM2, excluding slabs/insulation/facade",
+      "description": "Экспликация полов: только (полы)* с площадью м², без плит/утеплителей",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_floor_explication",
-      "description": "Create floor экспликация from seeded recipe columns; discover (полы)* levels and typified ranges (same type+footprint) with dynamic titles",
+      "description": "Лист экспликации полов: группировка типовых этажей, динамические названия",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_schedule",
-      "description": "Create a ViewSchedule from project template with fields, filters, sorting, and grouping",
+      "description": "Создать спецификацию из шаблона проекта с полями, фильтрами и группировкой",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "configure_schedule",
-      "description": "Edit an existing ViewSchedule in-place: column widths, hide/show columns, filters, sorts, groups, and display flags (REV-68)",
+      "description": "Редактировать спецификацию: ширина колонок, фильтры, сортировка, группировка",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "fit_schedule_to_sheet",
-      "description": "Make an existing ViewSchedule fit a target sheet width by hiding optional columns, narrowing columns proportionally, and/or adding a level filter (REV-68)",
+      "description": "Подогнать спецификацию под ширину листа (скрытие колонок, сужение, фильтр)",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_sheet",
-      "description": "Create a sheet with a project title block",
+      "description": "Создать лист с основной надписью из проекта",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "place_view_on_sheet",
-      "description": "Place a view or schedule on a sheet at coordinates in millimeters",
+      "description": "Разместить вид или спецификацию на листе (координаты в мм)",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_finish_schedule",
-      "description": "Create a room finish schedule set: reproduces the ADSK_RU chain (key styles → data filling → output list) or a single schedule from a template",
+      "description": "Ведомость отделки помещений по цепочке ADSK_RU или из шаблона",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "batch_execute",
-      "description": "Execute multiple Revit commands in one request with partial success (plugin built-in, max 20 commands)",
+      "description": "Выполнить несколько команд за один запрос (встроенная, до 20 команд)",
       "assemblyPath": "plugin:builtin"
     },
     {
       "commandName": "get_document_styles",
-      "description": "Return project annotation styles: dimensions, grids, text note types, line patterns, graphics styles, and title blocks",
+      "description": "Стили проекта: размеры, оси, текст, линии, основные надписи",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "get_element_parameters",
-      "description": "Read all parameters of an element by id (name, value, units, read-only flag)",
+      "description": "Прочитать все параметры элемента по id",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "get_elements_parameters",
-      "description": "Read parameters for multiple elements in one ExternalEvent (batch, max 100 ids)",
+      "description": "Прочитать параметры нескольких элементов (пакетно, до 100 id)",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "set_element_parameter",
-      "description": "Write a parameter value on an element by id inside a transaction",
+      "description": "Записать значение параметра элемента по id",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "get_room_geometry_metrics",
-      "description": "Extract room geometry metrics: width/depth/area and corridor width hints",
+      "description": "Геометрия помещения: ширина, глубина, площадь, ширина коридора",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "get_door_egress_info",
-      "description": "Extract nominal/clear door width, maneuvering space, egress-path hints, and ramp slopes",
+      "description": "Двери на путях эвакуации: ширина, маневровая зона, уклоны пандусов",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "export_egress_graph",
-      "description": "Export the egress walkability graph of a floor: room boundary polygons (mm) and doors with from/to room links for evacuation distance tracing",
+      "description": "Граф эвакуации этажа: контуры помещений и связи дверей (мм)",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_detail_lines",
-      "description": "Draw polylines as detail curves on the active plan, detail callout, or drafting view (mm coordinates) — evacuation routes or node sketch lines",
+      "description": "Линии детализации на плане/узле (маршруты эвакуации, эскизы)",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_detail_view",
-      "description": "Create a detail view for nodes: callout of a parent view around an element/area, or an independent drafting view, with name, scale, and detail level",
+      "description": "Создать узел: вырез с плана или чертёжный вид с масштабом и детализацией",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "place_detail_component",
-      "description": "Place point-based or line-based 2D detail components on a detail/drafting view by family and type name, with partial success per item",
+      "description": "Разместить 2D-компоненты узла на виде детализации",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "create_text_note",
-      "description": "Create a text note on a view with optional wrapping width and a straight leader (node annotations)",
+      "description": "Текстовая аннотация с выноской на виде (подписи узлов)",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "get_opening_geometry_info",
-      "description": "Extract window sill height and door/window opening height for norm checks (REV-58)",
+      "description": "Высота подоконника и высота проёма окон/дверей для нормоконтроля",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "get_vertical_circulation_info",
-      "description": "Extract stair width/riser/tread, ramp width/slope, railing height for norm checks (REV-59)",
+      "description": "Лестницы, пандусы, ограждения: ширина, подступенок, проступь, высота",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "check_room_depth",
-      "description": "Check room depths against a normative min/max limit, report and optionally highlight violators",
+      "description": "Проверка глубины помещений по нормативу с отчётом и подсветкой",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "check_fire_doors",
-      "description": "Pilot normative check: doors required to be fire-rated on egress routes or between compartments",
+      "description": "Проверка противопожарных дверей на путях эвакуации",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "check_evacuation_width",
-      "description": "Check evacuation corridor widths against a normative minimum, report and optionally highlight violators",
+      "description": "Проверка ширины эвакуационных коридоров по нормативу",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "check_min_dimensions",
-      "description": "Check minimum dimensions of balconies, loggias, and fire piers against normative limits, report and optionally highlight violators",
+      "description": "Проверка минимальных размеров балконов, лоджий и простенков",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "apply_norm_result",
-      "description": "Write norm-check results into the model: status parameter, marks, highlight, violation schedule (with preview and overwrite protection)",
+      "description": "Записать результаты нормоконтроля в модель: статус, марки, подсветка",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "auto_layout_sheet",
-      "description": "Automatically lay out views and schedules on a sheet: row packing by actual extents, title-block-aware usable area (incl. Form 3), auto-scale oversized viewports, no overlaps",
+      "description": "Автораскладка видов и спецификаций на листе без наложений",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
       "commandName": "render_tep_table",
-      "description": "Render a TEP table on the 'Общие данные' sheet: layout from a reference schedule, values from export_tep_data, text notes and grid lines",
+      "description": "Таблица ТЭП на листе «Общие данные» из export_tep_data",
       "assemblyPath": "RevitMCPCommandSet.dll"
     }
   ]

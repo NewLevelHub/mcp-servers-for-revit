@@ -10,7 +10,7 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerCreateFilledRegionsTool(server: McpServer) {
   server.tool(
     "create_filled_regions",
-    "Paint rooms on the active floor plan with Annotate → Filled Region («Цветовая область»): closed room boundary → solid fill type from the project (e.g. ADSK_У_Сплошная_Красный). Prefer this for norm-violation area paint that looks like the Annotate UI. Do NOT confuse with color_elements (View Color Scheme / цветовая схема) or highlight_room_tags (tag text only). Pass roomIds and/or roomNames; omit both to paint all rooms on the active view. clearPrevious=true removes prior MCP regions tagged in Comments.",
+    "Paint rooms on the active floor plan with Annotate → Filled Region («Цветовая область»): closed room boundary → solid fill type from the project (e.g. ADSK_У_Сплошная_Красный). Prefer this for norm-violation area paint that looks like the Annotate UI. Do NOT confuse with color_elements (View Color Scheme / цветовая схема) or highlight_room_tags (tag text only). Pass roomIds and/or roomNames; omit both to paint all rooms on the active view. clearPrevious=true removes prior MCP regions tagged in Comments. clearOnly=true removes prior MCP regions without painting (use for «удали разметку»).",
     {
       roomIds: z
         .array(z.number().int())
@@ -36,6 +36,13 @@ export function registerCreateFilledRegionsTool(server: McpServer) {
         .optional()
         .default(true)
         .describe("Delete existing Filled Regions on this view whose Comments start with commentTag (default MCP-FR)."),
+      clearOnly: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "If true: only remove prior MCP-FR regions on the view; do not paint rooms. Prefer this for «удали разметку» / clear markup."
+        ),
       commentTag: z
         .string()
         .optional()
@@ -51,6 +58,7 @@ export function registerCreateFilledRegionsTool(server: McpServer) {
             filledRegionTypeName: args.filledRegionTypeName ?? "",
             colorPreset: args.colorPreset ?? "red",
             clearPrevious: args.clearPrevious ?? true,
+            clearOnly: args.clearOnly ?? false,
             commentTag: args.commentTag ?? "MCP-FR",
           });
         });

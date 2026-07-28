@@ -46,6 +46,7 @@ namespace RevitMCPCommandSet.Commands
                 string filledRegionTypeName = parameters?["filledRegionTypeName"]?.Value<string>() ?? string.Empty;
                 string colorPreset = parameters?["colorPreset"]?.Value<string>() ?? "red";
                 bool clearPrevious = parameters?["clearPrevious"]?.Value<bool>() ?? true;
+                bool clearOnly = parameters?["clearOnly"]?.Value<bool>() ?? false;
                 string commentTag = parameters?["commentTag"]?.Value<string>()
                     ?? CreateFilledRegionsEventHandler.DefaultCommentTag;
 
@@ -55,7 +56,8 @@ namespace RevitMCPCommandSet.Commands
                     filledRegionTypeName,
                     colorPreset,
                     clearPrevious,
-                    commentTag);
+                    commentTag,
+                    clearOnly);
 
                 if (RaiseAndWaitForCompletion(60000))
                 {

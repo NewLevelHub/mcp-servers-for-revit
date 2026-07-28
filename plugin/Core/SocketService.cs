@@ -27,7 +27,6 @@ namespace revit_mcp_plugin.Core
         private ICommandRegistry _commandRegistry;
         private Logger _logger;
         private CommandExecutor _commandExecutor;
-
         public static SocketService Instance
         {
             get

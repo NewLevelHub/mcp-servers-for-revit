@@ -7,9 +7,9 @@ import {
 } from "./checklist.js";
 
 describe("normAudit checklist", () => {
-  it("runs all Phase-1 checkers when topics omitted", () => {
+  it("runs all default Phase-1 checkers when topics omitted (МГН opt-in excluded)", () => {
     const selected = selectPhase1Checkers();
-    assert.equal(selected.length, 17);
+    assert.equal(selected.length, 15);
     assert.deepEqual(
       selected.map((c) => c.checkType),
       [
@@ -19,8 +19,6 @@ describe("normAudit checklist", () => {
         "fire_doors",
         "door_clear_width",
         "tambour_size_min",
-        "mgn_room_geometry",
-        "mgn_door_width",
         "room_area_min",
         "room_height_min",
         "storey_height",

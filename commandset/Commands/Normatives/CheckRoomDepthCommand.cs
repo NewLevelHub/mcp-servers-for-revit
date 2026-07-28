@@ -24,6 +24,9 @@ namespace RevitMCPCommandSet.Commands.Normatives
                 double? maxDepthMm = parameters?["maxDepthMm"]?.Value<double?>();
                 string mode = parameters?["mode"]?.Value<string>() ?? CheckRoomDepthEventHandler.ModeReport;
                 string levelName = parameters?["levelName"]?.Value<string>() ?? string.Empty;
+                long? levelId = parameters?["levelId"]?.Value<long?>();
+                long? viewId = parameters?["viewId"]?.Value<long?>();
+                bool filterByActiveView = parameters?["filterByActiveView"]?.Value<bool>() ?? true;
                 string roomNameFilter = parameters?["roomNameFilter"]?.Value<string>() ?? string.Empty;
                 string roomScope = parameters?["roomScope"]?.Value<string>()
                     ?? CheckRoomDepthEventHandler.RoomScopeLiving;
@@ -49,7 +52,10 @@ namespace RevitMCPCommandSet.Commands.Normatives
                     roomNameFilter,
                     includeCompliant,
                     highlightColor,
-                    roomScope);
+                    roomScope,
+                    levelId,
+                    viewId,
+                    filterByActiveView);
 
                 if (RaiseAndWaitForCompletion(60000))
                 {

@@ -33,11 +33,13 @@ namespace RevitMCPCommandSet.Commands
         {
             try
             {
-                OperationSetting data = new OperationSetting();
-                // 解析参数
-                data = parameters["data"].ToObject<OperationSetting>();
+                var dataToken = parameters["data"];
+                if (dataToken is JObject dataJo)
+                    OperateElementParameterNormalizer.NormalizeCategoryNames(dataJo);
+
+                var data = dataToken?.ToObject<OperationSetting>();
                 if (data == null)
-                    throw new ArgumentNullException(nameof(data), "AI传入数据为空");
+                    throw new ArgumentNullException(nameof(data), "Пустые параметры команды");
 
                 // 设置点状构件体参数
                 _handler.SetParameters(data);
@@ -49,12 +51,12 @@ namespace RevitMCPCommandSet.Commands
                 }
                 else
                 {
-                    throw new TimeoutException("操作元素超时");
+                    throw new TimeoutException("Превышено время ожидания операции с элементом");
                 }
             }
             catch (Exception ex)
             {
-                throw new Exception($"操作元素失败: {ex.Message}");
+                throw new Exception($"Ошибка operate_element: {ex.Message}");
             }
         }
     }

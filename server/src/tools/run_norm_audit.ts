@@ -18,8 +18,9 @@ export function registerRunNormAuditTool(server: McpServer) {
       "door width (nominal), tambour size, room area/height/storey, " +
       "window sill height, opening height, stairs/ramps/railings, " +
       "МГН accessibility per СП РК 3.06-101-2012* (wheelchair turning 1,5 м, corridor 1,5/1,8 м, " +
-      "clear door width 0,9 м, maneuvering zones, ramp slopes, accessible WC dimensions; " +
-      "topics=[\"мгн\"] runs only these — see also check_accessibility). " +
+      "clear door width 0,9 м, maneuvering zones, ramp slopes, accessible WC dimensions) — " +
+      "opt-in only via topics=[\"мгн\"] / «доступность» (not in default full-floor audit; " +
+      "see also check_accessibility). " +
       "Returns summary + findings[] with document/clause/quote + actualMm/requiredMm, and skippedRules[] " +
       "for checks not yet implemented (e.g. door clear width «в свету») " +
       "plus skipped findings when the model lacks a trustworthy measurement. " +
@@ -45,7 +46,8 @@ export function registerRunNormAuditTool(server: McpServer) {
         .array(z.string())
         .optional()
         .describe(
-          "Optional filter, e.g. [\"эвак. коридор\", \"лоджия\", \"ПД\"]. Omit to run all Phase-1 checkers."
+          "Optional filter, e.g. [\"эвак. коридор\", \"лоджия\", \"ПД\", \"мгн\"]. " +
+            "Omit to run default Phase-1 checkers (МГН opt-in excluded — pass topics=[\"мгн\"]).",
         ),
       mode: z
         .enum(["report", "highlight"])

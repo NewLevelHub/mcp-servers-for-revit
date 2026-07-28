@@ -33,8 +33,13 @@ export interface FireDoorNormRule {
 const CLAUSE_PREFIX_RE =
   /(?:^|\s)(?:п\.?\s*|§\s*)(\d+(?:\.\d+)*)\s*[.:)\-–—]?\s*/i;
 
-const FIRE_DOOR_SENTENCE_RE =
-  /(?:противопожарн\w*\s+двер|двер\w*[^.]{0,100}противопожарн|самозакрыва\w*\s+двер|двер\w*[^.]{0,80}(?:эвакуац|лестничн|пожарн\w*\s+отсек|противопожарн\w*\s+преград|противопожарн\w*\s+перегород))/i;
+/**
+ * Real fire-door requirement language only.
+ * Do NOT match «двер…эвакуац» alone — that catches path-length rules
+ * (e.g. «от двери… путь эвакуации… не более 30 м») which are not ПД requirements.
+ */
+const FIRE_DOOR_REQUIREMENT_RE =
+  /противопожарн|самозакрывающ|предел\w*\s+огнестойк|огнестойк\w*\s+двер|\bEI\s*\d{2,3}\b/i;
 
 const DOCUMENT_NAME_OVERRIDES: Record<string, string> = {
   "SP_RK_3.02-101-2012_27.04.2021.pdf": "СП РК 3.02-101-2012",
@@ -105,6 +110,11 @@ function extractClause(sentence: string): string {
   return match ? `п. ${match[1]}` : "";
 }
 
+/** True when quote is an actual fire-door / self-closing / EI requirement. */
+export function isFireDoorRequirementQuote(quote: string): boolean {
+  return FIRE_DOOR_REQUIREMENT_RE.test(quote);
+}
+
 export function inferFireDoorScenario(sentence: string): FireDoorScenario {
   const normalized = sentence.toLowerCase();
 
@@ -121,7 +131,11 @@ export function inferFireDoorScenario(sentence: string): FireDoorScenario {
   if (/эвакуационн\w*\s+выход|выход\w*[^.]{0,40}эвакуац/.test(normalized)) {
     return "evacuation-exit";
   }
-  if (/путь\w*\s+эвакуац|эвакуационн\w*\s+путь|коридор/.test(normalized)) {
+  if (
+    /противопожарн\w*.{0,60}(путь\w*\s+эвакуац|эвакуационн\w*\s+путь|коридор)|(путь\w*\s+эвакуац|эвакуационн\w*\s+путь|коридор).{0,60}противопожарн/.test(
+      normalized
+    )
+  ) {
     return "egress-route";
   }
   return "fire-compartment-door";
@@ -153,7 +167,7 @@ export function extractFireDoorRulesFromText(
 
   for (const sentence of sentences) {
     if (!/двер/i.test(sentence)) continue;
-    if (!FIRE_DOOR_SENTENCE_RE.test(sentence)) continue;
+    if (!isFireDoorRequirementQuote(sentence)) continue;
 
     const quote = sentence.replace(/\s+/g, " ").trim();
     if (quote.length < 35 || seen.has(quote)) continue;

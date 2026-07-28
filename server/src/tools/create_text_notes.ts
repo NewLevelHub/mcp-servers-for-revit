@@ -97,6 +97,13 @@ export function registerCreateTextNotesTool(server: McpServer) {
         .describe(
           "Delete existing TextNotes/detail curves on this view whose Comments start with commentTag (default MCP-ANN)."
         ),
+      clearOnly: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "If true: only remove prior MCP annotations (notes + leader lines); do not create new notes. Prefer for «удали разметку»."
+        ),
       commentTag: z
         .string()
         .optional()
@@ -148,6 +155,7 @@ export function registerCreateTextNotesTool(server: McpServer) {
             notes: args.notes ?? [],
             lines: args.lines ?? [],
             clearPrevious: args.clearPrevious ?? true,
+            clearOnly: args.clearOnly ?? false,
             commentTag: args.commentTag ?? "MCP-ANN",
             textTypeName: args.textTypeName ?? "ADSK_Замечания",
             placement: args.placement ?? "outside",

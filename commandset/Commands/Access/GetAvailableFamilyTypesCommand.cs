@@ -23,10 +23,20 @@ namespace RevitMCPCommandSet.Commands.Access
             {
                 try
                 {
-                    // 解析参数
-                    List<string> categoryList = parameters?["categoryList"]?.ToObject<List<string>>() ?? new List<string>();
+                    // Support both categoryList (array) and categoryName (string) — agent often sends categoryName.
+                    List<string> categoryList = parameters?["categoryList"]?.ToObject<List<string>>()
+                        ?? new List<string>();
+                    var categoryName = parameters?["categoryName"]?.Value<string>();
+                    if (!string.IsNullOrWhiteSpace(categoryName) && categoryList.Count == 0)
+                        categoryList.Add(categoryName.Trim());
+
                     string familyNameFilter = parameters?["familyNameFilter"]?.Value<string>();
                     int? limit = parameters?["limit"]?.Value<int>();
+
+                    // Default: walls only when agent asks for types before creating walls without filter —
+                    // keep unfiltered if neither arg set (legacy). Limit large dumps.
+                    if (!limit.HasValue || limit.Value <= 0)
+                        limit = categoryList.Count > 0 ? 80 : 60;
 
                     // 设置查询参数
                     _handler.CategoryList = categoryList;
