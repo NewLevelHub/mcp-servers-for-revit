@@ -17,3 +17,5 @@
 ## Режим разработчика
 
 Только если пользователь явно просит изменить код MCP, плагина или command set.
+
+При добавлении MCP/Revit команд см. [docs/tool-registry.md](docs/tool-registry.md) и `npm run check:tool-registry` в `server/`.

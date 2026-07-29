@@ -18,6 +18,7 @@
         "seed:norms": "npm run build && node build/scripts/seed-norm-library.js",
         "seed:residential-norms": "npm run build && node build/scripts/seed-residential-norms.js",
         "export:norm-catalog": "npm run build && node build/scripts/exportNormCatalog.js",
+        "check:tool-registry": "node ../scripts/check-tool-registry.mjs",
         "prepublishOnly": "npm run build"
     },
     "files": [
