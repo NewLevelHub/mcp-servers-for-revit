@@ -207,11 +207,18 @@ namespace revit_mcp_plugin.Core.Assistant
                 args["roomIds"] = new JArray(ids);
         }
 
+        /// <summary>
+        /// Assistant-only: map audit findings / doorElementIds → elementIds for SetColor.
+        /// Payload shape (<c>data</c> wrapper, <c>categoryNames</c> string→array) is owned by
+        /// commandset <c>OperateElementParameterNormalizer</c> so Cursor MCP and in-Revit share one path.
+        /// </summary>
         private static void NormalizeOperateElement(JObject args)
         {
             var data = args["data"] as JObject;
             if (data == null)
             {
+                // Light promote so findings mapping below can read action/elementIds consistently.
+                // Final ensure + categoryNames flatten happen again in OperateElementCommand.
                 data = new JObject();
                 foreach (var prop in args.Properties())
                 {

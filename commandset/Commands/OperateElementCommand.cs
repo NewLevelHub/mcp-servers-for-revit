@@ -33,11 +33,10 @@ namespace RevitMCPCommandSet.Commands
         {
             try
             {
-                var dataToken = parameters["data"];
-                if (dataToken is JObject dataJo)
-                    OperateElementParameterNormalizer.NormalizeCategoryNames(dataJo);
+                var dataJo = OperateElementParameterNormalizer.EnsureDataObject(parameters);
+                OperateElementParameterNormalizer.NormalizeCategoryNames(dataJo);
 
-                var data = dataToken?.ToObject<OperationSetting>();
+                var data = dataJo?.ToObject<OperationSetting>();
                 if (data == null)
                     throw new ArgumentNullException(nameof(data), "Пустые параметры команды");
 

@@ -7,10 +7,14 @@ using revit_mcp_plugin.Core;
 namespace revit_mcp_plugin.Core.Assistant
 {
     /// <summary>
-    /// In-Revit substitute for server run_norm_audit — runs all available check_* Revit commands.
+    /// Thin in-Revit orchestrator for <c>run_norm_audit</c>: runs the four check_* commands
+    /// available in commandset, merges findings, optional highlight via <see cref="NormViolationDisplayHelper"/>.
+    /// Full Phase-1+ audit (door width, tambour, room norms, МГН, …) lives in Cursor MCP
+    /// <c>server/src/normatives/normAudit/</c> — do not duplicate that logic here.
     /// </summary>
     public static class NormAuditOrchestrator
     {
+        /// <summary>Revit-side checkers only (same names as command.json).</summary>
         private static readonly string[] AvailableChecks =
         {
             "check_evacuation_width",
@@ -19,6 +23,7 @@ namespace revit_mcp_plugin.Core.Assistant
             "check_fire_doors"
         };
 
+        /// <summary>Documented gaps vs server run_norm_audit — returned in skippedRules.</summary>
         private static readonly string[] SkippedInPlugin =
         {
             "door_clear_width (используй check_* в Cursor MCP)",

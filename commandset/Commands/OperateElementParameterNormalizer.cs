@@ -6,10 +6,34 @@ using System.Linq;
 namespace RevitMCPCommandSet.Commands
 {
     /// <summary>
-    /// LLM often sends categoryNames as a string ("Doors") instead of ["Doors","Windows"].
+    /// Canonical operate_element payload fixes (MCP + in-Revit assistant).
+    /// LLM often omits the <c>data</c> wrapper or sends categoryNames as a string.
     /// </summary>
     internal static class OperateElementParameterNormalizer
     {
+        /// <summary>
+        /// If <c>data</c> is missing, promote root fields into <c>data</c>.
+        /// </summary>
+        public static JObject EnsureDataObject(JObject parameters)
+        {
+            if (parameters == null)
+                return null;
+
+            if (parameters["data"] is JObject existing)
+                return existing;
+
+            var data = new JObject();
+            foreach (var prop in parameters.Properties().ToList())
+            {
+                if (prop.Name.Equals("data", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                data[prop.Name] = prop.Value?.DeepClone();
+            }
+
+            parameters["data"] = data;
+            return data;
+        }
+
         public static void NormalizeCategoryNames(JObject data)
         {
             if (data == null)

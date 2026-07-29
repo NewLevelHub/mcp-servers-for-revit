@@ -88,6 +88,12 @@ Full machine-checkable lists: run `npm run check:tool-registry` from `server/` (
 4. Optionally expose in `plugin/Core/Assistant/ToolCatalog.cs` for in-Revit chat.
 5. Run `npm run check:tool-registry` (from `server/`) and update this doc if ownership/alias changed.
 
+## Phase-2 ownership notes (cleanup)
+
+- `operate_element` payload shape (`data` wrapper, `categoryNames` string→array): **commandset** `OperateElementParameterNormalizer`.
+- In-Revit assistant may still map audit `findings` / `doorElementIds` → `elementIds` in `CreateElementArgsNormalizer` (LLM-only convenience).
+- In-Revit `run_norm_audit`: thin `NormAuditOrchestrator` (4 checkers). Full audit: server `run_norm_audit`.
+
 ## Related
 
 - Agent rules: [AGENTS.md](../AGENTS.md), [.cursor/rules/revit-mcp.mdc](../.cursor/rules/revit-mcp.mdc)

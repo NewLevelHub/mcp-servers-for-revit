@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
@@ -299,134 +298,6 @@ namespace revit_mcp_plugin.Core.Assistant
             return n;
         }
 
-        private static string TruncateForHistory(string content)
-        {
-            if (string.IsNullOrEmpty(content))
-                return content ?? "";
-            if (content.Length <= MaxToolResultChars)
-                return content;
-            return content.Substring(0, MaxToolResultChars) + "…";
-        }
-
-        /// <summary>
-        /// Build OpenAI multimodal user content: text (+ extracted office text) + image_url.
-        /// Documents are inlined as text when possible — Chat Completions <c>file</c> parts
-        /// are unreliable on many OpenAI-compatible proxies.
-        /// PDF without local text still goes as a <c>file</c> part (needs OpenAI-compatible file support).
-        /// </summary>
-        internal static JToken BuildUserContent(string text, IList<ChatAttachment> attachments)
-        {
-            if (attachments == null || attachments.Count == 0)
-                return text ?? "";
-
-            var usable = attachments.Where(a => a?.Data != null && a.Data.Length > 0).ToList();
-            var docCount = usable.Count(a => !a.IsImage);
-            // Share extract budget across docs so file #2/#3 are not drowned by a long first Word.
-            var perDocBudget = docCount <= 0
-                ? DocumentTextExtractor.MaxExtractedChars
-                : Math.Max(6000, DocumentTextExtractor.MaxExtractedCharsTotal / docCount);
-
-            var textBuilder = new StringBuilder();
-            if (!string.IsNullOrWhiteSpace(text))
-                textBuilder.AppendLine(text.TrimEnd());
-
-            textBuilder.AppendLine();
-            textBuilder.AppendLine("[Вложения: " + usable.Count + " шт. " +
-                                   "Ты ВИДИШЬ/ЧИТАЕШЬ все. Если файлов несколько — ответь по КАЖДОМУ отдельным пунктом " +
-                                   "(1), (2), (3)… Не останавливайся на первом.]");
-
-            var imageParts = new JArray();
-            var pdfFileParts = new JArray();
-            var failedDocs = new List<string>();
-            var index = 0;
-
-            foreach (var a in usable)
-            {
-                index++;
-                var label = a.FileName ?? "файл";
-                textBuilder.AppendLine();
-                textBuilder.Append("=== ФАЙЛ ").Append(index).Append('/').Append(usable.Count)
-                    .Append(": ").Append(a.KindLabel).Append(" · ").Append(label).AppendLine(" ===");
-
-                if (a.IsImage)
-                {
-                    textBuilder.AppendLine("(изображение прикреплено ниже в запросе)");
-                    imageParts.Add(new JObject
-                    {
-                        ["type"] = "image_url",
-                        ["image_url"] = new JObject
-                        {
-                            ["url"] = a.ToDataUrl(),
-                            ["detail"] = "low"
-                        }
-                    });
-                    continue;
-                }
-
-                if (DocumentTextExtractor.TryExtract(a, perDocBudget, out var extracted, out var extractError))
-                {
-                    textBuilder.AppendLine("--- начало текста файла " + index + " ---");
-                    textBuilder.AppendLine(extracted);
-                    textBuilder.AppendLine("--- конец текста файла " + index + " (" + label + ") ---");
-                    continue;
-                }
-
-                if (a.IsPdf)
-                {
-                    textBuilder.AppendLine("(PDF прикреплён файлом — разбери его содержимое)");
-                    pdfFileParts.Add(new JObject
-                    {
-                        ["type"] = "file",
-                        ["file"] = new JObject
-                        {
-                            ["filename"] = label.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)
-                                ? label
-                                : label + ".pdf",
-                            ["file_data"] = a.ToDataUrl()
-                        }
-                    });
-                    continue;
-                }
-
-                failedDocs.Add(label + (string.IsNullOrEmpty(extractError) ? "" : " (" + extractError + ")"));
-                textBuilder.AppendLine(string.IsNullOrEmpty(extractError)
-                    ? "не удалось прочитать этот файл"
-                    : "не удалось прочитать: " + extractError);
-            }
-
-            if (failedDocs.Count > 0)
-            {
-                textBuilder.AppendLine();
-                textBuilder.AppendLine("Не удалось разобрать: " + string.Join("; ", failedDocs));
-            }
-
-            if (usable.Count > 1)
-            {
-                textBuilder.AppendLine();
-                textBuilder.AppendLine("Напоминание: в ответе кратко пройдись по всем " + usable.Count +
-                                       " файлам по порядку, не только по первому.");
-            }
-
-            var parts = new JArray
-            {
-                new JObject
-                {
-                    ["type"] = "text",
-                    ["text"] = textBuilder.ToString().Trim()
-                }
-            };
-
-            foreach (var img in imageParts)
-                parts.Add(img);
-            foreach (var pdf in pdfFileParts)
-                parts.Add(pdf);
-
-            if (parts.Count == 1)
-                return parts[0]["text"]?.ToString() ?? text ?? "";
-
-            return parts;
-        }
-
         /// <summary>
         /// Drop base64 payloads from user turns so history stays within token/char budgets.
         /// When <paramref name="keepLastUserIntact"/> is true, the latest user message is kept
@@ -543,7 +414,7 @@ namespace revit_mcp_plugin.Core.Assistant
                 _history.Add(new JObject
                 {
                     ["role"] = "user",
-                    ["content"] = BuildUserContent(text, attachments)
+                    ["content"] = ChatContentBuilder.BuildUserContent(text, attachments)
                 });
 
                 if (TrimHistoryUnlocked())
@@ -669,13 +540,13 @@ namespace revit_mcp_plugin.Core.Assistant
 
                         RaiseStatus("Выполняет…");
                         string rawResult;
-                        var toolName = ResolveToolAlias(name);
+                        var toolName = AssistantToolExecution.ResolveToolAlias(name);
                         var enrichedArgs = NormCheckDefaults.EnrichArgs(toolName, argsJson);
                         enrichedArgs = CreateElementArgsNormalizer.Normalize(toolName, enrichedArgs);
-                        enrichedArgs = InjectMissingTypeIds(toolResultCache, toolName, enrichedArgs);
+                        enrichedArgs = AssistantToolExecution.InjectMissingTypeIds(toolResultCache, toolName, enrichedArgs);
                         try
                         {
-                            if (HasNormalizeError(enrichedArgs, out var normalizeMsg))
+                            if (AssistantToolExecution.HasNormalizeError(enrichedArgs, out var normalizeMsg))
                             {
                                 rawResult = new JObject
                                 {
@@ -683,16 +554,16 @@ namespace revit_mcp_plugin.Core.Assistant
                                     ["error"] = new JObject { ["message"] = normalizeMsg }
                                 }.ToString();
                             }
-                            else if (TryGetCachedToolResult(toolResultCache, toolName, enrichedArgs, out var cached))
+                            else if (AssistantToolExecution.TryGetCachedToolResult(toolResultCache, toolName, enrichedArgs, out var cached))
                             {
                                 rawResult = cached;
                             }
                             else
                             {
                                 rawResult = await Task.Run(
-                                    () => ExecuteAssistantTool(toolName, enrichedArgs),
+                                    () => AssistantToolExecution.ExecuteAssistantTool(toolName, enrichedArgs),
                                     cancellationToken).ConfigureAwait(false);
-                                RememberCachedToolResult(toolResultCache, toolName, enrichedArgs, rawResult);
+                                AssistantToolExecution.RememberCachedToolResult(toolResultCache, toolName, enrichedArgs, rawResult);
                             }
                             if (toolName.Equals("check_fire_doors", StringComparison.OrdinalIgnoreCase))
                                 rawResult = FireDoorRulesApplier.EnrichRawResult(rawResult);
@@ -728,7 +599,7 @@ namespace revit_mcp_plugin.Core.Assistant
                         rawResult = bridged.RawResult;
                         var highlightExtra = bridged.DoneExtra;
 
-                        var (ok, summary, forModel) = ParseToolResponse(name, rawResult);
+                        var (ok, summary, forModel) = AssistantToolExecution.ParseToolResponse(name, rawResult);
                         AppendToolResult(callId, forModel);
                         if (ok)
                         {
@@ -835,7 +706,7 @@ namespace revit_mcp_plugin.Core.Assistant
                 {
                     ["role"] = "tool",
                     ["tool_call_id"] = callId,
-                    ["content"] = TruncateForHistory(content ?? "")
+                    ["content"] = AssistantToolExecution.TruncateForHistory(content ?? "")
                 });
             }
         }
@@ -858,21 +729,20 @@ namespace revit_mcp_plugin.Core.Assistant
                     return $"Удалить элементы ({n} шт.)?";
                 }
                 if (toolName.StartsWith("create_", StringComparison.OrdinalIgnoreCase))
-                    return $"Выполнить создание: {FriendlyToolName(toolName)}?";
+                    return $"Выполнить создание: {ToolCatalog.FriendlyName(toolName)}?";
                 if (toolName.Equals("operate_element", StringComparison.OrdinalIgnoreCase))
                 {
                     var action = args["data"]?["action"]?.ToString() ?? args["action"]?.ToString() ?? "изменить";
                     return $"Выполнить действие «{action}» над элементами?";
                 }
-                return $"Разрешить действие «{FriendlyToolName(toolName)}»?";
+                return $"Разрешить действие «{ToolCatalog.FriendlyName(toolName)}»?";
             }
             catch
             {
-                return $"Разрешить действие «{FriendlyToolName(toolName)}»?";
+                return $"Разрешить действие «{ToolCatalog.FriendlyName(toolName)}»?";
             }
         }
 
-        private static string FriendlyToolName(string name) => ToolCatalog.FriendlyName(name);
 
         /// <summary>
         /// Collapse consecutive identical done lines: «размеры помещений» ×5 → «размеры помещений ×5».
@@ -904,371 +774,6 @@ namespace revit_mcp_plugin.Core.Assistant
                 result.Add(count > 1 ? $"{current} ×{count}" : current);
 
             return result;
-        }
-
-        private static (bool ok, string summary, string forModel) ParseToolResponse(string toolName, string raw)
-        {
-            try
-            {
-                var jo = JObject.Parse(raw);
-                if (jo["error"] != null)
-                {
-                    var msg = jo["error"]?["message"]?.ToString() ?? "ошибка";
-                    var human = ToolCatalog.HumanizeFailure(toolName, msg);
-                    return (false, human, new JObject { ["ok"] = false, ["error"] = human }.ToString());
-                }
-
-                var result = ExtractResultPayload(jo);
-                if (result is JObject resultObj)
-                {
-                    var successToken = resultObj["Success"] ?? resultObj["success"] ?? resultObj["ok"];
-                    if (successToken != null && successToken.Type == JTokenType.Boolean && !successToken.Value<bool>())
-                    {
-                        var msg = resultObj["Message"]?.ToString()
-                            ?? resultObj["message"]?.ToString()
-                            ?? "неуспех";
-                        var human = ToolCatalog.HumanizeFailure(toolName, msg);
-                        var failPayload = new JObject
-                        {
-                            ["ok"] = false,
-                            ["error"] = human,
-                            ["result"] = resultObj
-                        };
-                        return (false, human, failPayload.ToString(Newtonsoft.Json.Formatting.None));
-                    }
-                }
-
-                if (result == null)
-                {
-                    var human = ToolCatalog.HumanizeFailure(toolName, "пустой ответ");
-                    return (false, human, new JObject { ["ok"] = false, ["error"] = human }.ToString());
-                }
-
-                var compact = CompactResult(toolName, result);
-                var forModel = result.ToString(Newtonsoft.Json.Formatting.None);
-                forModel = SlimFamilyTypesForModel(toolName, forModel);
-                forModel = TruncateForHistory(forModel);
-                return (true, compact, forModel);
-            }
-            catch
-            {
-                var human = ToolCatalog.HumanizeFailure(toolName, raw);
-                return (false, human, new JObject { ["ok"] = false, ["error"] = human }.ToString());
-            }
-        }
-
-        /// <summary>
-        /// In-Revit tools (run_norm_audit, annotate_*) return bare JSON without jsonrpc result wrapper.
-        /// </summary>
-        private static JToken ExtractResultPayload(JObject jo)
-        {
-            if (jo == null)
-                return null;
-            if (jo["result"] != null)
-                return jo["result"];
-            if (jo["Success"] != null || jo["success"] != null || jo["findings"] != null || jo["summary"] != null)
-                return jo;
-            return null;
-        }
-
-        private static string CompactResult(string toolName, JToken result)
-        {
-            if (result is JArray arr)
-                return $"{FriendlyToolName(toolName)}: {arr.Count}";
-            if (result is JObject obj)
-            {
-                if (toolName.Equals("run_norm_audit", StringComparison.OrdinalIgnoreCase))
-                {
-                    var s = obj["summary"]?.ToString();
-                    if (!string.IsNullOrWhiteSpace(s))
-                        return "проверка норм: " + s;
-                }
-                if (obj["count"] != null) return $"{FriendlyToolName(toolName)}: {obj["count"]}";
-                if (obj["createdCount"] != null) return $"{FriendlyToolName(toolName)}: {obj["createdCount"]}";
-                if (obj["nonCompliantCount"] != null)
-                    return $"{FriendlyToolName(toolName)}: нарушений {obj["nonCompliantCount"]}";
-                if (obj["rules"] is JArray rulesArr) return $"{FriendlyToolName(toolName)}: {rulesArr.Count}";
-                if (obj["created"] is JArray created) return $"{FriendlyToolName(toolName)}: {created.Count}";
-                if (obj["Success"] != null || obj["success"] != null)
-                {
-                    var ok = obj["Success"]?.Value<bool>() ?? obj["success"]?.Value<bool>() ?? true;
-                    return ok ? FriendlyToolName(toolName) : FriendlyToolName(toolName) + " (неуспех)";
-                }
-            }
-            return FriendlyToolName(toolName);
-        }
-
-        private static string InjectMissingTypeIds(
-            Dictionary<string, string> cache,
-            string toolName,
-            string argsJson)
-        {
-            if (cache == null || cache.Count == 0)
-                return argsJson;
-            if (!toolName.Equals("create_line_based_element", StringComparison.OrdinalIgnoreCase)
-                && !toolName.Equals("create_point_based_element", StringComparison.OrdinalIgnoreCase)
-                && !toolName.Equals("create_surface_based_element", StringComparison.OrdinalIgnoreCase))
-                return argsJson;
-
-            JObject args;
-            try { args = JObject.Parse(argsJson ?? "{}"); }
-            catch { return argsJson; }
-
-            var data = args["data"] as JArray;
-            if (data == null || data.Count == 0)
-                return argsJson;
-
-            var wallTypeId = FindCachedTypeId(cache, preferWall: true);
-            var anyTypeId = FindCachedTypeId(cache, preferWall: false);
-            var changed = false;
-
-            foreach (var itemTok in data)
-            {
-                var item = itemTok as JObject;
-                if (item == null) continue;
-                var tid = item["typeId"]?.Value<long?>() ?? item["TypeId"]?.Value<long?>();
-                if (tid.HasValue && tid.Value > 0)
-                    continue;
-
-                long? pick = null;
-                if (toolName.Equals("create_line_based_element", StringComparison.OrdinalIgnoreCase))
-                    pick = wallTypeId ?? anyTypeId;
-                else
-                    pick = anyTypeId ?? wallTypeId;
-
-                if (pick.HasValue && pick.Value > 0)
-                {
-                    item["typeId"] = pick.Value;
-                    changed = true;
-                }
-            }
-
-            return changed ? args.ToString(Newtonsoft.Json.Formatting.None) : argsJson;
-        }
-
-        private static long? FindCachedTypeId(Dictionary<string, string> cache, bool preferWall)
-        {
-            foreach (var kv in cache)
-            {
-                if (kv.Key.IndexOf("get_available_family_types", StringComparison.OrdinalIgnoreCase) < 0)
-                    continue;
-                try
-                {
-                    var token = JToken.Parse(kv.Value);
-                    // Unwrap JSON-RPC result if present
-                    if (token is JObject root && root["result"] != null)
-                        token = root["result"];
-
-                    JArray types = token as JArray;
-                    if (types == null && token is JObject obj)
-                        types = (obj["types"] ?? obj["Types"] ?? obj["familyTypes"] ?? obj["Response"]) as JArray;
-
-                    if (types == null)
-                        continue;
-
-                    foreach (var t in types.OfType<JObject>().OrderByDescending(o => preferWall && IsLikelyWallType(o)))
-                    {
-                        if (preferWall && !IsLikelyWallType(t))
-                            continue;
-                        var id = t["typeId"] ?? t["TypeId"] ?? t["FamilyTypeId"] ?? t["familyTypeId"] ?? t["id"] ?? t["Id"];
-                        if (id != null && long.TryParse(id.ToString(), out var n) && n > 0)
-                            return n;
-                    }
-                }
-                catch
-                {
-                    // ignore bad cache entry
-                }
-            }
-
-            return null;
-        }
-
-        private static bool TryGetCachedToolResult(
-            Dictionary<string, string> cache,
-            string toolName,
-            string argsJson,
-            out string rawResult)
-        {
-            rawResult = null;
-            if (!IsCacheableReadTool(toolName))
-                return false;
-            var key = CacheKey(toolName, argsJson);
-            return cache.TryGetValue(key, out rawResult);
-        }
-
-        private static void RememberCachedToolResult(
-            Dictionary<string, string> cache,
-            string toolName,
-            string argsJson,
-            string rawResult)
-        {
-            if (!IsCacheableReadTool(toolName) || string.IsNullOrEmpty(rawResult))
-                return;
-            cache[CacheKey(toolName, argsJson)] = rawResult;
-        }
-
-        private static bool IsCacheableReadTool(string toolName)
-        {
-            if (string.IsNullOrWhiteSpace(toolName))
-                return false;
-            switch (toolName.Trim().ToLowerInvariant())
-            {
-                case "get_current_view_info":
-                case "get_available_family_types":
-                case "get_document_styles":
-                case "query_norm_rules":
-                    return true;
-                default:
-                    return false;
-            }
-        }
-
-        private static string CacheKey(string toolName, string argsJson)
-        {
-            return toolName.Trim().ToLowerInvariant() + "|" + (argsJson ?? "{}").Trim();
-        }
-
-        private static bool HasNormalizeError(string argsJson, out string message)
-        {
-            message = null;
-            try
-            {
-                var jo = JObject.Parse(argsJson ?? "{}");
-                message = jo["_normalizeError"]?.ToString();
-                return !string.IsNullOrWhiteSpace(message);
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// Keep wall/door typeIds visible — prefer Wall types when present.
-        /// </summary>
-        private static string SlimFamilyTypesForModel(string toolName, string forModel)
-        {
-            if (!toolName.Equals("get_available_family_types", StringComparison.OrdinalIgnoreCase))
-                return forModel;
-
-            try
-            {
-                var token = JToken.Parse(forModel);
-                JArray types = null;
-                if (token is JArray arr)
-                    types = arr;
-                else if (token is JObject obj)
-                    types = (obj["types"] ?? obj["Types"] ?? obj["familyTypes"] ?? obj["items"] ?? obj["Response"]) as JArray;
-
-                if (types == null || types.Count == 0)
-                    return forModel;
-
-                // Prefer walls first so model doesn't pick a door typeId for Wall.Create
-                var ordered = types
-                    .OfType<JObject>()
-                    .OrderByDescending(IsLikelyWallType)
-                    .ThenBy(o => o["name"]?.ToString() ?? o["Name"]?.ToString() ?? "")
-                    .Take(30)
-                    .ToList();
-
-                var slim = new JArray();
-                foreach (var o in ordered)
-                {
-                    slim.Add(new JObject
-                    {
-                        ["typeId"] = o["typeId"] ?? o["TypeId"] ?? o["FamilyTypeId"] ?? o["familyTypeId"] ?? o["id"] ?? o["Id"],
-                        ["name"] = o["name"] ?? o["Name"] ?? o["typeName"] ?? o["TypeName"],
-                        ["familyName"] = o["familyName"] ?? o["FamilyName"],
-                        ["category"] = o["category"] ?? o["Category"]
-                    });
-                }
-
-                var firstWall = ordered.FirstOrDefault(IsLikelyWallType);
-                var suggested = firstWall?["typeId"] ?? firstWall?["TypeId"] ?? firstWall?["FamilyTypeId"]
-                    ?? firstWall?["id"]
-                    ?? slim.FirstOrDefault()?["typeId"];
-
-                return new JObject
-                {
-                    ["ok"] = true,
-                    ["count"] = types.Count,
-                    ["shown"] = slim.Count,
-                    ["suggestedWallTypeId"] = suggested,
-                    ["types"] = slim,
-                    ["hint"] = "Для стен используй suggestedWallTypeId или typeId из types[] где category/family содержит Wall. " +
-                               "Передай typeId числом в create_line_based_element."
-                }.ToString(Newtonsoft.Json.Formatting.None);
-            }
-            catch
-            {
-                return forModel;
-            }
-        }
-
-        private static bool IsLikelyWallType(JObject o)
-        {
-            if (o == null) return false;
-            var blob = string.Join(" ",
-                o["category"]?.ToString() ?? "",
-                o["Category"]?.ToString() ?? "",
-                o["familyName"]?.ToString() ?? "",
-                o["FamilyName"]?.ToString() ?? "",
-                o["name"]?.ToString() ?? "",
-                o["Name"]?.ToString() ?? "");
-            return blob.IndexOf("Wall", StringComparison.OrdinalIgnoreCase) >= 0
-                || blob.IndexOf("OST_Walls", StringComparison.OrdinalIgnoreCase) >= 0
-                || blob.IndexOf("Стен", StringComparison.OrdinalIgnoreCase) >= 0;
-        }
-
-        private static string ResolveToolAlias(string toolName)
-        {
-            if (string.IsNullOrWhiteSpace(toolName))
-                return toolName;
-
-            switch (toolName.Trim().ToLowerInvariant())
-            {
-                case "tag_all_rooms": return "tag_rooms";
-                case "tag_all_walls": return "tag_walls";
-                case "color_elements": return "color_splash";
-                default: return toolName.Trim();
-            }
-        }
-
-        private static string ExecuteAssistantTool(string toolName, string argsJson)
-        {
-            if (toolName.Equals("query_norm_rules", StringComparison.OrdinalIgnoreCase))
-                return NormCatalogStore.ExecuteQueryTool(argsJson);
-
-            if (toolName.Equals("run_norm_audit", StringComparison.OrdinalIgnoreCase))
-                return WrapLocalToolResult(NormAuditOrchestrator.Run(argsJson));
-
-            if (toolName.Equals("annotate_norm_findings", StringComparison.OrdinalIgnoreCase))
-                return WrapLocalToolResult(AnnotateNormFindingsHelper.Run(argsJson));
-
-            return SocketService.Instance.ExecuteJsonRpcLocal(toolName, argsJson);
-        }
-
-        private static string WrapLocalToolResult(string body)
-        {
-            if (string.IsNullOrWhiteSpace(body))
-                return body;
-            try
-            {
-                var jo = JObject.Parse(body);
-                if (jo["result"] != null || jo["error"] != null)
-                    return body;
-                return new JObject
-                {
-                    ["jsonrpc"] = "2.0",
-                    ["id"] = "local",
-                    ["result"] = jo
-                }.ToString(Newtonsoft.Json.Formatting.None);
-            }
-            catch
-            {
-                return body;
-            }
         }
     }
 }
