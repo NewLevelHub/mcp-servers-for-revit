@@ -102,6 +102,7 @@ namespace revit_mcp_plugin.UI.Assistant
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
             RefreshContextAndBanner();
+            RefreshFeedbackBadge();
         }
 
         private void NewChatButton_Click(object sender, RoutedEventArgs e)
@@ -113,6 +114,45 @@ namespace revit_mcp_plugin.UI.Assistant
             }
 
             StartNewChat(showNotice: true);
+        }
+
+        private void ExportFeedbackButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var path = Core.Assistant.FeedbackExporter.Export();
+                if (path != null)
+                {
+                    AddBotMessage($"Отчёт сохранён:\n{path}\n\nПуть скопирован в буфер обмена.");
+                }
+                else
+                {
+                    AddBotMessage("Нет невыгруженных дизлайков.");
+                }
+                RefreshFeedbackBadge();
+            }
+            catch (Exception ex)
+            {
+                AddBotMessage("Ошибка выгрузки: " + ex.Message);
+            }
+        }
+
+        private void RefreshFeedbackBadge()
+        {
+            try
+            {
+                var n = Core.Assistant.FeedbackExporter.CountPendingDislikes();
+                if (n > 0)
+                {
+                    ExportFeedbackButton.Content = $"📊 {n}";
+                    ExportFeedbackButton.Visibility = System.Windows.Visibility.Visible;
+                }
+                else
+                {
+                    ExportFeedbackButton.Visibility = System.Windows.Visibility.Collapsed;
+                }
+            }
+            catch { ExportFeedbackButton.Visibility = System.Windows.Visibility.Collapsed; }
         }
 
         private void StartNewChat(bool showNotice)
@@ -596,9 +636,10 @@ namespace revit_mcp_plugin.UI.Assistant
 
             var toAgent = string.IsNullOrWhiteSpace(agentText) ? displayText : agentText;
             _runCts = new CancellationTokenSource();
+            var turnId = Guid.NewGuid().ToString("N").Substring(0, 12);
             try
             {
-                var result = await _agent.RunAsync(toAgent, BuildViewContextLine(), attachments, _runCts.Token)
+                var result = await _agent.RunAsync(toAgent, BuildViewContextLine(), attachments, _runCts.Token, turnId)
                     .ConfigureAwait(true);
 
                 if (result.Cancelled)
@@ -618,7 +659,7 @@ namespace revit_mcp_plugin.UI.Assistant
                     reply = sb.ToString();
                 }
 
-                AddBotMessage(reply);
+                AddBotMessage(reply, turnId);
             }
             catch (OperationCanceledException)
             {
@@ -688,10 +729,18 @@ namespace revit_mcp_plugin.UI.Assistant
             ScrollToEnd();
         }
 
-        private void AddBotMessage(string text)
+        private void AddBotMessage(string text, string turnId = null)
         {
-            MessagesPanel.Children.Add(new ChatBubble(text, fromUser: false));
+            var bubble = new ChatBubble(text, fromUser: false, turnId: turnId);
+            bubble.FeedbackSubmitted += OnBubbleFeedback;
+            MessagesPanel.Children.Add(bubble);
             ScrollToEnd();
+        }
+
+        private void OnBubbleFeedback(object sender, FeedbackEventArgs e)
+        {
+            Core.Assistant.AssistantTurnLogger.WriteRatingPatch(e.TurnId, e.Rating, e.Reason, e.Comment);
+            RefreshFeedbackBadge();
         }
 
         private void ScrollToEnd()
