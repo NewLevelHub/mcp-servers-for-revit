@@ -102,6 +102,7 @@ namespace revit_mcp_plugin.UI.Assistant
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
             RefreshContextAndBanner();
+            RefreshFeedbackBadge();
         }
 
         private void NewChatButton_Click(object sender, RoutedEventArgs e)
@@ -113,6 +114,45 @@ namespace revit_mcp_plugin.UI.Assistant
             }
 
             StartNewChat(showNotice: true);
+        }
+
+        private void ExportFeedbackButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var path = Core.Assistant.FeedbackExporter.Export();
+                if (path != null)
+                {
+                    AddBotMessage($"Отчёт сохранён:\n{path}\n\nПуть скопирован в буфер обмена.");
+                }
+                else
+                {
+                    AddBotMessage("Нет невыгруженных дизлайков.");
+                }
+                RefreshFeedbackBadge();
+            }
+            catch (Exception ex)
+            {
+                AddBotMessage("Ошибка выгрузки: " + ex.Message);
+            }
+        }
+
+        private void RefreshFeedbackBadge()
+        {
+            try
+            {
+                var n = Core.Assistant.FeedbackExporter.CountPendingDislikes();
+                if (n > 0)
+                {
+                    ExportFeedbackButton.Content = $"📊 {n}";
+                    ExportFeedbackButton.Visibility = Visibility.Visible;
+                }
+                else
+                {
+                    ExportFeedbackButton.Visibility = Visibility.Collapsed;
+                }
+            }
+            catch { ExportFeedbackButton.Visibility = Visibility.Collapsed; }
         }
 
         private void StartNewChat(bool showNotice)
@@ -700,6 +740,7 @@ namespace revit_mcp_plugin.UI.Assistant
         private void OnBubbleFeedback(object sender, FeedbackEventArgs e)
         {
             Core.Assistant.AssistantTurnLogger.WriteRatingPatch(e.TurnId, e.Rating, e.Reason, e.Comment);
+            RefreshFeedbackBadge();
         }
 
         private void ScrollToEnd()
