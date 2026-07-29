@@ -36,8 +36,9 @@ const NORMS_ALLOWLIST = new Set([
 ]);
 
 /**
- * Skipped in the default profile — legacy DB helpers and stubs.
- * Set MCP_TOOL_PROFILE=full to register everything with a register* fn.
+ * Skipped in the default profile — legacy local SQLite helpers.
+ * Available only with MCP_TOOL_PROFILE=full. See docs/tool-registry.md.
+ * Empty stubs (modify_element / search_modules / use_module) were removed.
  */
 const DEFAULT_DENYLIST = new Set([
   "store_room_data",
