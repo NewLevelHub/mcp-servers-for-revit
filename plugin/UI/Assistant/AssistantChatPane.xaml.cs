@@ -145,14 +145,14 @@ namespace revit_mcp_plugin.UI.Assistant
                 if (n > 0)
                 {
                     ExportFeedbackButton.Content = $"📊 {n}";
-                    ExportFeedbackButton.Visibility = Visibility.Visible;
+                    ExportFeedbackButton.Visibility = System.Windows.Visibility.Visible;
                 }
                 else
                 {
-                    ExportFeedbackButton.Visibility = Visibility.Collapsed;
+                    ExportFeedbackButton.Visibility = System.Windows.Visibility.Collapsed;
                 }
             }
-            catch { ExportFeedbackButton.Visibility = Visibility.Collapsed; }
+            catch { ExportFeedbackButton.Visibility = System.Windows.Visibility.Collapsed; }
         }
 
         private void StartNewChat(bool showNotice)
