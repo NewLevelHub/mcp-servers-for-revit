@@ -220,7 +220,7 @@ namespace revit_mcp_plugin.UI.Assistant
             {
                 Content = "Отправить",
                 Margin = new Thickness(0, 6, 0, 0),
-                Padding = new Thickness(12, 5),
+                Padding = new Thickness(12, 5, 12, 5),
                 FontSize = 11.5,
                 FontWeight = FontWeights.SemiBold,
                 Background = new SolidColorBrush(Color.FromRgb(0x1A, 0x27, 0x44)),
@@ -253,7 +253,7 @@ namespace revit_mcp_plugin.UI.Assistant
             {
                 Content = reason,
                 Margin = new Thickness(0, 0, 4, 4),
-                Padding = new Thickness(8, 4),
+                Padding = new Thickness(8, 4, 8, 4),
                 FontSize = 11,
                 Background = Brushes.White,
                 Foreground = new SolidColorBrush(Color.FromRgb(0x1A, 0x27, 0x44)),
