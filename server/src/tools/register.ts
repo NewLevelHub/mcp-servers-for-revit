@@ -26,7 +26,6 @@ const PRIORITY_TOOL_FILES = [
   "check_vertical_circulation",
   "run_norm_audit",
   "apply_norm_result",
-  "highlight_room_tags",
 ] as const;
 
 /** Only these tools when MCP_TOOL_PROFILE=norms. */
@@ -44,9 +43,6 @@ const DEFAULT_DENYLIST = new Set([
   "store_room_data",
   "store_project_data",
   "query_stored_data",
-  "modify_element",
-  "search_modules",
-  "use_module",
 ]);
 
 function toolBaseName(file: string): string {
