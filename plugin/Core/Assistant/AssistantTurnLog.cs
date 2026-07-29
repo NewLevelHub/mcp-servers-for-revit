@@ -1,0 +1,186 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using revit_mcp_plugin.Utils;
+
+namespace revit_mcp_plugin.Core.Assistant
+{
+    /// <summary>
+    /// Structured log entry for a single assistant turn (user request → agent response).
+    /// Written as one-line JSON to <c>Logs/assistant-sessions_{yyyyMMdd}.jsonl</c>.
+    /// </summary>
+    public sealed class TurnLogEntry
+    {
+        public string TurnId;
+        public string SessionId;
+        public DateTime Ts;
+        public string Model;
+        public string DocTitle;
+        public string ViewName;
+        public string LevelName;
+        public string UserText;
+        public string PresetId;
+        public List<AttachmentMeta> Attachments = new List<AttachmentMeta>();
+        public int Rounds;
+        public List<ToolCallLog> ToolCalls = new List<ToolCallLog>();
+        public string Reply;
+        public List<string> DoneSummary = new List<string>();
+        public string Outcome; // ok | failed | cancelled | maxRounds
+        public long TotalMs;
+        public int PromptTokens;
+        public int CompletionTokens;
+    }
+
+    public sealed class AttachmentMeta
+    {
+        public string Kind;
+        public string Name;
+        public long Bytes;
+    }
+
+    public sealed class ToolCallLog
+    {
+        public int Round;
+        public string Name;
+        public string Args;
+        public string NormalizedArgs;
+        public bool Ok;
+        public long DurationMs;
+        public string Error;
+        public int ResultBytes;
+        public bool InjectedTypeId;
+    }
+
+    /// <summary>
+    /// Writes turn log entries and rating patches to a daily JSONL file.
+    /// All methods are safe to call from any thread — errors are swallowed.
+    /// </summary>
+    public static class AssistantTurnLogger
+    {
+        private static readonly object _lock = new object();
+        private const int RetentionDays = 30;
+
+        public static void Write(TurnLogEntry entry)
+        {
+            try
+            {
+                var jo = new JObject
+                {
+                    ["turnId"] = entry.TurnId,
+                    ["sessionId"] = entry.SessionId,
+                    ["ts"] = entry.Ts.ToString("O"),
+                    ["model"] = entry.Model,
+                    ["docTitle"] = entry.DocTitle,
+                    ["viewName"] = entry.ViewName,
+                    ["levelName"] = entry.LevelName,
+                    ["userText"] = entry.UserText,
+                    ["presetId"] = entry.PresetId,
+                    ["rounds"] = entry.Rounds,
+                    ["reply"] = Truncate(entry.Reply, 2000),
+                    ["outcome"] = entry.Outcome,
+                    ["totalMs"] = entry.TotalMs,
+                    ["promptTokens"] = entry.PromptTokens,
+                    ["completionTokens"] = entry.CompletionTokens,
+                };
+
+                if (entry.Attachments != null && entry.Attachments.Count > 0)
+                {
+                    var arr = new JArray();
+                    foreach (var a in entry.Attachments)
+                        arr.Add(new JObject { ["kind"] = a.Kind, ["name"] = a.Name, ["bytes"] = a.Bytes });
+                    jo["attachments"] = arr;
+                }
+
+                if (entry.ToolCalls != null && entry.ToolCalls.Count > 0)
+                {
+                    var arr = new JArray();
+                    foreach (var tc in entry.ToolCalls)
+                    {
+                        arr.Add(new JObject
+                        {
+                            ["round"] = tc.Round,
+                            ["name"] = tc.Name,
+                            ["args"] = Truncate(tc.Args, 1000),
+                            ["normalizedArgs"] = Truncate(tc.NormalizedArgs, 1000),
+                            ["ok"] = tc.Ok,
+                            ["durationMs"] = tc.DurationMs,
+                            ["error"] = tc.Error,
+                            ["resultBytes"] = tc.ResultBytes,
+                            ["injectedTypeId"] = tc.InjectedTypeId,
+                        });
+                    }
+                    jo["toolCalls"] = arr;
+                }
+
+                if (entry.DoneSummary != null && entry.DoneSummary.Count > 0)
+                    jo["doneSummary"] = new JArray(entry.DoneSummary.ToArray());
+
+                AppendLine(jo.ToString(Formatting.None));
+                PurgeOldFiles();
+            }
+            catch { /* logging must never break the UI */ }
+        }
+
+        /// <summary>
+        /// Append a rating patch to the same JSONL file. Links to the original entry by turnId.
+        /// </summary>
+        public static void WriteRatingPatch(string turnId, int rating, string reason, string comment)
+        {
+            try
+            {
+                var jo = new JObject
+                {
+                    ["turnId"] = turnId,
+                    ["ratingPatch"] = new JObject
+                    {
+                        ["rating"] = rating,
+                        ["reason"] = reason,
+                        ["comment"] = comment,
+                        ["ts"] = DateTime.UtcNow.ToString("O"),
+                    }
+                };
+                AppendLine(jo.ToString(Formatting.None));
+            }
+            catch { /* safe */ }
+        }
+
+        private static void AppendLine(string line)
+        {
+            var path = GetLogFilePath();
+            lock (_lock)
+            {
+                File.AppendAllText(path, line + Environment.NewLine, System.Text.Encoding.UTF8);
+            }
+        }
+
+        private static string GetLogFilePath()
+        {
+            var dir = PathManager.GetLogsDirectoryPath();
+            return Path.Combine(dir, $"assistant-sessions_{DateTime.Now:yyyyMMdd}.jsonl");
+        }
+
+        private static void PurgeOldFiles()
+        {
+            try
+            {
+                var dir = PathManager.GetLogsDirectoryPath();
+                var cutoff = DateTime.Now.AddDays(-RetentionDays);
+                foreach (var f in Directory.GetFiles(dir, "assistant-sessions_*.jsonl"))
+                {
+                    if (File.GetCreationTime(f) < cutoff)
+                        File.Delete(f);
+                }
+            }
+            catch { /* best-effort */ }
+        }
+
+        private static string Truncate(string s, int max)
+        {
+            if (string.IsNullOrEmpty(s) || s.Length <= max) return s;
+            return s.Substring(0, max) + "…";
+        }
+    }
+}

@@ -34,6 +34,7 @@ namespace revit_mcp_plugin.Core.Assistant
 
         private readonly List<JObject> _history = new List<JObject>();
         private readonly object _historyLock = new object();
+        private string _sessionId = Guid.NewGuid().ToString("N").Substring(0, 12);
 
         /// <summary>
         /// Keep this many previous user turns (+ the current one is never trimmed).
@@ -72,6 +73,27 @@ namespace revit_mcp_plugin.Core.Assistant
             {
                 _history.Clear();
             }
+            _sessionId = Guid.NewGuid().ToString("N").Substring(0, 12);
+        }
+
+        private static void ParseViewContext(string ctx, TurnLogEntry log)
+        {
+            if (string.IsNullOrWhiteSpace(ctx)) return;
+            try
+            {
+                // Format: "Документ: X · Вид: Y (ViewType) · Уровень: Z"
+                foreach (var part in ctx.Split(new[] { " · " }, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var colon = part.IndexOf(':');
+                    if (colon < 0) continue;
+                    var key = part.Substring(0, colon).Trim();
+                    var val = part.Substring(colon + 1).Trim();
+                    if (key.StartsWith("Документ")) log.DocTitle = val;
+                    else if (key.StartsWith("Вид")) log.ViewName = val;
+                    else if (key.StartsWith("Уровень")) log.LevelName = val;
+                }
+            }
+            catch { /* best-effort */ }
         }
 
         /// <summary>
@@ -493,7 +515,8 @@ namespace revit_mcp_plugin.Core.Assistant
             string userMessage,
             string viewContext,
             IList<ChatAttachment> attachments,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            string turnId = null)
         {
             var settings = PluginSettingsStore.LoadSettings();
             if (string.IsNullOrWhiteSpace(settings.AssistantApiKey))
@@ -555,6 +578,29 @@ namespace revit_mcp_plugin.Core.Assistant
 
             const int maxRounds = 30;
             var toolResultCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var turnLog = new TurnLogEntry
+            {
+                TurnId = turnId ?? Guid.NewGuid().ToString("N").Substring(0, 12),
+                SessionId = _sessionId,
+                Ts = DateTime.UtcNow,
+                Model = settings.AssistantModel ?? "gpt-4o-mini",
+                UserText = userMessage,
+            };
+            ParseViewContext(viewContext, turnLog);
+            if (attachments != null)
+            {
+                foreach (var a in attachments)
+                {
+                    if (a == null) continue;
+                    turnLog.Attachments.Add(new AttachmentMeta
+                    {
+                        Kind = a.IsImage ? "image" : "file",
+                        Name = a.FileName,
+                        Bytes = a.Data?.Length ?? 0,
+                    });
+                }
+            }
+            var turnSw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 for (var round = 0; round < maxRounds; round++)
@@ -596,9 +642,22 @@ namespace revit_mcp_plugin.Core.Assistant
                         };
                     }
 
+                    // Capture token usage from API response
+                    var usage = completion["usage"];
+                    if (usage != null)
+                    {
+                        turnLog.PromptTokens += usage["prompt_tokens"]?.Value<int>() ?? 0;
+                        turnLog.CompletionTokens += usage["completion_tokens"]?.Value<int>() ?? 0;
+                    }
+
                     var choice = completion["choices"]?[0]?["message"] as JObject;
                     if (choice == null)
                     {
+                        turnLog.Rounds = round + 1;
+                        turnLog.Outcome = "failed";
+                        turnLog.TotalMs = turnSw.ElapsedMilliseconds;
+                        turnLog.Reply = "Пустой ответ от ИИ.";
+                        AssistantTurnLogger.Write(turnLog);
                         return new AgentTurnResult
                         {
                             Failed = true,
@@ -618,6 +677,13 @@ namespace revit_mcp_plugin.Core.Assistant
                         var replyText = choice["content"]?.ToString()?.Trim();
                         if (string.IsNullOrWhiteSpace(replyText))
                             replyText = done.Count > 0 ? "Готово." : "Готово. Дополнительных действий не требуется.";
+
+                        turnLog.Rounds = round + 1;
+                        turnLog.Outcome = "ok";
+                        turnLog.Reply = replyText;
+                        turnLog.DoneSummary = done;
+                        turnLog.TotalMs = turnSw.ElapsedMilliseconds;
+                        AssistantTurnLogger.Write(turnLog);
 
                         RaiseStatus("Готов");
                         return new AgentTurnResult
@@ -672,7 +738,10 @@ namespace revit_mcp_plugin.Core.Assistant
                         var toolName = ResolveToolAlias(name);
                         var enrichedArgs = NormCheckDefaults.EnrichArgs(toolName, argsJson);
                         enrichedArgs = CreateElementArgsNormalizer.Normalize(toolName, enrichedArgs);
+                        var argsBeforeInject = enrichedArgs;
                         enrichedArgs = InjectMissingTypeIds(toolResultCache, toolName, enrichedArgs);
+                        var injectedTypeId = !string.Equals(argsBeforeInject, enrichedArgs, StringComparison.Ordinal);
+                        var toolSw = System.Diagnostics.Stopwatch.StartNew();
                         try
                         {
                             if (HasNormalizeError(enrichedArgs, out var normalizeMsg))
@@ -730,6 +799,21 @@ namespace revit_mcp_plugin.Core.Assistant
 
                         var (ok, summary, forModel) = ParseToolResponse(name, rawResult);
                         AppendToolResult(callId, forModel);
+                        toolSw.Stop();
+
+                        turnLog.ToolCalls.Add(new ToolCallLog
+                        {
+                            Round = round,
+                            Name = toolName,
+                            Args = argsJson,
+                            NormalizedArgs = enrichedArgs,
+                            Ok = ok,
+                            DurationMs = toolSw.ElapsedMilliseconds,
+                            Error = ok ? null : summary,
+                            ResultBytes = rawResult?.Length ?? 0,
+                            InjectedTypeId = injectedTypeId,
+                        });
+
                         if (ok)
                         {
                             done.Add(string.IsNullOrWhiteSpace(highlightExtra)
@@ -744,6 +828,13 @@ namespace revit_mcp_plugin.Core.Assistant
                         return CancelledResult(done);
                 }
 
+                turnLog.Rounds = maxRounds;
+                turnLog.Outcome = "maxRounds";
+                turnLog.DoneSummary = done;
+                turnLog.TotalMs = turnSw.ElapsedMilliseconds;
+                turnLog.Reply = "Слишком много шагов.";
+                AssistantTurnLogger.Write(turnLog);
+
                 RaiseStatus("Готов");
                 return new AgentTurnResult
                 {
@@ -754,6 +845,10 @@ namespace revit_mcp_plugin.Core.Assistant
             }
             catch (OperationCanceledException)
             {
+                turnLog.Outcome = "cancelled";
+                turnLog.DoneSummary = done;
+                turnLog.TotalMs = turnSw.ElapsedMilliseconds;
+                AssistantTurnLogger.Write(turnLog);
                 return CancelledResult(done);
             }
             finally

@@ -599,7 +599,7 @@ namespace revit_mcp_plugin.UI.Assistant
             var turnId = Guid.NewGuid().ToString("N").Substring(0, 12);
             try
             {
-                var result = await _agent.RunAsync(toAgent, BuildViewContextLine(), attachments, _runCts.Token)
+                var result = await _agent.RunAsync(toAgent, BuildViewContextLine(), attachments, _runCts.Token, turnId)
                     .ConfigureAwait(true);
 
                 if (result.Cancelled)
@@ -699,37 +699,8 @@ namespace revit_mcp_plugin.UI.Assistant
 
         private void OnBubbleFeedback(object sender, FeedbackEventArgs e)
         {
-            // Log the rating alongside the session log (REV-109).
-            // At minimum write to a simple JSONL file next to other assistant logs.
-            try
-            {
-                var logDir = System.IO.Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "revit-mcp-plugin", "Logs");
-                System.IO.Directory.CreateDirectory(logDir);
-
-                var logFile = System.IO.Path.Combine(logDir,
-                    $"feedback_{DateTime.Now:yyyyMMdd}.jsonl");
-
-                var entry = new System.Text.StringBuilder();
-                entry.Append("{");
-                entry.Append($"\"ts\":\"{DateTime.UtcNow:O}\",");
-                entry.Append($"\"turnId\":\"{e.TurnId}\",");
-                entry.Append($"\"rating\":{e.Rating}");
-                if (e.Reason != null)
-                    entry.Append($",\"reason\":\"{EscapeJson(e.Reason)}\"");
-                if (e.Comment != null)
-                    entry.Append($",\"comment\":\"{EscapeJson(e.Comment)}\"");
-                entry.Append("}");
-
-                System.IO.File.AppendAllText(logFile, entry + Environment.NewLine,
-                    System.Text.Encoding.UTF8);
-            }
-            catch { /* logging must never break the UI */ }
+            Core.Assistant.AssistantTurnLogger.WriteRatingPatch(e.TurnId, e.Rating, e.Reason, e.Comment);
         }
-
-        private static string EscapeJson(string s)
-            => s?.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "") ?? "";
 
         private void ScrollToEnd()
         {
