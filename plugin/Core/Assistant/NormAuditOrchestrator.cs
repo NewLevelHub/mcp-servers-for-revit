@@ -237,9 +237,12 @@ namespace revit_mcp_plugin.Core.Assistant
 
             TryAppendArray(target, result["findings"], checkName);
             TryAppendArray(target, result["Findings"], checkName);
+            // commandset serializes lists as camelCase "violations" (JsonProperty);
+            // also accept PascalCase / "violators" from older/alternate payloads.
+            TryAppendViolators(target, result["violations"], checkName, "violation");
+            TryAppendViolators(target, result["Violations"], checkName, "violation");
             TryAppendViolators(target, result["violators"], checkName, "violation");
             TryAppendViolators(target, result["Violators"], checkName, "violation");
-            TryAppendViolators(target, result["Violations"], checkName, "violation");
             TryAppendViolators(target, result["nearLimit"], checkName, "nearLimit");
             TryAppendViolators(target, result["NearLimit"], checkName, "nearLimit");
 
