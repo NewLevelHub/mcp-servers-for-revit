@@ -1,0 +1,8 @@
+{
+  "id": "window-schedule",
+  "group": "tep_vs_schedules",
+  "userText": "Сделай спецификацию окон",
+  "expectTools": ["create_window_schedule"],
+  "forbidTools": ["render_tep_table", "create_door_schedule"],
+  "maxRounds": 3
+}

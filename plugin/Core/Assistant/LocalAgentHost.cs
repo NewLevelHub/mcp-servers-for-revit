@@ -34,7 +34,22 @@ namespace revit_mcp_plugin.Core.Assistant
 
         private readonly List<JObject> _history = new List<JObject>();
         private readonly object _historyLock = new object();
+        private readonly IAssistantToolExecutor _toolExecutor;
         private string _sessionId = Guid.NewGuid().ToString("N").Substring(0, 12);
+
+        public LocalAgentHost()
+            : this(null)
+        {
+        }
+
+        /// <param name="toolExecutor">
+        /// Optional. Golden dry-run / tests inject a stub; production uses
+        /// <see cref="DefaultAssistantToolExecutor"/>.
+        /// </param>
+        public LocalAgentHost(IAssistantToolExecutor toolExecutor)
+        {
+            _toolExecutor = toolExecutor ?? new DefaultAssistantToolExecutor();
+        }
 
         /// <summary>
         /// Keep this many previous user turns (+ the current one is never trimmed).
@@ -759,7 +774,7 @@ namespace revit_mcp_plugin.Core.Assistant
                             else
                             {
                                 rawResult = await Task.Run(
-                                    () => ExecuteAssistantTool(toolName, enrichedArgs),
+                                    () => _toolExecutor.Execute(toolName, enrichedArgs),
                                     cancellationToken).ConfigureAwait(false);
                                 RememberCachedToolResult(toolResultCache, toolName, enrichedArgs, rawResult);
                             }
@@ -1330,40 +1345,5 @@ namespace revit_mcp_plugin.Core.Assistant
             }
         }
 
-        private static string ExecuteAssistantTool(string toolName, string argsJson)
-        {
-            if (toolName.Equals("query_norm_rules", StringComparison.OrdinalIgnoreCase))
-                return NormCatalogStore.ExecuteQueryTool(argsJson);
-
-            if (toolName.Equals("run_norm_audit", StringComparison.OrdinalIgnoreCase))
-                return WrapLocalToolResult(NormAuditOrchestrator.Run(argsJson));
-
-            if (toolName.Equals("annotate_norm_findings", StringComparison.OrdinalIgnoreCase))
-                return WrapLocalToolResult(AnnotateNormFindingsHelper.Run(argsJson));
-
-            return SocketService.Instance.ExecuteJsonRpcLocal(toolName, argsJson);
-        }
-
-        private static string WrapLocalToolResult(string body)
-        {
-            if (string.IsNullOrWhiteSpace(body))
-                return body;
-            try
-            {
-                var jo = JObject.Parse(body);
-                if (jo["result"] != null || jo["error"] != null)
-                    return body;
-                return new JObject
-                {
-                    ["jsonrpc"] = "2.0",
-                    ["id"] = "local",
-                    ["result"] = jo
-                }.ToString(Newtonsoft.Json.Formatting.None);
-            }
-            catch
-            {
-                return body;
-            }
-        }
     }
 }

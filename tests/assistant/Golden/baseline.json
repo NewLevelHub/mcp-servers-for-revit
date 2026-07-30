@@ -1,0 +1,20 @@
+{
+  "id": "baseline-rev-111",
+  "recordedAt": "2026-07-30",
+  "note": "Scripted dry-run harness baseline (CI). Live LLM baseline: run tests/assistant/run-golden.ps1 -Live and update live section.",
+  "targets": {
+    "firstToolAccuracy": 0.9,
+    "forbidAccuracy": 1.0,
+    "requireArgsAccuracy": 0.8
+  },
+  "scripted": {
+    "total": 24,
+    "passed": 24,
+    "firstToolAccuracy": 1.0,
+    "forbidAccuracy": 1.0,
+    "requireArgsAccuracy": 1.0,
+    "avgRounds": 2.5,
+    "avgPromptTokens": 120
+  },
+  "live": null
+}

@@ -1,0 +1,8 @@
+{
+  "id": "selected-elements",
+  "group": "read",
+  "userText": "Что сейчас выделено в модели?",
+  "expectTools": ["get_selected_elements"],
+  "forbidTools": ["delete_element", "run_norm_audit"],
+  "maxRounds": 2
+}

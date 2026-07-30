@@ -1,0 +1,8 @@
+{
+  "id": "corridor-width-check",
+  "group": "norm_audit",
+  "userText": "Проверь ширину эвакуационного коридора",
+  "expectTools": ["check_evacuation_width"],
+  "forbidTools": ["create_line_based_element", "send_code_to_revit"],
+  "maxRounds": 5
+}

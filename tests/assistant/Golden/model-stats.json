@@ -1,0 +1,8 @@
+{
+  "id": "model-stats",
+  "group": "read",
+  "userText": "Дай статистику модели: сколько стен, дверей, помещений.",
+  "expectTools": ["analyze_model_statistics"],
+  "forbidTools": ["create_line_based_element", "run_norm_audit"],
+  "maxRounds": 3
+}

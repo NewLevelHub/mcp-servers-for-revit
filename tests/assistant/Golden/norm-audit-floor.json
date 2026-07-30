@@ -1,0 +1,9 @@
+{
+  "id": "norm-audit-floor",
+  "group": "norm_audit",
+  "userText": "Проверь этаж по нормам",
+  "expectTools": ["run_norm_audit"],
+  "forbidTools": ["send_code_to_revit", "color_splash"],
+  "maxRounds": 6,
+  "firstToolMustBe": "run_norm_audit"
+}

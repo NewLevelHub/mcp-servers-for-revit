@@ -1,0 +1,8 @@
+{
+  "id": "trap-norm-quote",
+  "group": "routing_traps",
+  "userText": "Какая норма на ширину коридора? Покажи пункт",
+  "expectTools": ["query_norm_rules"],
+  "forbidTools": ["run_norm_audit", "create_filled_regions", "operate_element"],
+  "maxRounds": 3
+}

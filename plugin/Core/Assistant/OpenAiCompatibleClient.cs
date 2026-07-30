@@ -9,7 +9,7 @@ using Newtonsoft.Json.Linq;
 
 namespace revit_mcp_plugin.Core.Assistant
 {
-    public sealed class OpenAiCompatibleClient
+    public sealed class OpenAiCompatibleClient : IChatCompletionsClient
     {
         private static readonly HttpClient Http = new HttpClient
         {

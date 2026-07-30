@@ -1,0 +1,9 @@
+{
+  "id": "show-violations-regions",
+  "group": "norm_audit",
+  "userText": "Покажи нарушения на этаже — покрась цветовой областью",
+  "expectTools": ["run_norm_audit", "create_filled_regions"],
+  "forbidTools": ["color_splash"],
+  "maxRounds": 8,
+  "requireArgs": { "create_filled_regions": ["roomIds"] }
+}

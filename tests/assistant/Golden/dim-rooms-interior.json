@@ -1,0 +1,8 @@
+{
+  "id": "dim-rooms-interior",
+  "group": "annotate",
+  "userText": "Проставь размеры помещений внутри комнат",
+  "expectTools": ["dimension_room_walls"],
+  "forbidTools": ["dimension_grids", "run_norm_audit"],
+  "maxRounds": 5
+}

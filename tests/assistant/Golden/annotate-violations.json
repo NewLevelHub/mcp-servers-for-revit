@@ -1,0 +1,8 @@
+{
+  "id": "annotate-violations",
+  "group": "norm_audit",
+  "userText": "Покажи нарушения и подпиши с выносками почему",
+  "expectTools": ["run_norm_audit", "annotate_norm_findings"],
+  "forbidTools": ["color_splash"],
+  "maxRounds": 10
+}

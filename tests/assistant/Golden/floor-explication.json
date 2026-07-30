@@ -1,0 +1,8 @@
+{
+  "id": "floor-explication",
+  "group": "tep_vs_schedules",
+  "userText": "Сделай экспликацию полов на лист",
+  "expectTools": ["create_floor_explication"],
+  "forbidTools": ["render_tep_table", "create_door_schedule"],
+  "maxRounds": 4
+}

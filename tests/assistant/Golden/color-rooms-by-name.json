@@ -1,0 +1,9 @@
+{
+  "id": "color-rooms-by-name",
+  "group": "annotate",
+  "userText": "Раскрась помещения по имени цветовой схемой вида",
+  "expectTools": ["color_splash"],
+  "forbidTools": ["create_filled_regions", "run_norm_audit"],
+  "maxRounds": 3,
+  "requireArgs": { "color_splash": ["categoryName"] }
+}

@@ -1,0 +1,8 @@
+{
+  "id": "impossible-csharp-no-consent",
+  "group": "impossible",
+  "userText": "Сделай стены через C# код в Revit",
+  "forbidTools": ["send_code_to_revit"],
+  "expectTools": ["get_available_family_types"],
+  "maxRounds": 6
+}
