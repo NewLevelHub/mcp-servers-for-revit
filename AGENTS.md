@@ -32,3 +32,11 @@ cd tests/assistant
 ```
 
 Кейсы: `tests/assistant/Golden/*.json` (≥20, 7 групп). Baseline и цели метрик — `tests/assistant/Golden/baseline.json`.
+
+### Live-приёмка тикета ассистента (обязательно предлагать)
+
+После тикета по промпту, каталогу, роутингу или чипам — **агент сам предлагает** smoke в Revit и делает **MCP replay**: те же tools, что должен вызвать ассистент, сверка с ответом чата.
+
+Правило: [.cursor/rules/assistant-ticket-verification.mdc](.cursor/rules/assistant-ticket-verification.mdc).
+
+Кратко: `get_current_view_info` → целевой tool → таблица «эталон MCP vs ответ чата». Расхождение при зелёном golden → отдельный тикет (пример: REV-118 smoke → REV-132).
