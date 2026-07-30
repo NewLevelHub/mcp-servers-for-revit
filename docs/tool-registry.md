@@ -44,16 +44,16 @@ Empty stub files (`modify_element`, `search_modules`, `use_module`) were removed
 
 Separate from `MCP_TOOL_PROFILE` (server env). The dockable assistant filters
 `plugin/Core/Assistant/ToolCatalog.cs` so the model sees **≤ 30** tools per
-request instead of the full ~74.
+request instead of the full ~70.
 
 | Layer | Contents |
 |-------|----------|
 | **core** (always) | `get_current_view_info`, `get_current_view_elements`, `get_selected_elements`, `get_available_family_types`, `get_element_parameters`, `set_element_parameter`, `export_room_data`, `operate_element`, `delete_element`, `query_norm_rules` |
 | **modeling** | `create_line/point/surface_based_element`, `create_room`, `create_level`, `create_stair`, `create_railing`, `create_floor_opening`, `create_structural_framing_system` |
-| **annotation** | grids, dimensions, tags, text notes, detail lines/views, `color_splash` / `color_elements` |
+| **annotation** | grids, dimensions, `tag_rooms` / `tag_walls`, text notes, detail lines/views, `color_splash` |
 | **schedules** | door/window/floor schedules, floor explication, TEP (`render_tep_table` / `export_tep_data`), schedule configure/validate |
 | **sheets** | `create_sheet`, `place_view_on_sheet`, `auto_layout_sheet`, `fit_schedule_to_sheet` |
-| **norms** | `run_norm_audit`, `check_*`, filled regions, annotate findings, geometry/egress helpers |
+| **norms** | `run_norm_audit`, `check_*`, filled regions, annotate findings, geometry helpers (no `export_egress_graph`) |
 | **data** | other `export_*`, materials, `analyze_model_statistics`, `ai_element_filter`, `batch_execute`, `send_code_to_revit` |
 
 **How profiles are chosen**
@@ -66,13 +66,15 @@ API: `ToolCatalog.GetOpenAiTools(profiles)`, `IntentRouter.ResolveHeuristic` / `
 
 ## Name aliases (MCP → Revit command)
 
-These are **intentional**. MCP keeps a stable AI-facing name; Revit keeps the historical `CommandName`.
+These are **intentional**. MCP / Cursor may send the stable AI-facing name; Revit keeps the historical `CommandName`. The **in-Revit assistant** catalog lists only the canonical name; `ToolCatalog.ResolveToolAlias` maps legacy names before execute (REV-116).
 
-| MCP tool | Revit `commandName` |
-|----------|---------------------|
+| MCP / alias | Canonical Revit `commandName` (assistant catalog) |
+|-------------|-----------------------------------------------------|
 | `color_elements` | `color_splash` |
 | `tag_all_rooms` | `tag_rooms` |
 | `tag_all_walls` | `tag_walls` |
+
+`fill_title_block` and `number_rooms` are **server-only** (Cursor MCP). They are not in the assistant catalog; calling them returns a clear Russian soft-error.
 
 ## Ownership legend
 
@@ -88,11 +90,11 @@ These are **intentional**. MCP keeps a stable AI-facing name; Revit keeps the hi
 | Name | Kind | Notes |
 |------|------|-------|
 | `batch_execute` | `plugin-builtin` | `assemblyPath: plugin:builtin` in `command.json` |
-| `export_egress_graph` | `internal` | Used by `check_evacuation_distance`, `number_rooms`; no `export_egress_graph.ts` |
+| `export_egress_graph` | `internal` | Used by `check_evacuation_distance`, `number_rooms`; **not** in in-Revit assistant catalog (REV-116) |
 | `run_norm_audit` | `server-only` (+ thin plugin orchestrator for in-Revit chat) | Full audit in `server/src/normatives/normAudit/` |
 | `annotate_norm_findings` | `server-only` (+ plugin helper for in-Revit chat) | Composes `create_text_notes` / leaders |
 | `extract_norm_rules_from_pdf` / `query_norm_rules` / `save_norm_rule` | `server-only` | SQLite / PDF; no Revit call |
-| `fill_title_block` / `number_rooms` | `server-only` | Orchestrate existing Revit commands |
+| `fill_title_block` / `number_rooms` | `server-only` | Cursor MCP only; not in assistant `Definitions` — soft-error if invented |
 | `check_door_width`, `check_tambour_size`, `check_room_norms`, `check_window_openings`, `check_vertical_circulation`, `check_accessibility`, `check_evacuation_distance` | `server-only` (or hybrid) | Often compose geometry/export commands + norm library; may not have a matching `check_*` in `command.json` |
 | `highlight_room_tags` | **removed / not implemented** | Do not advertise; do not add to `PRIORITY_TOOL_FILES` without a tool file |
 

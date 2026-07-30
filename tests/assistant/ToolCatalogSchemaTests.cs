@@ -125,7 +125,6 @@ public class ToolCatalogSchemaTests
     [InlineData("export_apartment_data")]
     [InlineData("create_curtain_wall_schedule")]
     [InlineData("tag_walls")]
-    [InlineData("tag_all_walls")]
     [InlineData("get_selected_elements")]
     [InlineData("get_document_styles")]
     [InlineData("say_hello")]
