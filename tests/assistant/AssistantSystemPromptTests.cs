@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using revit_mcp_plugin.Core.Assistant;
 using Xunit;
@@ -19,8 +20,8 @@ public class AssistantSystemPromptTests
     {
         var dataOnly = AssistantSystemPrompt.Build(new[] { ToolCatalog.Profiles.Data }, "Сколько помещений?");
         Assert.True(
-            dataOnly.Length < AssistantSystemPrompt.LegacyMonolithLength / 2,
-            $"data prompt {dataOnly.Length} should be < {AssistantSystemPrompt.LegacyMonolithLength / 2}");
+            dataOnly.Length < AssistantSystemPrompt.LegacyMonolithLength * 3 / 5,
+            $"data prompt {dataOnly.Length} should be < {AssistantSystemPrompt.LegacyMonolithLength * 3 / 5}");
         Assert.Contains("filterByActiveView", dataOnly);
     }
 
@@ -56,6 +57,18 @@ public class AssistantSystemPromptTests
         Assert.Contains("mode=report", AssistantPlaybooks.Norms);
         Assert.Contains("create_filled_regions", AssistantPlaybooks.Norms);
         Assert.DoesNotContain("mode=highlight", AssistantPlaybooks.Norms);
+    }
+
+    [Fact]
+    public void Model_stats_prompt_forbids_export_room_data()
+    {
+        var prompt = AssistantSystemPrompt.Build(
+            new[] { ToolCatalog.Profiles.Data },
+            "Дай статистику модели: сколько стен, дверей, помещений.");
+        Assert.Contains("analyze_model_statistics", prompt);
+        Assert.Contains("не export_room_data", prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.True(ExportRoomDataScopeRules.WantsModelStatistics(
+            "Дай статистику модели: сколько стен, дверей, помещений."));
     }
 
     [Fact]

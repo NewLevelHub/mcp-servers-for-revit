@@ -24,11 +24,10 @@ namespace revit_mcp_plugin.Core.Assistant
 
         public const string Data =
             "=== ЧТЕНИЕ ДАННЫХ ===\n" +
-            "«На этаже» / «какие площади на плане» → export_room_data filterByActiveView=true (или levelName из get_current_view_info). " +
-            "«По всему зданию» / «в проекте» / «всего» → export_room_data без filterByActiveView (или filterByActiveView=false).\n" +
-            "Отвечай по totalRooms/count после фильтра, не по totalInProject.\n" +
-            "Пример: «Сколько помещений на этаже?» → export_room_data filterByActiveView=true.\n" +
-            "Пример: «Статистика модели» → analyze_model_statistics.";
+            "«Статистика модели» → только analyze_model_statistics (categories[]); не export_room_data.\n" +
+            "«На этаже» / площади на плане → export_room_data filterByActiveView=true.\n" +
+            "«В проекте» / «всего» → export_room_data без filterByActiveView; count/totalRooms, не totalInProject.\n" +
+            "Пример: «Сколько помещений на этаже?» → export_room_data filterByActiveView=true.";
 
         public const string Modeling =
             "=== ПЛАНИРОВКА (только при создании геометрии) ===\n" +
@@ -115,7 +114,8 @@ namespace revit_mcp_plugin.Core.Assistant
                 return false;
 
             return ContainsAny(text,
-                "сколько помещен", "сколько комнат", "площади помещен", "на этаже", "какие площади");
+                "сколько помещен", "сколько комнат", "площади помещен", "на этаже", "какие площади",
+                "статистик модел", "статистика модел", "сколько стен", "сколько дверей");
         }
 
         public static string Build(IReadOnlyList<string> profiles, string userText = null)

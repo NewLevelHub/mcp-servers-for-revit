@@ -283,9 +283,14 @@ public sealed class StubAssistantToolExecutor : IAssistantToolExecutor
             },
             "analyze_model_statistics" => new JObject
             {
-                ["walls"] = 40,
-                ["rooms"] = 12,
-                ["doors"] = 8,
+                ["projectName"] = "Короткий блок",
+                ["totalElements"] = 12000,
+                ["categories"] = new JArray
+                {
+                    new JObject { ["categoryName"] = "Стены", ["elementCount"] = 8373 },
+                    new JObject { ["categoryName"] = "Двери", ["elementCount"] = 643 },
+                    new JObject { ["categoryName"] = "Помещения", ["elementCount"] = 592 },
+                },
             },
             "get_selected_elements" => new JObject
             {

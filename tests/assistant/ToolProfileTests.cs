@@ -88,20 +88,44 @@ public class ToolProfileTests
     }
 
     [Theory]
+    [InlineData("Дай статистику модели: сколько стен, дверей, помещений.", "data")]
+    [InlineData("Проставь размеры помещений внутри комнат", "annotation")]
+    public void Heuristic_routes_golden_phrases(string userText, string expectedProfile)
+    {
+        var profiles = IntentRouter.ResolveHeuristic(userText);
+        Assert.Contains(expectedProfile, profiles);
+        if (userText.Contains("статистику модели"))
+        {
+            Assert.DoesNotContain(ToolCatalog.Profiles.Modeling, profiles);
+            Assert.True(ExportRoomDataScopeRules.WantsModelStatistics(userText));
+        }
+        // Trap: layout-by-norms must NOT open norms audit profile.
+        if (userText.Contains("планировку по нормам"))
+            Assert.DoesNotContain(ToolCatalog.Profiles.Norms, profiles);
+    }
+
+    [Theory]
     [InlineData("Поставь марки на все комнаты с площадью", "annotation")]
     [InlineData("Сделай ТЭП проекта на лист", "schedules")]
     [InlineData("Проверь этаж по нормам", "norms")]
     [InlineData("Покажи нарушения на этаже — покрась цветовой областью", "norms")]
-    [InlineData("Дай статистику модели: сколько стен, дверей, помещений.", "data")]
-    [InlineData("Проставь размеры помещений внутри комнат", "annotation")]
     [InlineData("Спроектируй планировку по нормам на этаже", "modeling")]
-    public void Heuristic_routes_golden_phrases(string userText, string expectedProfile)
+    public void Heuristic_routes_other_golden_phrases(string userText, string expectedProfile)
     {
         var profiles = IntentRouter.ResolveHeuristic(userText);
         Assert.Contains(expectedProfile, profiles);
         // Trap: layout-by-norms must NOT open norms audit profile.
         if (userText.Contains("планировку по нормам"))
             Assert.DoesNotContain(ToolCatalog.Profiles.Norms, profiles);
+    }
+
+    [Fact]
+    public void Model_statistics_routes_data_only_not_modeling()
+    {
+        var profiles = IntentRouter.ResolveHeuristic(
+            "Дай статистику модели: сколько стен, дверей, помещений.");
+        Assert.Contains(ToolCatalog.Profiles.Data, profiles);
+        Assert.DoesNotContain(ToolCatalog.Profiles.Modeling, profiles);
     }
 
     [Fact]
