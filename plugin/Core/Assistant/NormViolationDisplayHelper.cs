@@ -157,10 +157,7 @@ namespace revit_mcp_plugin.Core.Assistant
                     continue;
                 }
 
-                var id = f["elementId"]?.Value<long?>()
-                    ?? f["ElementId"]?.Value<long?>()
-                    ?? f["id"]?.Value<long?>()
-                    ?? 0;
+                var id = JTokenParsing.FirstLong(f, "elementId", "ElementId", "id", "Id") ?? 0;
                 if (id <= 0)
                     continue;
 
@@ -201,14 +198,12 @@ namespace revit_mcp_plugin.Core.Assistant
                 }
 
                 var result = jo["result"] as JObject ?? jo;
-                var success = result["Success"]?.Value<bool?>()
-                    ?? result["success"]?.Value<bool?>()
-                    ?? true;
+                var success = JTokenParsing.GetBool(result["Success"], JTokenParsing.GetBool(result["success"], defaultValue: true));
                 message = result["Message"]?.ToString()
                     ?? result["message"]?.ToString()
                     ?? "";
-                count = result["createdCount"]?.Value<int?>()
-                    ?? result["CreatedCount"]?.Value<int?>()
+                count = JTokenParsing.GetInt(result["createdCount"])
+                    ?? JTokenParsing.GetInt(result["CreatedCount"])
                     ?? 0;
                 if (count == 0 && result["notes"] is JArray notesArr)
                     count = notesArr.Count;

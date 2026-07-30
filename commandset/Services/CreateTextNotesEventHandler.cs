@@ -1246,7 +1246,9 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
     {
         if (string.IsNullOrWhiteSpace(text))
             return false;
-        var t = text.ToLowerInvariant();
+        // Strip invisible MCP markers for matching.
+        var raw = text.Replace("\u200B", "").Trim();
+        var t = raw.ToLowerInvariant();
 
         if (t.Contains("превыш") || t.Contains("наруш"))
             return true;
@@ -1258,14 +1260,56 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
             (t.Contains("сп рк") || t.Contains("гост") || t.Contains("4.")))
             return true;
 
-        if (!t.Contains("мм"))
+        // Full callout: "Гостиная: 6500 > 6000 мм · СП РК …"
+        if (t.Contains("мм") || t.Contains("м²") || t.Contains("м2"))
+        {
+            return t.Contains("превыш")
+                   || t.Contains("наруш")
+                   || t.Contains(" · ")
+                   || t.Contains("п. ")
+                   || t.Contains("сп рк")
+                   || t.Contains("гост")
+                   || t.Contains("<")
+                   || t.Contains(">")
+                   || t.Contains("=");
+        }
+
+        // Regression leftovers (REV-131): bare room name from broken annotate — short single line.
+        return LooksLikeBareRoomNameCallout(raw);
+    }
+
+    /// <summary>
+    /// Broken annotate produced only "Гостиная" / "Кухня". Aggressive clear must still remove them
+    /// so orphan leaders are not left behind after «Удалить разметку».
+    /// </summary>
+    private static bool LooksLikeBareRoomNameCallout(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
             return false;
-        return t.Contains("превыш")
-               || t.Contains("наруш")
-               || t.Contains(" · ")
-               || t.Contains("п. ")
-               || t.Contains("сп рк")
-               || t.Contains("гост");
+        var t = text.Trim();
+        if (t.Length < 2 || t.Length > 40)
+            return false;
+        if (t.IndexOf('\n') >= 0 || t.IndexOf('\r') >= 0)
+            return false;
+        foreach (var ch in t)
+        {
+            if (char.IsDigit(ch))
+                return false;
+        }
+
+        var lower = t.ToLowerInvariant();
+        string[] roomHints =
+        {
+            "гостин", "спальн", "кухн", "коридор", "прихож", "сануз", "ванн", "туалет",
+            "лоджи", "балкон", "кладов", "кабинет", "столов", "детск", "постироч",
+            "тамбур", "холл", "лифт", "лестниц", "living", "bedroom", "kitchen", "corridor"
+        };
+        foreach (var hint in roomHints)
+        {
+            if (lower.Contains(hint))
+                return true;
+        }
+        return false;
     }
 
     private static void TagComments(Element element, string tag)
