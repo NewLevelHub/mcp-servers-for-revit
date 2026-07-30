@@ -20,7 +20,7 @@ namespace revit_mcp_plugin.Core.Assistant
                     return (rawResult, null);
 
                 var result = jo["result"] as JObject ?? jo;
-                var success = result["success"]?.Value<bool?>() ?? result["Success"]?.Value<bool?>() ?? true;
+                var success = JTokenParsing.GetBool(result["success"], JTokenParsing.GetBool(result["Success"], defaultValue: true));
                 if (!success)
                     return (rawResult, null);
 
@@ -31,8 +31,8 @@ namespace revit_mcp_plugin.Core.Assistant
                 var display = NormViolationDisplayHelper.Highlight(findings, annotate: true, clearPrevious: true);
                 result["autoHighlight"] = display;
 
-                var roomCount = display["roomCount"]?.Value<int?>() ?? 0;
-                var doorCount = display["doorCount"]?.Value<int?>() ?? 0;
+                var roomCount = JTokenParsing.GetInt(display["roomCount"]) ?? 0;
+                var doorCount = JTokenParsing.GetInt(display["doorCount"]) ?? 0;
                 string extra = null;
                 if (roomCount > 0 || doorCount > 0)
                     extra = $"заливка: {roomCount}, двери: {doorCount}";
@@ -93,19 +93,7 @@ namespace revit_mcp_plugin.Core.Assistant
 
         private static JObject ToFinding(string checkName, JToken item, JObject result)
         {
-            var id = item["id"] ?? item["Id"] ?? item["elementId"] ?? item["ElementId"];
-            var source = result["source"] as JObject;
-            return new JObject
-            {
-                ["checkType"] = checkName,
-                ["status"] = "violation",
-                ["elementId"] = id,
-                ["name"] = item["name"] ?? item["Name"] ?? "",
-                ["actualMm"] = item["depthMm"] ?? item["DepthMm"] ?? item["actualWidthMm"] ?? item["ActualWidthMm"],
-                ["requiredMm"] = result["maxDepthMm"] ?? result["MaxDepthMm"] ?? result["minWidthMm"] ?? result["MinWidthMm"],
-                ["note"] = item["reason"] ?? item["Reason"] ?? "",
-                ["source"] = source ?? new JObject()
-            };
+            return NormFindingMapper.Normalize(item, checkName, "violation", result);
         }
     }
 }

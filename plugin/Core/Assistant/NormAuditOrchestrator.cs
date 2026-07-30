@@ -44,9 +44,9 @@ namespace revit_mcp_plugin.Core.Assistant
             }
 
             var levelName = args["levelName"]?.ToString() ?? "";
-            long? levelId = args["levelId"]?.Value<long?>();
-            long? viewId = args["viewId"]?.Value<long?>();
-            var filterByActiveView = args["filterByActiveView"]?.Value<bool>() ?? true;
+            long? levelId = JTokenParsing.GetLong(args["levelId"]);
+            long? viewId = JTokenParsing.GetLong(args["viewId"]);
+            var filterByActiveView = JTokenParsing.GetBool(args["filterByActiveView"], defaultValue: true);
 
             if (string.IsNullOrWhiteSpace(levelName) && !levelId.HasValue)
             {
@@ -59,9 +59,9 @@ namespace revit_mcp_plugin.Core.Assistant
                     viewId = ctx.ViewId;
             }
 
-            var includeCompliant = args["includeCompliant"]?.Value<bool>() ?? false;
+            var includeCompliant = JTokenParsing.GetBool(args["includeCompliant"]);
             var mode = args["mode"]?.ToString() ?? "report";
-            var annotate = args["annotate"]?.Value<bool>() ?? true;
+            var annotate = JTokenParsing.GetBool(args["annotate"], defaultValue: true);
 
             var baseCheckArgs = new JObject
             {
@@ -83,6 +83,12 @@ namespace revit_mcp_plugin.Core.Assistant
                 {
                     var enriched = NormCheckDefaults.EnrichArgs(check, baseCheckArgs.ToString(Formatting.None));
                     var raw = SocketService.Instance.ExecuteJsonRpcLocal(check, enriched);
+                    // Same as LocalAgentHost: citation lives on request args, must merge onto result
+                    // or NormalizeFinding leaves empty source → callouts show only room name (REV-130).
+                    raw = NormCheckDefaults.AttachSourceToResult(check, enriched, raw);
+                    if (check.Equals("check_fire_doors", StringComparison.OrdinalIgnoreCase))
+                        raw = FireDoorRulesApplier.EnrichRawResult(raw);
+
                     var parsed = ParseRpcResult(raw);
                     if (parsed == null)
                     {
@@ -181,8 +187,8 @@ namespace revit_mcp_plugin.Core.Assistant
                         ?? result["levelName"]?.ToString()
                         ?? result["Name"]?.ToString()
                         ?? "",
-                    LevelId = result["LevelId"]?.Value<long?>() ?? result["levelId"]?.Value<long?>(),
-                    ViewId = result["Id"]?.Value<long?>() ?? result["id"]?.Value<long?>()
+                    LevelId = JTokenParsing.GetLong(result["LevelId"]) ?? JTokenParsing.GetLong(result["levelId"]),
+                    ViewId = JTokenParsing.GetLong(result["Id"]) ?? JTokenParsing.GetLong(result["id"])
                 };
             }
             catch
@@ -235,16 +241,16 @@ namespace revit_mcp_plugin.Core.Assistant
             if (result == null)
                 return;
 
-            TryAppendArray(target, result["findings"], checkName);
-            TryAppendArray(target, result["Findings"], checkName);
+            TryAppendArray(target, result["findings"], checkName, result);
+            TryAppendArray(target, result["Findings"], checkName, result);
             // commandset serializes lists as camelCase "violations" (JsonProperty);
             // also accept PascalCase / "violators" from older/alternate payloads.
-            TryAppendViolators(target, result["violations"], checkName, "violation");
-            TryAppendViolators(target, result["Violations"], checkName, "violation");
-            TryAppendViolators(target, result["violators"], checkName, "violation");
-            TryAppendViolators(target, result["Violators"], checkName, "violation");
-            TryAppendViolators(target, result["nearLimit"], checkName, "nearLimit");
-            TryAppendViolators(target, result["NearLimit"], checkName, "nearLimit");
+            TryAppendViolators(target, result["violations"], checkName, "violation", result);
+            TryAppendViolators(target, result["Violations"], checkName, "violation", result);
+            TryAppendViolators(target, result["violators"], checkName, "violation", result);
+            TryAppendViolators(target, result["Violators"], checkName, "violation", result);
+            TryAppendViolators(target, result["nearLimit"], checkName, "nearLimit", result);
+            TryAppendViolators(target, result["NearLimit"], checkName, "nearLimit", result);
 
             var doors = result["doors"] ?? result["Doors"];
             if (doors is JArray doorArr)
@@ -254,56 +260,33 @@ namespace revit_mcp_plugin.Core.Assistant
                     var compliant = d["compliant"] ?? d["Compliant"];
                     if (compliant != null && compliant.Type == JTokenType.Boolean && !compliant.Value<bool>())
                     {
-                        target.Add(NormalizeFinding(d, checkName, "violation"));
+                        target.Add(NormFindingMapper.Normalize(d, checkName, "violation", result));
                     }
                 }
             }
         }
 
-        private static void TryAppendArray(JArray target, JToken arr, string checkName)
+        private static void TryAppendArray(JArray target, JToken arr, string checkName, JToken parentResult)
         {
             var a = arr as JArray;
             if (a == null)
                 return;
             foreach (JToken item in a)
-                target.Add(NormalizeFinding(item, checkName, item["status"]?.ToString() ?? "violation"));
+                target.Add(NormFindingMapper.Normalize(item, checkName, item["status"]?.ToString() ?? "violation", parentResult));
         }
 
-        private static void TryAppendViolators(JArray target, JToken arr, string checkName, string status)
+        private static void TryAppendViolators(
+            JArray target,
+            JToken arr,
+            string checkName,
+            string status,
+            JToken parentResult)
         {
             var a = arr as JArray;
             if (a == null)
                 return;
             foreach (JToken item in a)
-                target.Add(NormalizeFinding(item, checkName, status));
-        }
-
-        private static JObject NormalizeFinding(JToken item, string checkName, string status)
-        {
-            var id = item["elementId"] ?? item["ElementId"] ?? item["roomId"] ?? item["RoomId"]
-                ?? item["id"] ?? item["Id"];
-            var source = item["source"] ?? item["Source"];
-            if (source == null || source.Type == JTokenType.Null)
-            {
-                source = new JObject
-                {
-                    ["document"] = item["document"] ?? item["Document"] ?? "",
-                    ["clause"] = item["clause"] ?? item["Clause"] ?? "",
-                    ["quote"] = item["quote"] ?? item["Quote"] ?? ""
-                };
-            }
-
-            return new JObject
-            {
-                ["checkType"] = item["checkType"] ?? checkName,
-                ["status"] = status,
-                ["elementId"] = id,
-                ["name"] = item["name"] ?? item["Name"] ?? item["roomName"] ?? "",
-                ["actualMm"] = item["actualMm"] ?? item["ActualMm"] ?? item["widthMm"] ?? item["DepthMm"] ?? item["depthMm"],
-                ["requiredMm"] = item["requiredMm"] ?? item["RequiredMm"] ?? item["minWidthMm"] ?? item["MaxDepthMm"] ?? item["maxDepthMm"],
-                ["note"] = item["note"] ?? item["reason"] ?? item["Reason"] ?? "",
-                ["source"] = source
-            };
+                target.Add(NormFindingMapper.Normalize(item, checkName, status, parentResult));
         }
     }
 }

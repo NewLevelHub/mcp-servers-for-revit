@@ -227,7 +227,7 @@ namespace revit_mcp_plugin.UI.Assistant
             ClearPendingAttachments();
             InputBox.Clear();
 
-            if (string.Equals(preset.Id, "norm_audit", StringComparison.OrdinalIgnoreCase))
+            if (AssistantNormAuditRouting.ShouldRunDirectNormAudit(preset.Id))
             {
                 _ = StartNormAuditAsync(preset.Prompt);
                 return;
@@ -623,12 +623,6 @@ namespace revit_mcp_plugin.UI.Assistant
         {
             if (_busy) return;
 
-            if (ShouldRunDirectNormAudit(displayText))
-            {
-                await StartNormAuditAsync(displayText).ConfigureAwait(true);
-                return;
-            }
-
             _busy = true;
             SetBusyUi(true);
             AddUserMessage(displayText, attachments);
@@ -780,24 +774,5 @@ namespace revit_mcp_plugin.UI.Assistant
             }
         }
 
-        private static bool ShouldRunDirectNormAudit(string text)
-        {
-            if (string.IsNullOrWhiteSpace(text))
-                return false;
-
-            var t = text.ToLowerInvariant();
-            if (t.Contains("удали разметку") || t.Contains("сними разметку") || t.Contains("убери разметку"))
-                return false;
-
-            var norm =
-                t.Contains("наруш") || t.Contains("норм") || t.Contains("гост") || t.Contains("сп ")
-                || t.Contains("санпин") || t.Contains("эвак") || t.Contains("глубин");
-            var action =
-                t.Contains("провер") || t.Contains("покаж") || t.Contains("покрас")
-                || t.Contains("залей") || t.Contains("подсвет") || t.Contains("этаж")
-                || t.Contains("активн");
-
-            return norm && action;
-        }
     }
 }

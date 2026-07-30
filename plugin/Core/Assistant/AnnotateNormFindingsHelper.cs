@@ -31,7 +31,7 @@ namespace revit_mcp_plugin.Core.Assistant
 
             var style = args["style"]?.ToString() ?? "leader";
             var textTypeName = args["textTypeName"]?.ToString() ?? "ADSK_Замечания";
-            var clearPrevious = args["clearPrevious"]?.Value<bool>() ?? true;
+            var clearPrevious = JTokenParsing.GetBool(args["clearPrevious"], defaultValue: true);
             var leader = !style.Equals("text_only", StringComparison.OrdinalIgnoreCase);
 
             var notes = new JArray();
@@ -42,13 +42,16 @@ namespace revit_mcp_plugin.Core.Assistant
                     && !status.Equals("nearLimit", StringComparison.OrdinalIgnoreCase))
                     continue;
 
-                var elementId = f["elementId"]?.Value<int?>() ?? 0;
+                var elementId = JTokenParsing.GetLong(f["elementId"])
+                    ?? JTokenParsing.GetLong(f["ElementId"])
+                    ?? JTokenParsing.GetLong(f["id"])
+                    ?? 0;
                 if (elementId <= 0)
                     continue;
 
                 notes.Add(new JObject
                 {
-                    ["text"] = FormatAnnotation(f),
+                    ["text"] = NormAnnotationText.Format(f),
                     ["elementId"] = elementId,
                     ["leader"] = leader
                 });
@@ -66,44 +69,6 @@ namespace revit_mcp_plugin.Core.Assistant
 
             var raw = SocketService.Instance.ExecuteJsonRpcLocal("create_text_notes", payload.ToString(Formatting.None));
             return raw;
-        }
-
-        private static string FormatAnnotation(JToken f)
-        {
-            var name = (f["name"]?.ToString() ?? ("id " + f["elementId"])).Trim();
-            var doc = f["source"]?["document"]?.ToString()?.Trim() ?? "";
-            var clause = f["source"]?["clause"]?.ToString()?.Trim() ?? "";
-            var sourceBit = JoinNonEmpty(doc, clause);
-
-            var comparison = FormatComparison(f);
-            var text = string.IsNullOrEmpty(comparison) ? name : name + ": " + comparison;
-            if (!string.IsNullOrEmpty(sourceBit))
-                text += " · " + sourceBit;
-            return text;
-        }
-
-        private static string FormatComparison(JToken f)
-        {
-            var actual = f["actualMm"];
-            var required = f["requiredMm"];
-            if (actual == null || required == null)
-                return f["note"]?.ToString() ?? "";
-
-            var a = actual.Value<double>();
-            var r = required.Value<double>();
-            var op = a < r ? "<" : a > r ? ">" : "=";
-
-            if ((f["checkType"]?.ToString() ?? "").Contains("room_area"))
-                return a + " " + op + " " + r + " м²";
-
-            return a + " " + op + " " + r + " мм";
-        }
-
-        private static string JoinNonEmpty(string a, string b)
-        {
-            if (string.IsNullOrWhiteSpace(a)) return b ?? "";
-            if (string.IsNullOrWhiteSpace(b)) return a;
-            return a.Trim() + " " + b.Trim();
         }
 
         private static string Error(string message) =>

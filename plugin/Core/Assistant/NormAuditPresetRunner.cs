@@ -27,7 +27,7 @@ namespace revit_mcp_plugin.Core.Assistant
                 return ($"Не удалось выполнить проверку норм: {ex.Message}", new[] { "ошибка аудита" });
             }
 
-            var success = audit["success"]?.Value<bool?>() ?? audit["Success"]?.Value<bool?>() ?? false;
+            var success = JTokenParsing.GetBool(audit["success"], JTokenParsing.GetBool(audit["Success"]));
             if (!success)
             {
                 var msg = audit["message"]?.ToString() ?? audit["Message"]?.ToString() ?? "неизвестная ошибка";
@@ -45,17 +45,49 @@ namespace revit_mcp_plugin.Core.Assistant
             }
 
             var highlight = audit["highlight"] as JObject;
-            var roomCount = highlight?["roomCount"]?.Value<int?>() ?? 0;
-            var doorCount = highlight?["doorCount"]?.Value<int?>() ?? 0;
-            var highlightOk = highlight?["success"]?.Value<bool?>() ?? highlight?["Success"]?.Value<bool?>() ?? true;
+            var roomCount = JTokenParsing.GetInt(highlight?["roomCount"]) ?? 0;
+            var doorCount = JTokenParsing.GetInt(highlight?["doorCount"]) ?? 0;
+            var highlightOk = JTokenParsing.GetBool(highlight?["success"], JTokenParsing.GetBool(highlight?["Success"], defaultValue: true));
+
+            var annotateStep = highlight?["steps"] as JArray;
+            var annotateCount = 0;
+            var annotateUseful = false;
+            if (annotateStep != null)
+            {
+                foreach (JToken step in annotateStep)
+                {
+                    if (!string.Equals(step["step"]?.ToString(), "annotate_norm_findings", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    annotateCount = JTokenParsing.GetInt(step["count"]) ?? 0;
+                    if (JTokenParsing.GetBool(step["ok"]))
+                        annotateUseful = annotateCount > 0;
+                }
+            }
+
+            // Fallback: inspect findings text quality if steps missing.
+            if (annotate && violationCount > 0 && annotateCount == 0)
+            {
+                foreach (JToken f in findings)
+                {
+                    if (!(f["status"]?.ToString() ?? "").Equals("violation", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (NormAnnotationText.HasUsefulContent(f))
+                    {
+                        annotateUseful = true;
+                        break;
+                    }
+                }
+            }
 
             var done = new List<string> { $"проверка норм: {violationCount} наруш." };
             if (roomCount > 0)
                 done.Add($"заливка: {roomCount}");
             if (doorCount > 0)
                 done.Add($"двери: {doorCount}");
-            if (annotate && violationCount > 0)
+            if (annotate && annotateUseful)
                 done.Add("выноски");
+            else if (annotate && violationCount > 0)
+                done.Add("выноски без цифр/цитат");
 
             if (!highlightOk && highlight != null)
             {
@@ -74,10 +106,15 @@ namespace revit_mcp_plugin.Core.Assistant
             }
             else
             {
+                var annotateBit = !annotate
+                    ? ""
+                    : annotateUseful
+                        ? "Выноски с фактом и пунктом нормы поставлены. "
+                        : "Выноски поставлены, но без цифр/цитаты (проверь findings). ";
                 reply =
                     $"Проверка этажа{levelBit}: {violationCount} нарушений. " +
                     $"Подсвечено помещений: {roomCount}, дверей: {doorCount}. " +
-                    (annotate ? "Выноски с цитатами норм поставлены. " : "") +
+                    annotateBit +
                     summary;
             }
 
