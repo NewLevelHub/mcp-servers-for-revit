@@ -741,7 +741,8 @@ namespace revit_mcp_plugin.Core.Assistant
 
                         var callId = call["id"]?.ToString() ?? Guid.NewGuid().ToString("N");
                         var fn = call["function"] as JObject;
-                        var name = fn?["name"]?.ToString() ?? "";
+                        var rawName = fn?["name"]?.ToString() ?? "";
+                        var name = ToolCatalog.ResolveToolAlias(rawName);
                         var argsJson = fn?["arguments"]?.ToString() ?? "{}";
 
                         if (cancellationToken.IsCancellationRequested)
@@ -779,14 +780,14 @@ namespace revit_mcp_plugin.Core.Assistant
                                 continue;
                             }
 
-                            // Unknown tool — soft error (same as before).
+                            // Unknown tool — soft error (REV-116: clearer message for server-only names).
                             AppendToolResult(callId, new JObject
                             {
                                 ["error"] = "unknown_tool",
-                                ["tool"] = name,
-                                ["message"] = "Инструмент недоступен в каталоге ассистента.",
+                                ["tool"] = rawName,
+                                ["message"] = ToolCatalog.DescribeUnavailableTool(rawName),
                             }.ToString());
-                            done.Add("ошибка: неизвестный tool " + name);
+                            done.Add("ошибка: неизвестный tool " + rawName);
                             continue;
                         }
 
@@ -816,7 +817,7 @@ namespace revit_mcp_plugin.Core.Assistant
 
                         RaiseStatus("Выполняет…");
                         string rawResult;
-                        var toolName = ResolveToolAlias(name);
+                        var toolName = name;
                         var enrichedArgs = NormCheckDefaults.EnrichArgs(toolName, argsJson);
                         enrichedArgs = CreateElementArgsNormalizer.Normalize(toolName, enrichedArgs);
                         var argsBeforeInject = enrichedArgs;
@@ -1415,20 +1416,6 @@ namespace revit_mcp_plugin.Core.Assistant
             return blob.IndexOf("Wall", StringComparison.OrdinalIgnoreCase) >= 0
                 || blob.IndexOf("OST_Walls", StringComparison.OrdinalIgnoreCase) >= 0
                 || blob.IndexOf("Стен", StringComparison.OrdinalIgnoreCase) >= 0;
-        }
-
-        private static string ResolveToolAlias(string toolName)
-        {
-            if (string.IsNullOrWhiteSpace(toolName))
-                return toolName;
-
-            switch (toolName.Trim().ToLowerInvariant())
-            {
-                case "tag_all_rooms": return "tag_rooms";
-                case "tag_all_walls": return "tag_walls";
-                case "color_elements": return "color_splash";
-                default: return toolName.Trim();
-            }
         }
 
     }

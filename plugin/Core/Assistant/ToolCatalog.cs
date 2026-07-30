@@ -70,9 +70,7 @@ namespace revit_mcp_plugin.Core.Assistant
                     "dimension_room_walls",
                     "create_dimensions",
                     "tag_rooms",
-                    "tag_all_rooms",
                     "tag_walls",
-                    "tag_all_walls",
                     "create_text_notes",
                     "create_text_note",
                     "create_detail_lines",
@@ -80,7 +78,6 @@ namespace revit_mcp_plugin.Core.Assistant
                     "place_detail_component",
                     "get_document_styles",
                     "color_splash",
-                    "color_elements",
                 },
                 [Profiles.Schedules] = new[]
                 {
@@ -119,7 +116,6 @@ namespace revit_mcp_plugin.Core.Assistant
                     "get_door_egress_info",
                     "get_opening_geometry_info",
                     "get_vertical_circulation_info",
-                    "export_egress_graph",
                 },
                 [Profiles.Data] = new[]
                 {
@@ -247,8 +243,49 @@ namespace revit_mcp_plugin.Core.Assistant
         {
             if (string.IsNullOrWhiteSpace(toolName))
                 return false;
+            var canonical = ResolveToolAlias(toolName);
             var allowed = new HashSet<string>(SelectToolNames(profiles, MaxToolsPerRequest), StringComparer.OrdinalIgnoreCase);
-            return allowed.Contains(toolName.Trim());
+            return allowed.Contains(canonical);
+        }
+
+        /// <summary>
+        /// Map legacy MCP-facing names to the single canonical Revit command (REV-116).
+        /// Aliases are not listed in <see cref="Definitions"/> so the model sees one tool per action.
+        /// </summary>
+        public static string ResolveToolAlias(string toolName)
+        {
+            if (string.IsNullOrWhiteSpace(toolName))
+                return toolName;
+
+            switch (toolName.Trim().ToLowerInvariant())
+            {
+                case "tag_all_rooms": return "tag_rooms";
+                case "tag_all_walls": return "tag_walls";
+                case "color_elements": return "color_splash";
+                default: return toolName.Trim();
+            }
+        }
+
+        /// <summary>
+        /// Soft-error message when the model invents a tool outside the assistant catalog.
+        /// Server-only MCP tools get a clearer «use Cursor» hint (REV-116).
+        /// </summary>
+        public static string DescribeUnavailableTool(string toolName)
+        {
+            if (string.IsNullOrWhiteSpace(toolName))
+                return "Инструмент недоступен в каталоге ассистента.";
+
+            switch (toolName.Trim().ToLowerInvariant())
+            {
+                case "fill_title_block":
+                    return "Заполнение штампа (fill_title_block) есть только в Cursor MCP, в чате Revit этой команды нет.";
+                case "number_rooms":
+                    return "Нумерация помещений (number_rooms) есть только в Cursor MCP, в чате Revit этой команды нет.";
+                case "export_egress_graph":
+                    return "Граф эвакуации — внутренний строительный блок. Используйте run_norm_audit или check_evacuation_width.";
+                default:
+                    return "Инструмент недоступен в каталоге ассистента.";
+            }
         }
 
         /// <summary>Profiles that contain the tool (may include <see cref="Profiles.Core"/>).</summary>
@@ -256,7 +293,8 @@ namespace revit_mcp_plugin.Core.Assistant
         {
             if (string.IsNullOrWhiteSpace(toolName))
                 return Array.Empty<string>();
-            if (!ToolToProfiles.TryGetValue(toolName.Trim(), out var list))
+            var canonical = ResolveToolAlias(toolName);
+            if (!ToolToProfiles.TryGetValue(canonical, out var list))
                 return Array.Empty<string>();
             return list.ToArray();
         }
@@ -553,7 +591,6 @@ namespace revit_mcp_plugin.Core.Assistant
                 ["create_sheet"] = "лист",
                 ["place_view_on_sheet"] = "размещение на листе",
                 ["auto_layout_sheet"] = "раскладка на листе",
-                ["fill_title_block"] = "штамп",
                 ["check_evacuation_width"] = "ширина эвак. коридора",
                 ["check_room_depth"] = "глубина помещений",
                 ["check_min_dimensions"] = "мин. размеры лоджий/балконов",
@@ -566,8 +603,8 @@ namespace revit_mcp_plugin.Core.Assistant
                 ["operate_element"] = "изменение элементов",
                 ["delete_element"] = "удаление",
                 ["color_splash"] = "цветовая схема",
+                // Legacy aliases (not in Definitions) — FriendlyName after ResolveToolAlias or raw model name.
                 ["color_elements"] = "цветовая схема",
-                ["number_rooms"] = "нумерация помещений",
                 ["send_code_to_revit"] = "выполнение кода",
                 ["run_norm_audit"] = "проверка норм (сводная)",
                 ["tag_all_rooms"] = "марки помещений",
@@ -594,7 +631,6 @@ namespace revit_mcp_plugin.Core.Assistant
                 ["get_door_egress_info"] = "эвак. данные дверей",
                 ["get_opening_geometry_info"] = "геометрия проёмов",
                 ["get_vertical_circulation_info"] = "лестницы / пандусы",
-                ["export_egress_graph"] = "граф эвакуации",
                 ["create_detail_lines"] = "линии деталировки",
                 ["create_detail_view"] = "вид детали",
                 ["place_detail_component"] = "узел деталировки",
@@ -726,8 +762,10 @@ namespace revit_mcp_plugin.Core.Assistant
                     ("firstOffsetMm", N(), "mm from building envelope"),
                     ("tierGapMm", N(), "mm between dimension tiers"),
                     ("numericSide", S(), null), ("letterSide", S(), null), ("dimensionType", S(), null))),
-                T("tag_rooms", "Place room tags (марки помещений) on the active view; prefer type with area.", P(
-                    ("tagTypeId", S(), null), ("roomIds", A("string"), null))),
+                T("tag_rooms",
+                    "Place room tags (марки помещений) on the active view; prefer type with area. " +
+                    "Alias tag_all_rooms is accepted by the host.",
+                    P(("tagTypeId", S(), null), ("roomIds", A("string"), null))),
                 T("export_room_data",
                     "Export room ElementIds, names, numbers, areas (м²). Use before schedules or norm area checks.",
                     P(("includeUnplacedRooms", B(), null), ("includeNotEnclosedRooms", B(), null))),
@@ -842,8 +880,11 @@ namespace revit_mcp_plugin.Core.Assistant
                 T("get_selected_elements",
                     "Returns currently selected elements (ids, category, name). Use when user says «выделенное» / selection.",
                     Empty()),
-                T("color_splash", "View color scheme by parameter.", P(
-                    ("categoryName", S(), null), ("parameterName", S(), null))),
+                T("color_splash",
+                    "View color scheme by parameter (NOT filled regions for violations — use create_filled_regions). " +
+                    "Alias color_elements is accepted by the host.",
+                    P(("categoryName", S(), "Помещения"), ("parameterName", S(), "Имя"),
+                      ("useGradient", B(), null))),
                 T("get_document_styles",
                     "Returns annotation styles available in the project: dimension types, grid types, text types, title blocks. " +
                     "Call before picking dimensionType / gridTypeName / textTypeName.",
@@ -865,18 +906,10 @@ namespace revit_mcp_plugin.Core.Assistant
                     P(("findings", A("object"), "from run_norm_audit violation+nearLimit"),
                       ("style", S(), "leader"), ("textTypeName", S(), "ADSK_Замечания"),
                       ("clearPrevious", B(), "true"))),
-                T("tag_all_rooms", "Alias for tag_rooms — place room tags with area.", P(
-                    ("tagTypeId", S(), null), ("roomIds", A("string"), null))),
                 T("tag_walls",
-                    "Place wall tags on all walls of the active floor plan. Returns created tag ids. No args.",
+                    "Place wall tags on all walls of the active floor plan. Returns created tag ids. No args. " +
+                    "Alias tag_all_walls is accepted by the host.",
                     Empty()),
-                T("tag_all_walls",
-                    "Alias for tag_walls — place wall tags on the active view. Returns created tag ids. No args.",
-                    Empty()),
-                T("color_elements",
-                    "View color scheme by parameter (NOT filled regions for violations — use create_filled_regions).",
-                    P(("categoryName", S(), "Помещения"), ("parameterName", S(), "Имя"),
-                      ("useGradient", B(), null))),
                 T("create_stair",
                     "Create stair: layout straight/L/U, typeId (StairsType), widthMm, shaftRect or path. Units mm.",
                     P(R("typeId"),
@@ -943,8 +976,6 @@ namespace revit_mcp_plugin.Core.Assistant
                 T("get_opening_geometry_info", "Window sill height, opening height (mm).", P(
                     ("levelName", S(), null))),
                 T("get_vertical_circulation_info", "Stair/ramp/railing geometry for norms (mm).", P(
-                    ("levelName", S(), null))),
-                T("export_egress_graph", "Egress walkability graph for floor.", P(
                     ("levelName", S(), null))),
                 T("create_detail_lines", "Detail polylines on plan/detail view (mm).", P(
                     ("points", A("object"), "points in mm"), ("viewId", N(), null))),

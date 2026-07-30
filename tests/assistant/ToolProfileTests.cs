@@ -33,7 +33,7 @@ public class ToolProfileTests
     {
         var all = ToolCatalog.GetOpenAiTools();
         Assert.True(all.Count > ToolCatalog.MaxToolsPerRequest);
-        Assert.Equal(74, all.Count);
+        Assert.Equal(70, all.Count);
     }
 
     [Fact]
@@ -115,10 +115,59 @@ public class ToolProfileTests
         };
         // modeling + annotation fill the 30-tool cap; norms tools are truncated.
         Assert.Equal(ToolCatalog.MaxToolsPerRequest, ToolCatalog.SelectToolNames(profiles).Count);
-        Assert.False(ToolCatalog.IsToolAllowed("export_egress_graph", profiles));
+        Assert.False(ToolCatalog.IsToolAllowed("get_vertical_circulation_info", profiles));
 
-        var reordered = ToolCatalog.PrioritizeProfilesForTool("export_egress_graph", profiles);
-        Assert.True(ToolCatalog.IsToolAllowed("export_egress_graph", reordered));
+        var reordered = ToolCatalog.PrioritizeProfilesForTool("get_vertical_circulation_info", profiles);
+        Assert.True(ToolCatalog.IsToolAllowed("get_vertical_circulation_info", reordered));
+    }
+
+    [Fact]
+    public void Catalog_has_no_exact_duplicates_or_internal_egress()
+    {
+        var names = ToolCatalog.GetOpenAiTools()
+            .OfType<Newtonsoft.Json.Linq.JObject>()
+            .Select(t => t["function"]?["name"]?.ToString())
+            .Where(n => n != null)
+            .ToList();
+        Assert.True(names.Count <= 71);
+        Assert.DoesNotContain("tag_all_rooms", names);
+        Assert.DoesNotContain("tag_all_walls", names);
+        Assert.DoesNotContain("color_elements", names);
+        Assert.DoesNotContain("export_egress_graph", names);
+        Assert.Contains("tag_rooms", names);
+        Assert.Contains("tag_walls", names);
+        Assert.Contains("color_splash", names);
+    }
+
+    [Theory]
+    [InlineData("tag_all_rooms", "tag_rooms")]
+    [InlineData("tag_all_walls", "tag_walls")]
+    [InlineData("color_elements", "color_splash")]
+    [InlineData("tag_rooms", "tag_rooms")]
+    public void ResolveToolAlias_maps_legacy_names(string input, string expected)
+    {
+        Assert.Equal(expected, ToolCatalog.ResolveToolAlias(input));
+    }
+
+    [Fact]
+    public void Alias_is_allowed_when_canonical_profile_active()
+    {
+        var profiles = new[] { ToolCatalog.Profiles.Annotation };
+        Assert.True(ToolCatalog.IsToolAllowed("tag_all_rooms", profiles));
+        Assert.True(ToolCatalog.IsToolAllowed("color_elements", profiles));
+        Assert.Contains(ToolCatalog.Profiles.Annotation,
+            ToolCatalog.GetMissingProfiles("tag_all_rooms", System.Array.Empty<string>()));
+    }
+
+    [Theory]
+    [InlineData("fill_title_block", "штамп")]
+    [InlineData("number_rooms", "нумерация")]
+    [InlineData("export_egress_graph", "граф эвакуации")]
+    public void DescribeUnavailableTool_explains_server_only(string tool, string hintFragment)
+    {
+        var msg = ToolCatalog.DescribeUnavailableTool(tool);
+        Assert.Contains(hintFragment, msg, System.StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Инструмент недоступен в каталоге ассистента.", msg);
     }
 
     [Fact]
