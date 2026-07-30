@@ -82,8 +82,9 @@ public class ToolProfileTests
         var fullLen = ToolCatalog.GetOpenAiTools().ToString(Newtonsoft.Json.Formatting.None).Length;
         var profileLen = ToolCatalog.GetOpenAiTools(new[] { ToolCatalog.Profiles.Annotation })
             .ToString(Newtonsoft.Json.Formatting.None).Length;
-        Assert.True(profileLen * 2 < fullLen,
-            $"profile {profileLen} should be < half of full {fullLen}");
+        // Schemas grew with required/enum (REV-113); still expect a clear profile win vs full catalog.
+        Assert.True(profileLen * 1.6 < fullLen,
+            $"profile {profileLen} should be clearly smaller than full {fullLen}");
     }
 
     [Theory]
