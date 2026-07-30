@@ -15,7 +15,7 @@ public sealed class GoldenDryRunLoop
 {
     private readonly IChatCompletionsClient _llm;
     private readonly IAssistantToolExecutor _tools;
-    private readonly string _systemPrompt;
+    private readonly string? _systemPromptOverride;
 
     public GoldenDryRunLoop(
         IChatCompletionsClient llm,
@@ -24,7 +24,7 @@ public sealed class GoldenDryRunLoop
     {
         _llm = llm ?? throw new ArgumentNullException(nameof(llm));
         _tools = tools ?? throw new ArgumentNullException(nameof(tools));
-        _systemPrompt = systemPrompt ?? AssistantSystemPrompt.Text;
+        _systemPromptOverride = systemPrompt;
     }
 
     public async Task<(IReadOnlyList<GoldenToolCall> Calls, string Reply, int PromptTokens, int Rounds)> RunAsync(
@@ -32,12 +32,13 @@ public sealed class GoldenDryRunLoop
         int maxRounds,
         CancellationToken cancellationToken = default)
     {
+        var activeProfiles = ToolCatalog.NormalizeProfiles(IntentRouter.ResolveHeuristic(userText));
+        var resolvedPrompt = _systemPromptOverride ?? AssistantSystemPrompt.Build(activeProfiles, userText);
         var history = new JArray
         {
-            new JObject { ["role"] = "system", ["content"] = _systemPrompt },
+            new JObject { ["role"] = "system", ["content"] = resolvedPrompt },
             new JObject { ["role"] = "user", ["content"] = userText ?? "" },
         };
-        var activeProfiles = ToolCatalog.NormalizeProfiles(IntentRouter.ResolveHeuristic(userText));
         var tools = ToolCatalog.GetOpenAiTools(activeProfiles);
         var calls = new List<GoldenToolCall>();
         var promptTokens = 0;

@@ -1,0 +1,14 @@
+{
+  "id": "trap-ambiguous-check",
+  "group": "routing_traps",
+  "userText": "Проверь",
+  "expectNoTools": true,
+  "forbidTools": [
+    "run_norm_audit",
+    "create_line_based_element",
+    "export_room_data",
+    "create_filled_regions",
+    "render_tep_table"
+  ],
+  "maxRounds": 2
+}

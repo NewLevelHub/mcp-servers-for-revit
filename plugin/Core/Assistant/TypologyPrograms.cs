@@ -179,15 +179,8 @@ namespace revit_mcp_plugin.Core.Assistant
                 sb.AppendLine($"  • {r.Name} ({r.Purpose}){area} — {r.Adjacency}");
             }
             sb.AppendLine("ЛОГИКА: " + t.LayoutLogic);
-            sb.AppendLine(TypologyAgentRules);
+            sb.AppendLine(AssistantPlaybooks.TypologyAgentRules);
             return sb.ToString().Trim();
         }
-
-        private const string TypologyAgentRules =
-            "СКОРОСТЬ: стены — один create_line_based_element (все сегменты). " +
-            "Двери — batch_execute до 4 шт за раз (create_point_based_element, деревянные типы на базовых стенах; НЕ витражные алюминиевые на OST_Walls). " +
-            "Помещения — create_room по 2 за вызов. После всех комнат: tag_rooms roomIds, color_splash по «Назначение», dimension_room_walls на ключевые. " +
-            "Вход с улицы обязателен (hostWallId наружной стены). Окна — на зал/фасад. " +
-            "run_norm_audit mode=report в конце. Референс: если есть вложение (скрин/PDF) — ориентируйся на зонирование, не копируй размеры слепо.";
     }
 }

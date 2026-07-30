@@ -22,6 +22,7 @@
     <Compile Include="..\..\plugin\Core\Assistant\NormFindingMapper.cs" Link="NormFindingMapper.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\NormAnnotationText.cs" Link="NormAnnotationText.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\AssistantSystemPrompt.cs" Link="AssistantSystemPrompt.cs" />
+    <Compile Include="..\..\plugin\Core\Assistant\AssistantPlaybooks.cs" Link="AssistantPlaybooks.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\ScenarioPresets.cs" Link="ScenarioPresets.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\NormCheckSchemaKeys.cs" Link="NormCheckSchemaKeys.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\PromptSchemaAlignment.cs" Link="PromptSchemaAlignment.cs" />

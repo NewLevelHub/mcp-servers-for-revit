@@ -30,7 +30,11 @@ namespace revit_mcp_plugin.Core.Assistant
     /// </summary>
     public sealed class LocalAgentHost
     {
-        public const string SystemPrompt = AssistantSystemPrompt.Text;
+        /// <summary>Core-only prompt; production uses <see cref="BuildSystemPrompt"/> per turn.</summary>
+        public const string SystemPrompt = AssistantSystemPrompt.Core;
+
+        public static string BuildSystemPrompt(IReadOnlyList<string> profiles, string userText = null) =>
+            AssistantSystemPrompt.Build(profiles, userText);
 
         private readonly List<JObject> _history = new List<JObject>();
         private readonly object _historyLock = new object();
@@ -302,6 +306,30 @@ namespace revit_mcp_plugin.Core.Assistant
         private static bool IsRole(JObject message, string role)
         {
             return string.Equals(message?["role"]?.ToString(), role, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void EnsureSystemPromptUnlocked(string content)
+        {
+            if (_history.Count == 0)
+            {
+                _history.Add(new JObject
+                {
+                    ["role"] = "system",
+                    ["content"] = content ?? AssistantSystemPrompt.Core,
+                });
+                return;
+            }
+
+            if (IsRole(_history[0], "system"))
+                _history[0]["content"] = content ?? AssistantSystemPrompt.Core;
+            else
+            {
+                _history.Insert(0, new JObject
+                {
+                    ["role"] = "system",
+                    ["content"] = content ?? AssistantSystemPrompt.Core,
+                });
+            }
         }
 
         private static int EstimateChars(JObject message)
@@ -579,17 +607,11 @@ namespace revit_mcp_plugin.Core.Assistant
 
             var tools = ToolCatalog.GetOpenAiTools(activeProfiles);
             var done = new List<string>();
+            var systemPrompt = BuildSystemPrompt(activeProfiles, userMessage);
 
             lock (_historyLock)
             {
-                if (_history.Count == 0)
-                {
-                    _history.Add(new JObject
-                    {
-                        ["role"] = "system",
-                        ["content"] = SystemPrompt
-                    });
-                }
+                EnsureSystemPromptUnlocked(systemPrompt);
 
                 var text = userMessage ?? "";
                 if (!string.IsNullOrWhiteSpace(viewContext))
