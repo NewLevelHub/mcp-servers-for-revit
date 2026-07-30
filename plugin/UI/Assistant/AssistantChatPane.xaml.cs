@@ -233,7 +233,7 @@ namespace revit_mcp_plugin.UI.Assistant
                 return;
             }
 
-            _ = StartRunAsync(preset.Prompt, attachments, ScenarioPresets.BuildAgentMessage(preset));
+            _ = StartRunAsync(preset.Prompt, attachments, ScenarioPresets.BuildAgentMessage(preset), preset.Profiles);
         }
 
         private async Task StartNormAuditAsync(string displayText)
@@ -619,7 +619,8 @@ namespace revit_mcp_plugin.UI.Assistant
         private async Task StartRunAsync(
             string displayText,
             IList<ChatAttachment> attachments,
-            string agentText = null)
+            string agentText = null,
+            IReadOnlyList<string> toolProfiles = null)
         {
             if (_busy) return;
 
@@ -633,7 +634,8 @@ namespace revit_mcp_plugin.UI.Assistant
             var turnId = Guid.NewGuid().ToString("N").Substring(0, 12);
             try
             {
-                var result = await _agent.RunAsync(toAgent, BuildViewContextLine(), attachments, _runCts.Token, turnId)
+                var result = await _agent.RunAsync(
+                        toAgent, BuildViewContextLine(), attachments, _runCts.Token, turnId, toolProfiles)
                     .ConfigureAwait(true);
 
                 if (result.Cancelled)

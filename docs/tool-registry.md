@@ -40,6 +40,30 @@ Listed in `DEFAULT_DENYLIST` in `server/src/tools/register.ts`. Use only with `M
 
 Empty stub files (`modify_element`, `search_modules`, `use_module`) were removed — do not reintroduce without an implementation.
 
+## Assistant tool profiles (in-Revit chat, REV-112)
+
+Separate from `MCP_TOOL_PROFILE` (server env). The dockable assistant filters
+`plugin/Core/Assistant/ToolCatalog.cs` so the model sees **≤ 30** tools per
+request instead of the full ~74.
+
+| Layer | Contents |
+|-------|----------|
+| **core** (always) | `get_current_view_info`, `get_current_view_elements`, `get_selected_elements`, `get_available_family_types`, `get_element_parameters`, `set_element_parameter`, `export_room_data`, `operate_element`, `delete_element`, `query_norm_rules` |
+| **modeling** | `create_line/point/surface_based_element`, `create_room`, `create_level`, `create_stair`, `create_railing`, `create_floor_opening`, `create_structural_framing_system` |
+| **annotation** | grids, dimensions, tags, text notes, detail lines/views, `color_splash` / `color_elements` |
+| **schedules** | door/window/floor schedules, floor explication, TEP (`render_tep_table` / `export_tep_data`), schedule configure/validate |
+| **sheets** | `create_sheet`, `place_view_on_sheet`, `auto_layout_sheet`, `fit_schedule_to_sheet` |
+| **norms** | `run_norm_audit`, `check_*`, filled regions, annotate findings, geometry/egress helpers |
+| **data** | other `export_*`, materials, `analyze_model_statistics`, `ai_element_filter`, `batch_execute`, `send_code_to_revit` |
+
+**How profiles are chosen**
+
+1. Scenario chip → `ScenarioPreset.Profiles` (exact).
+2. Free text → `IntentRouter` heuristic (keywords); optional cheap LLM call without tools if ambiguous.
+3. **Escalation:** if the model calls a tool outside the active set, the host returns `tool_not_in_profile` with `availableInProfiles`, merges those profiles, and expands the catalog on the next round (no hard fail).
+
+API: `ToolCatalog.GetOpenAiTools(profiles)`, `IntentRouter.ResolveHeuristic` / `ResolveAsync`.
+
 ## Name aliases (MCP → Revit command)
 
 These are **intentional**. MCP keeps a stable AI-facing name; Revit keeps the historical `CommandName`.

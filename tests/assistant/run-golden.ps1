@@ -29,7 +29,7 @@ try {
     Write-Host "Running assistant golden set (dry-run, no Revit)..."
     dotnet test .\RevitMCPPlugin.Assistant.Tests.csproj -c Release --filter "FullyQualifiedName~GoldenSet"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    Write-Host "OK — see Golden/baseline.json targets; live reports under Golden/reports/ when -Live."
+    Write-Host "OK - see Golden/baseline.json targets; live reports under Golden/reports/ when -Live."
 }
 finally {
     Pop-Location

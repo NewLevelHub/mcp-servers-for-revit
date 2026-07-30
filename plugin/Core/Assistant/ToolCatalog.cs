@@ -1,19 +1,357 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Newtonsoft.Json.Linq;
 
 namespace revit_mcp_plugin.Core.Assistant
 {
     /// <summary>
     /// Curated OpenAI-style tool schemas for the in-Revit agent (pilot scenarios).
+    /// Filtered by intent profiles (REV-112) so the model never sees the full catalog.
     /// </summary>
     public static class ToolCatalog
     {
+        public const int MaxToolsPerRequest = 30;
+
+        public static class Profiles
+        {
+            public const string Core = "core";
+            public const string Modeling = "modeling";
+            public const string Annotation = "annotation";
+            public const string Schedules = "schedules";
+            public const string Sheets = "sheets";
+            public const string Norms = "norms";
+            public const string Data = "data";
+
+            public static readonly string[] AllNonCore =
+            {
+                Modeling, Annotation, Schedules, Sheets, Norms, Data
+            };
+        }
+
+        /// <summary>
+        /// Tools always visible. Intent profiles add more (union capped at <see cref="MaxToolsPerRequest"/>).
+        /// </summary>
+        public static readonly IReadOnlyList<string> CoreTools = new[]
+        {
+            "get_current_view_info",
+            "get_current_view_elements",
+            "get_selected_elements",
+            "get_available_family_types",
+            "get_element_parameters",
+            "set_element_parameter",
+            "export_room_data",
+            "operate_element",
+            "delete_element",
+            "query_norm_rules",
+        };
+
+        /// <summary>Profile name → tool names (excluding core; core is always merged).</summary>
+        public static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> ProfileTools =
+            new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+            {
+                [Profiles.Modeling] = new[]
+                {
+                    "create_line_based_element",
+                    "create_point_based_element",
+                    "create_surface_based_element",
+                    "create_room",
+                    "create_level",
+                    "create_stair",
+                    "create_railing",
+                    "create_floor_opening",
+                    "create_structural_framing_system",
+                },
+                [Profiles.Annotation] = new[]
+                {
+                    "create_grid",
+                    "configure_grid_display",
+                    "dimension_grids",
+                    "dimension_room_walls",
+                    "create_dimensions",
+                    "tag_rooms",
+                    "tag_all_rooms",
+                    "tag_walls",
+                    "tag_all_walls",
+                    "create_text_notes",
+                    "create_text_note",
+                    "create_detail_lines",
+                    "create_detail_view",
+                    "place_detail_component",
+                    "get_document_styles",
+                    "color_splash",
+                    "color_elements",
+                },
+                [Profiles.Schedules] = new[]
+                {
+                    "create_door_schedule",
+                    "create_window_schedule",
+                    "create_floor_schedule",
+                    "create_floor_explication",
+                    "create_schedule",
+                    "configure_schedule",
+                    "validate_schedule",
+                    "create_finish_schedule",
+                    "create_curtain_wall_schedule",
+                    "get_schedule_definition",
+                    "render_tep_table",
+                    "export_tep_data",
+                },
+                [Profiles.Sheets] = new[]
+                {
+                    "create_sheet",
+                    "place_view_on_sheet",
+                    "auto_layout_sheet",
+                    "fit_schedule_to_sheet",
+                },
+                [Profiles.Norms] = new[]
+                {
+                    "run_norm_audit",
+                    "check_evacuation_width",
+                    "check_room_depth",
+                    "check_min_dimensions",
+                    "check_fire_doors",
+                    "create_filled_regions",
+                    "annotate_norm_findings",
+                    "apply_norm_result",
+                    "create_text_notes",
+                    "get_room_geometry_metrics",
+                    "get_door_egress_info",
+                    "get_opening_geometry_info",
+                    "get_vertical_circulation_info",
+                    "export_egress_graph",
+                },
+                [Profiles.Data] = new[]
+                {
+                    "export_apartment_data",
+                    "export_room_finish_data",
+                    "export_tep_data",
+                    "get_material_quantities",
+                    "analyze_model_statistics",
+                    "ai_element_filter",
+                    "get_elements_parameters",
+                    "say_hello",
+                    "batch_execute",
+                    "send_code_to_revit",
+                },
+            };
+
+        private static Dictionary<string, ToolDef> _definitionsByName;
+        private static Dictionary<string, List<string>> _toolToProfiles;
+
+        private static Dictionary<string, ToolDef> DefinitionsByName
+        {
+            get
+            {
+                EnsureLookups();
+                return _definitionsByName;
+            }
+        }
+
+        private static Dictionary<string, List<string>> ToolToProfiles
+        {
+            get
+            {
+                EnsureLookups();
+                return _toolToProfiles;
+            }
+        }
+
+        private static void EnsureLookups()
+        {
+            if (_definitionsByName != null)
+                return;
+            var byName = new Dictionary<string, ToolDef>(StringComparer.OrdinalIgnoreCase);
+            foreach (var def in Definitions)
+                byName[def.Name] = def;
+
+            var toProfiles = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            void Add(string toolName, string profile)
+            {
+                if (!toProfiles.TryGetValue(toolName, out var list))
+                {
+                    list = new List<string>();
+                    toProfiles[toolName] = list;
+                }
+                if (!list.Exists(p => p.Equals(profile, StringComparison.OrdinalIgnoreCase)))
+                    list.Add(profile);
+            }
+
+            foreach (var name in CoreTools)
+                Add(name, Profiles.Core);
+            foreach (var kv in ProfileTools)
+            {
+                foreach (var name in kv.Value)
+                    Add(name, kv.Key);
+            }
+
+            _toolToProfiles = toProfiles;
+            _definitionsByName = byName;
+        }
+
+        /// <summary>Full unfiltered catalog (tests / diagnostics only). Prefer <see cref="GetOpenAiTools(IEnumerable{string})"/>.</summary>
         public static JArray GetOpenAiTools()
         {
-            var tools = new JArray();
-            foreach (var def in Definitions)
+            return BuildToolsArray(Definitions.Select(d => d.Name), int.MaxValue);
+        }
+
+        /// <summary>
+        /// Core ∪ requested profiles, stable order, capped at <see cref="MaxToolsPerRequest"/>.
+        /// Null/empty profiles → core only.
+        /// </summary>
+        public static JArray GetOpenAiTools(IEnumerable<string> profiles)
+        {
+            var names = SelectToolNames(profiles, MaxToolsPerRequest);
+            return BuildToolsArray(names, MaxToolsPerRequest);
+        }
+
+        public static int CountTools(IEnumerable<string> profiles) =>
+            SelectToolNames(profiles, MaxToolsPerRequest).Count;
+
+        public static IReadOnlyList<string> SelectToolNames(IEnumerable<string> profiles, int maxTools = MaxToolsPerRequest)
+        {
+            var ordered = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            void TryAdd(string name)
             {
+                if (string.IsNullOrWhiteSpace(name) || !seen.Add(name))
+                    return;
+                if (!DefinitionsByName.ContainsKey(name))
+                    return;
+                if (ordered.Count >= maxTools)
+                    return;
+                ordered.Add(name);
+            }
+
+            foreach (var name in CoreTools)
+                TryAdd(name);
+
+            if (profiles == null)
+                return ordered;
+
+            foreach (var profile in NormalizeProfiles(profiles))
+            {
+                if (profile.Equals(Profiles.Core, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (!ProfileTools.TryGetValue(profile, out var tools))
+                    continue;
+                foreach (var name in tools)
+                    TryAdd(name);
+            }
+
+            return ordered;
+        }
+
+        public static bool IsToolAllowed(string toolName, IEnumerable<string> profiles)
+        {
+            if (string.IsNullOrWhiteSpace(toolName))
+                return false;
+            var allowed = new HashSet<string>(SelectToolNames(profiles, MaxToolsPerRequest), StringComparer.OrdinalIgnoreCase);
+            return allowed.Contains(toolName.Trim());
+        }
+
+        /// <summary>Profiles that contain the tool (may include <see cref="Profiles.Core"/>).</summary>
+        public static IReadOnlyList<string> ResolveProfilesForTool(string toolName)
+        {
+            if (string.IsNullOrWhiteSpace(toolName))
+                return Array.Empty<string>();
+            if (!ToolToProfiles.TryGetValue(toolName.Trim(), out var list))
+                return Array.Empty<string>();
+            return list.ToArray();
+        }
+
+        /// <summary>
+        /// Non-core profiles needed so <paramref name="toolName"/> becomes available,
+        /// given currently active profiles.
+        /// </summary>
+        public static IReadOnlyList<string> GetMissingProfiles(string toolName, IEnumerable<string> activeProfiles)
+        {
+            var owning = ResolveProfilesForTool(toolName);
+            if (owning.Count == 0)
+                return Array.Empty<string>();
+            if (owning.Any(p => p.Equals(Profiles.Core, StringComparison.OrdinalIgnoreCase)))
+                return Array.Empty<string>();
+
+            var active = new HashSet<string>(NormalizeProfiles(activeProfiles), StringComparer.OrdinalIgnoreCase);
+            if (IsToolAllowed(toolName, active))
+                return Array.Empty<string>();
+
+            return owning
+                .Where(p => !p.Equals(Profiles.Core, StringComparison.OrdinalIgnoreCase))
+                .Where(p => !active.Contains(p))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        /// <summary>
+        /// When a tool's profile is already active but the tool was truncated by the 30-tool cap,
+        /// move those profiles to the front so <see cref="SelectToolNames"/> includes the tool.
+        /// </summary>
+        public static IReadOnlyList<string> PrioritizeProfilesForTool(
+            string toolName,
+            IEnumerable<string> activeProfiles)
+        {
+            var owning = ResolveProfilesForTool(toolName)
+                .Where(p => !p.Equals(Profiles.Core, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            if (owning.Length == 0)
+                return NormalizeProfiles(activeProfiles);
+
+            return MergeProfiles(owning, activeProfiles);
+        }
+
+        public static IReadOnlyList<string> MergeProfiles(IEnumerable<string> current, IEnumerable<string> add)
+        {
+            var list = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var p in NormalizeProfiles(current).Concat(NormalizeProfiles(add)))
+            {
+                if (seen.Add(p))
+                    list.Add(p);
+            }
+            return list;
+        }
+
+        public static IReadOnlyList<string> NormalizeProfiles(IEnumerable<string> profiles)
+        {
+            if (profiles == null)
+                return Array.Empty<string>();
+            var list = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var raw in profiles)
+            {
+                if (string.IsNullOrWhiteSpace(raw))
+                    continue;
+                var p = raw.Trim().ToLowerInvariant();
+                if (p == Profiles.Core)
+                    continue;
+                if (!ProfileTools.ContainsKey(p) && !p.Equals("full", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (p == "full")
+                {
+                    foreach (var all in Profiles.AllNonCore)
+                    {
+                        if (seen.Add(all))
+                            list.Add(all);
+                    }
+                    continue;
+                }
+                if (seen.Add(p))
+                    list.Add(p);
+            }
+            return list;
+        }
+
+        private static JArray BuildToolsArray(IEnumerable<string> names, int maxTools)
+        {
+            var tools = new JArray();
+            foreach (var name in names)
+            {
+                if (tools.Count >= maxTools)
+                    break;
+                if (!DefinitionsByName.TryGetValue(name, out var def))
+                    continue;
                 tools.Add(new JObject
                 {
                     ["type"] = "function",

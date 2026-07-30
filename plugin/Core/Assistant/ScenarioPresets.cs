@@ -14,6 +14,8 @@ namespace revit_mcp_plugin.Core.Assistant
         public string AgentInstruction { get; set; }
         /// <summary>Подсказка при наведении на чип — что будет сделано.</summary>
         public string Hint { get; set; }
+        /// <summary>Assistant tool profiles for REV-112 (chip → exact profiles, no router).</summary>
+        public string[] Profiles { get; set; }
     }
 
     public static class ScenarioPresets
@@ -34,6 +36,7 @@ namespace revit_mcp_plugin.Core.Assistant
                 Id = "axes_dims",
                 Label = "Оси и размеры",
                 Icon = "▦",
+                Profiles = new[] { ToolCatalog.Profiles.Annotation },
                 Hint = "Оси по несущим стенам → внешние размеры по габариту → размеры внутри помещений.",
                 Prompt =
                     "На активном плане этажа: если осей ещё нет — создай координационные оси по несущим стенам " +
@@ -45,6 +48,7 @@ namespace revit_mcp_plugin.Core.Assistant
                 Id = "rooms_tags",
                 Label = "Rooms и марки",
                 Icon = "⌂",
+                Profiles = new[] { ToolCatalog.Profiles.Modeling, ToolCatalog.Profiles.Annotation },
                 Hint = "Помещения в замкнутых контурах → марки с площадью.",
                 Prompt =
                     "На активном плане: создай недостающие помещения в замкнутых контурах " +
@@ -56,6 +60,7 @@ namespace revit_mcp_plugin.Core.Assistant
                 Id = "schedules_sheet",
                 Label = "Спеки / лист",
                 Icon = "☰",
+                Profiles = new[] { ToolCatalog.Profiles.Schedules, ToolCatalog.Profiles.Sheets },
                 Hint = "ТЭП, спецификации или экспликация полов — на лист из рамки проекта.",
                 Prompt =
                     "Подготовь ведомости/таблицы на листе проекта: ТЭП, спецификации дверей и окон " +
@@ -71,6 +76,7 @@ namespace revit_mcp_plugin.Core.Assistant
                 Id = "norm_audit",
                 Label = "Проверить нормы",
                 Icon = "✓",
+                Profiles = new[] { ToolCatalog.Profiles.Norms },
                 Hint = "Проверка по ГОСТ/СП → красные заливки, выноски, покраска дверей при нарушениях.",
                 Prompt =
                     "Проверь активный этаж по нормам (СП РК). " +
@@ -85,6 +91,12 @@ namespace revit_mcp_plugin.Core.Assistant
                 Id = "layout_from_scratch",
                 Label = "Планировка с нуля",
                 Icon = "▣",
+                Profiles = new[]
+                {
+                    ToolCatalog.Profiles.Modeling,
+                    ToolCatalog.Profiles.Annotation,
+                    ToolCatalog.Profiles.Norms,
+                },
                 Hint = "Нормы → стены → двери → помещения по 1–2 → марки. Для блока, тестового этажа.",
                 Prompt =
                     "На активном плане этажа спроектируй функциональную планировку по запросу: " +
@@ -102,6 +114,7 @@ namespace revit_mcp_plugin.Core.Assistant
                 Id = "clear_mcp_markup",
                 Label = "Удалить разметку",
                 Icon = "⌫",
+                Profiles = new[] { ToolCatalog.Profiles.Norms },
                 Hint = "Снять заливки, выноски и красную графику дверей/окон после нормоконтроля.",
                 Prompt =
                     "Сними на активном виде разметку нормоконтроля: красные заливки помещений, " +
