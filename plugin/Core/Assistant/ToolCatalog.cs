@@ -781,8 +781,13 @@ namespace revit_mcp_plugin.Core.Assistant
                     "Alias tag_all_rooms is accepted by the host.",
                     P(("tagTypeId", S(), null), ("roomIds", A("string"), null))),
                 T("export_room_data",
-                    "Export room ElementIds, names, numbers, areas (м²). Use before schedules or norm area checks.",
-                    P(("includeUnplacedRooms", B(), null), ("includeNotEnclosedRooms", B(), null))),
+                    "Export room ElementIds, names, numbers, areas (м²). «На этаже» → filterByActiveView=true or levelName from get_current_view_info. " +
+                    "Whole building → omit filter. Response may include totalInProject when filtered.",
+                    P(("includeUnplacedRooms", B(), null),
+                      ("includeNotEnclosedRooms", B(), null),
+                      ("filterByActiveView", B(), "scope to active floor plan level"),
+                      ("levelName", S(), "filter by level name"),
+                      ("levelId", N(), "filter by level ElementId"))),
                 T("create_door_schedule",
                     "Create door schedule (спецификация дверей). Returns schedule ElementId for place_view_on_sheet / auto_layout_sheet. " +
                     "NOT TEP — for ТЭП use render_tep_table. No args; uses project template.",

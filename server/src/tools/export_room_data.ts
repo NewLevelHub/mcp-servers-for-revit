@@ -5,7 +5,8 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerExportRoomDataTool(server: McpServer) {
   server.tool(
     "export_room_data",
-    "Export all room data from the current Revit project. Returns detailed information about each room including name, number, level, area, volume, perimeter, department, and more. Useful for generating room schedules, space analysis, and facility management data.",
+    "Export room data from the Revit project. Returns ElementIds, names, numbers, levels, areas (m²), etc. " +
+      "For «сколько помещений на этаже» use filterByActiveView=true or levelName — otherwise all project rooms are returned.",
     {
       includeUnplacedRooms: z
         .boolean()
@@ -17,11 +18,27 @@ export function registerExportRoomDataTool(server: McpServer) {
         .optional()
         .default(false)
         .describe("Whether to include rooms that are not fully enclosed. Defaults to false."),
+      filterByActiveView: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("When true, only rooms on the active floor plan level. Use for «на этаже» queries."),
+      levelName: z
+        .string()
+        .optional()
+        .describe("Filter by level name (e.g. «2 этаж»). Ignored when filterByActiveView resolves a level."),
+      levelId: z
+        .number()
+        .optional()
+        .describe("Filter by level ElementId. Takes precedence over levelName when set."),
     },
     async (args, extra) => {
       const params = {
         includeUnplacedRooms: args.includeUnplacedRooms ?? false,
         includeNotEnclosedRooms: args.includeNotEnclosedRooms ?? false,
+        filterByActiveView: args.filterByActiveView ?? false,
+        ...(args.levelName ? { levelName: args.levelName } : {}),
+        ...(args.levelId != null ? { levelId: args.levelId } : {}),
       };
 
       try {

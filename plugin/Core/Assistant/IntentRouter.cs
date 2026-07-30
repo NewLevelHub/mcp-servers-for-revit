@@ -76,7 +76,8 @@ namespace revit_mcp_plugin.Core.Assistant
 
             if (ContainsAny(text,
                     "статистик", "сколько стен", "сколько двер", "материал", "объём", "объем",
-                    "квартирограф", "analyze_model", "выделен", "selected"))
+                    "квартирограф", "analyze_model", "выделен", "selected",
+                    "сколько помещен", "сколько комнат", "какие площади", "площади помещен"))
                 hits.Add(ToolCatalog.Profiles.Data);
 
             // Spec + sheet phrasing often needs both.

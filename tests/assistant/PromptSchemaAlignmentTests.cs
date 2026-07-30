@@ -54,6 +54,9 @@ public class PromptSchemaAlignmentTests
     [InlineData("check_min_dimensions", "housingType")]
     [InlineData("check_evacuation_width", "filterByActiveView")]
     [InlineData("check_fire_doors", "viewId")]
+    [InlineData("export_room_data", "filterByActiveView")]
+    [InlineData("export_room_data", "levelName")]
+    [InlineData("export_room_data", "levelId")]
     public void Rev117_mismatches_are_closed(string tool, string param)
     {
         var declared = ToolCatalog.GetParameterPropertyNames(tool);

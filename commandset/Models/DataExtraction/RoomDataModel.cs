@@ -94,5 +94,17 @@ namespace RevitMCPCommandSet.Models.DataExtraction
 
         [JsonProperty("message")]
         public string Message { get; set; }
+
+        /// <summary>When filtered: how the scope was applied (e.g. activeView, levelName).</summary>
+        [JsonProperty("filteredBy")]
+        public string FilteredBy { get; set; }
+
+        /// <summary>Level name used for filtering, if any.</summary>
+        [JsonProperty("levelName")]
+        public string LevelName { get; set; }
+
+        /// <summary>Placed rooms in project before level/view filter (REV-132).</summary>
+        [JsonProperty("totalInProject")]
+        public int? TotalInProject { get; set; }
     }
 }

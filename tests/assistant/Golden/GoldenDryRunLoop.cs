@@ -241,10 +241,14 @@ public sealed class StubAssistantToolExecutor : IAssistantToolExecutor
             {
                 ["rooms"] = new JArray
                 {
-                    new JObject { ["Id"] = 501, ["Name"] = "Кухня", ["Area"] = 12.5 },
-                    new JObject { ["Id"] = 502, ["Name"] = "Гостиная", ["Area"] = 22.0 },
+                    new JObject { ["Id"] = 501, ["Name"] = "Кухня", ["Area"] = 12.5, ["level"] = "Уровень 1" },
+                    new JObject { ["Id"] = 502, ["Name"] = "Гостиная", ["Area"] = 22.0, ["level"] = "Уровень 1" },
                 },
+                ["totalRooms"] = 2,
                 ["count"] = 2,
+                ["filteredBy"] = "activeView",
+                ["levelName"] = "Уровень 1",
+                ["totalInProject"] = 572,
             },
             "run_norm_audit" => new JObject
             {

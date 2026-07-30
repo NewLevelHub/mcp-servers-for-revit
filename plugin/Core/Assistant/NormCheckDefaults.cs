@@ -14,7 +14,7 @@ namespace revit_mcp_plugin.Core.Assistant
     /// </summary>
     public static class NormCheckDefaults
     {
-        public static string EnrichArgs(string toolName, string argsJson)
+        public static string EnrichArgs(string toolName, string argsJson, string userText = null)
         {
             JObject args;
             try
@@ -125,8 +125,23 @@ namespace revit_mcp_plugin.Core.Assistant
 
             if (IsNormCheckTool(n))
                 InjectActiveViewScope(args);
+            else if (n.Equals("export_room_data", StringComparison.OrdinalIgnoreCase))
+                InjectExportRoomDataScope(args, userText);
 
             return args.ToString(Formatting.None);
+        }
+
+        private static void InjectExportRoomDataScope(JObject args, string userText)
+        {
+            if (args["filterByActiveView"] != null
+                || args["levelName"] != null
+                || args["levelId"] != null)
+                return;
+
+            if (!ExportRoomDataScopeRules.ShouldInjectActiveViewFilter(userText))
+                return;
+
+            args["filterByActiveView"] = true;
         }
 
         private static bool IsNormCheckTool(string n) =>

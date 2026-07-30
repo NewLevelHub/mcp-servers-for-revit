@@ -1129,6 +1129,7 @@ async function fetchExportRoomData(
       return await revitClient.sendCommand("export_room_data", {
         includeUnplacedRooms: false,
         includeNotEnclosedRooms: false,
+        ...(levelName ? { levelName } : {}),
       });
     }));
 

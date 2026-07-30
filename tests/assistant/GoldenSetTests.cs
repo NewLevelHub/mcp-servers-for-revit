@@ -163,7 +163,9 @@ internal static class ScriptedChains
         c.Id switch
         {
             "read-view-info" => ScriptedChatClient.FromToolChain([("get_current_view_info", null)]),
-            "count-rooms" => ScriptedChatClient.FromToolChain([("export_room_data", null)]),
+            "count-rooms" => ScriptedChatClient.FromToolChain([
+                ("export_room_data", new { filterByActiveView = true }),
+            ]),
             "model-stats" => ScriptedChatClient.FromToolChain([("analyze_model_statistics", null)]),
             "selected-elements" => ScriptedChatClient.FromToolChain([("get_selected_elements", null)]),
             "tag-rooms-simple" => ScriptedChatClient.FromToolChain([("tag_rooms", new { tagTypeId = "1" })]),
