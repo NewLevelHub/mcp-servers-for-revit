@@ -533,6 +533,18 @@ namespace revit_mcp_plugin.Core.Assistant
             CancellationToken cancellationToken,
             string turnId = null)
         {
+            return await RunAsync(userMessage, viewContext, attachments, cancellationToken, turnId, null)
+                .ConfigureAwait(false);
+        }
+
+        public async Task<AgentTurnResult> RunAsync(
+            string userMessage,
+            string viewContext,
+            IList<ChatAttachment> attachments,
+            CancellationToken cancellationToken,
+            string turnId,
+            IReadOnlyList<string> toolProfiles)
+        {
             var settings = PluginSettingsStore.LoadSettings();
             if (string.IsNullOrWhiteSpace(settings.AssistantApiKey))
             {
@@ -557,7 +569,15 @@ namespace revit_mcp_plugin.Core.Assistant
                 settings.AssistantApiBaseUrl,
                 settings.AssistantModel);
 
-            var tools = ToolCatalog.GetOpenAiTools();
+            var activeProfiles = ToolCatalog.NormalizeProfiles(toolProfiles);
+            if (activeProfiles.Count == 0)
+            {
+                activeProfiles = await IntentRouter.ResolveAsync(userMessage, client, cancellationToken)
+                    .ConfigureAwait(false);
+                activeProfiles = ToolCatalog.NormalizeProfiles(activeProfiles);
+            }
+
+            var tools = ToolCatalog.GetOpenAiTools(activeProfiles);
             var done = new List<string>();
 
             lock (_historyLock)
@@ -600,6 +620,7 @@ namespace revit_mcp_plugin.Core.Assistant
                 Ts = DateTime.UtcNow,
                 Model = settings.AssistantModel ?? "gpt-4o-mini",
                 UserText = userMessage,
+                ToolProfiles = activeProfiles.ToList(),
             };
             ParseViewContext(viewContext, turnLog);
             if (attachments != null)
@@ -622,6 +643,9 @@ namespace revit_mcp_plugin.Core.Assistant
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     RaiseStatus("Думает…");
+
+                    // Refresh tools each round so escalation expands the catalog.
+                    tools = ToolCatalog.GetOpenAiTools(activeProfiles);
 
                     JArray messages;
                     lock (_historyLock)
@@ -672,6 +696,7 @@ namespace revit_mcp_plugin.Core.Assistant
                         turnLog.Outcome = "failed";
                         turnLog.TotalMs = turnSw.ElapsedMilliseconds;
                         turnLog.Reply = "Пустой ответ от ИИ.";
+                        turnLog.ToolProfiles = activeProfiles.ToList();
                         AssistantTurnLogger.Write(turnLog);
                         return new AgentTurnResult
                         {
@@ -698,6 +723,7 @@ namespace revit_mcp_plugin.Core.Assistant
                         turnLog.Reply = replyText;
                         turnLog.DoneSummary = done;
                         turnLog.TotalMs = turnSw.ElapsedMilliseconds;
+                        turnLog.ToolProfiles = activeProfiles.ToList();
                         AssistantTurnLogger.Write(turnLog);
 
                         RaiseStatus("Готов");
@@ -721,6 +747,46 @@ namespace revit_mcp_plugin.Core.Assistant
                         if (cancellationToken.IsCancellationRequested)
                         {
                             AppendToolResult(callId, CancelledToolPayload());
+                            continue;
+                        }
+
+                        // REV-112: tool outside active profiles → escalate, do not execute yet.
+                        if (!ToolCatalog.IsToolAllowed(name, activeProfiles))
+                        {
+                            var missing = ToolCatalog.GetMissingProfiles(name, activeProfiles);
+                            if (missing.Count > 0)
+                            {
+                                activeProfiles = ToolCatalog.MergeProfiles(activeProfiles, missing);
+                                foreach (var p in missing)
+                                    turnLog.ProfileEscalations.Add(p);
+                                AppendToolResult(callId, BuildProfileEscalationPayload(name, missing, activeProfiles));
+                                done.Add("профиль +" + string.Join("+", missing) + " для " + name);
+                                continue;
+                            }
+
+                            // Profile already active but tool truncated by cap — reorder profiles.
+                            var reordered = ToolCatalog.PrioritizeProfilesForTool(name, activeProfiles);
+                            if (!ReferenceEquals(reordered, activeProfiles)
+                                && ToolCatalog.IsToolAllowed(name, reordered))
+                            {
+                                activeProfiles = reordered;
+                                turnLog.ProfileEscalations.Add("reorder:" + name);
+                                AppendToolResult(callId, BuildProfileEscalationPayload(
+                                    name,
+                                    ToolCatalog.ResolveProfilesForTool(name),
+                                    activeProfiles));
+                                done.Add("профиль↑ для " + name);
+                                continue;
+                            }
+
+                            // Unknown tool — soft error (same as before).
+                            AppendToolResult(callId, new JObject
+                            {
+                                ["error"] = "unknown_tool",
+                                ["tool"] = name,
+                                ["message"] = "Инструмент недоступен в каталоге ассистента.",
+                            }.ToString());
+                            done.Add("ошибка: неизвестный tool " + name);
                             continue;
                         }
 
@@ -848,6 +914,7 @@ namespace revit_mcp_plugin.Core.Assistant
                 turnLog.DoneSummary = done;
                 turnLog.TotalMs = turnSw.ElapsedMilliseconds;
                 turnLog.Reply = "Слишком много шагов.";
+                turnLog.ToolProfiles = activeProfiles.ToList();
                 AssistantTurnLogger.Write(turnLog);
 
                 RaiseStatus("Готов");
@@ -863,6 +930,7 @@ namespace revit_mcp_plugin.Core.Assistant
                 turnLog.Outcome = "cancelled";
                 turnLog.DoneSummary = done;
                 turnLog.TotalMs = turnSw.ElapsedMilliseconds;
+                turnLog.ToolProfiles = activeProfiles.ToList();
                 AssistantTurnLogger.Write(turnLog);
                 return CancelledResult(done);
             }
@@ -899,6 +967,24 @@ namespace revit_mcp_plugin.Core.Assistant
             {
                 ["cancelled"] = true,
                 ["message"] = "Остановлено пользователем."
+            }.ToString();
+        }
+
+        private static string BuildProfileEscalationPayload(
+            string toolName,
+            IReadOnlyList<string> missingProfiles,
+            IReadOnlyList<string> activeProfiles)
+        {
+            return new JObject
+            {
+                ["error"] = "tool_not_in_profile",
+                ["tool"] = toolName,
+                ["availableInProfiles"] = new JArray(missingProfiles.ToArray()),
+                ["activeProfiles"] = new JArray(activeProfiles.ToArray()),
+                ["hint"] =
+                    "Tool was outside the active profile set. Profiles " +
+                    string.Join(", ", missingProfiles) +
+                    " are now enabled — call the same tool again.",
             }.ToString();
         }
 

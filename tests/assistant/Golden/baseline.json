@@ -1,11 +1,12 @@
 {
-  "id": "baseline-rev-111",
+  "id": "baseline-rev-112",
   "recordedAt": "2026-07-30",
-  "note": "Scripted dry-run harness baseline (CI). Live LLM baseline: run tests/assistant/run-golden.ps1 -Live and update live section.",
+  "note": "Scripted dry-run after REV-112 tool profiles (<=30 tools/request). Catalog JSON size for annotation profile is < half of full 74-tool catalog. Live LLM baseline: run tests/assistant/run-golden.ps1 -Live.",
   "targets": {
     "firstToolAccuracy": 0.9,
     "forbidAccuracy": 1.0,
-    "requireArgsAccuracy": 0.8
+    "requireArgsAccuracy": 0.8,
+    "maxToolsPerRequest": 30
   },
   "scripted": {
     "total": 24,
@@ -14,7 +15,9 @@
     "forbidAccuracy": 1.0,
     "requireArgsAccuracy": 1.0,
     "avgRounds": 2.5,
-    "avgPromptTokens": 120
+    "avgPromptTokens": 120,
+    "toolCatalogCharsFullApprox": 29700,
+    "toolCatalogCharsAnnotationProfileApprox": "lt_half_of_full"
   },
   "live": null
 }

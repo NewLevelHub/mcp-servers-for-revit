@@ -37,7 +37,8 @@ public sealed class GoldenDryRunLoop
             new JObject { ["role"] = "system", ["content"] = _systemPrompt },
             new JObject { ["role"] = "user", ["content"] = userText ?? "" },
         };
-        var tools = ToolCatalog.GetOpenAiTools();
+        var activeProfiles = ToolCatalog.NormalizeProfiles(IntentRouter.ResolveHeuristic(userText));
+        var tools = ToolCatalog.GetOpenAiTools(activeProfiles);
         var calls = new List<GoldenToolCall>();
         var promptTokens = 0;
         var rounds = 0;
@@ -46,6 +47,7 @@ public sealed class GoldenDryRunLoop
         {
             cancellationToken.ThrowIfCancellationRequested();
             rounds = round + 1;
+            tools = ToolCatalog.GetOpenAiTools(activeProfiles);
 
             var completion = await _llm.ChatCompletionsAsync(history, tools, cancellationToken)
                 .ConfigureAwait(false);
@@ -53,6 +55,9 @@ public sealed class GoldenDryRunLoop
             var usage = completion["usage"];
             if (usage != null)
                 promptTokens += usage["prompt_tokens"]?.Value<int>() ?? 0;
+
+            // Approximate catalog size into tokens for scripted runs (usage is fixed).
+            promptTokens += Math.Max(0, tools.ToString(Newtonsoft.Json.Formatting.None).Length / 4);
 
             var choice = completion["choices"]?[0]?["message"] as JObject;
             if (choice == null)
@@ -86,6 +91,58 @@ public sealed class GoldenDryRunLoop
                     Name = name,
                     Args = argsObj,
                 });
+
+                if (!ToolCatalog.IsToolAllowed(name, activeProfiles))
+                {
+                    var missing = ToolCatalog.GetMissingProfiles(name, activeProfiles);
+                    if (missing.Count > 0)
+                    {
+                        activeProfiles = ToolCatalog.MergeProfiles(activeProfiles, missing);
+                        history.Add(new JObject
+                        {
+                            ["role"] = "tool",
+                            ["tool_call_id"] = callId,
+                            ["content"] = Truncate(new JObject
+                            {
+                                ["error"] = "tool_not_in_profile",
+                                ["tool"] = name,
+                                ["availableInProfiles"] = new JArray(missing.ToArray()),
+                                ["hint"] = "Profiles expanded — call the same tool again.",
+                            }.ToString(Newtonsoft.Json.Formatting.None), 3500),
+                        });
+                        continue;
+                    }
+
+                    var reordered = ToolCatalog.PrioritizeProfilesForTool(name, activeProfiles);
+                    if (ToolCatalog.IsToolAllowed(name, reordered))
+                    {
+                        activeProfiles = reordered;
+                        history.Add(new JObject
+                        {
+                            ["role"] = "tool",
+                            ["tool_call_id"] = callId,
+                            ["content"] = Truncate(new JObject
+                            {
+                                ["error"] = "tool_not_in_profile",
+                                ["tool"] = name,
+                                ["hint"] = "Profiles reordered for cap — call the same tool again.",
+                            }.ToString(Newtonsoft.Json.Formatting.None), 3500),
+                        });
+                        continue;
+                    }
+
+                    history.Add(new JObject
+                    {
+                        ["role"] = "tool",
+                        ["tool_call_id"] = callId,
+                        ["content"] = Truncate(new JObject
+                        {
+                            ["error"] = "unknown_tool",
+                            ["tool"] = name,
+                        }.ToString(Newtonsoft.Json.Formatting.None), 3500),
+                    });
+                    continue;
+                }
 
                 string raw;
                 try
