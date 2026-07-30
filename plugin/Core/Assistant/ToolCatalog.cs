@@ -1013,10 +1013,10 @@ namespace revit_mcp_plugin.Core.Assistant
                 ["additionalProperties"] = false
             };
 
-        private static JObject P(params (string name, JObject schema, string? desc)[] items) =>
+        private static JObject P(params (string name, JObject schema, string desc)[] items) =>
             P(null, items);
 
-        private static JObject P(string[]? required, params (string name, JObject schema, string? desc)[] items)
+        private static JObject P(string[] required, params (string name, JObject schema, string desc)[] items)
         {
             var props = new JObject();
             foreach (var item in items)
