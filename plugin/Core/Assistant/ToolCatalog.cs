@@ -351,6 +351,20 @@ namespace revit_mcp_plugin.Core.Assistant
             return list;
         }
 
+        /// <summary>Parameter property names declared for a tool (empty if unknown).</summary>
+        public static IReadOnlyList<string> GetParameterPropertyNames(string toolName)
+        {
+            if (string.IsNullOrWhiteSpace(toolName))
+                return Array.Empty<string>();
+            var canonical = ResolveToolAlias(toolName);
+            if (!DefinitionsByName.TryGetValue(canonical, out var def))
+                return Array.Empty<string>();
+            var props = def.Parameters?["properties"] as JObject;
+            if (props == null)
+                return Array.Empty<string>();
+            return props.Properties().Select(p => p.Name).ToList();
+        }
+
         public static IReadOnlyList<string> NormalizeProfiles(IEnumerable<string> profiles)
         {
             if (profiles == null)
@@ -813,17 +827,32 @@ namespace revit_mcp_plugin.Core.Assistant
                       ("placement", O(), "optional nested {sheetId,viewId,positionX,positionY}"))),
                 T("auto_layout_sheet",
                     "Auto-pack existing views/schedules on a sheet. Pass real view ids in items. Not for TEP table.",
-                    P(("sheetId", N(), null), ("sheetNumber", S(), null),
-                      ("createSheetIfMissing", B(), null), ("avoidExisting", B(), null), ("order", S(), null))),
+                    P(R("items"),
+                      ("items", AItems(P(null,
+                          ("viewId", N(), "view or schedule ElementId"),
+                          ("viewUniqueId", S(), "view UniqueId"),
+                          ("viewName", S(), "view or schedule name"))),
+                        "views/schedules to place"),
+                      ("sheetId", N(), null), ("sheetNumber", S(), null),
+                      ("createSheetIfMissing", B(), null), ("avoidExisting", B(), null),
+                      ("order", E("input", "heightDesc", "areaDesc"), "packing order"))),
                 T("check_evacuation_width",
                     "Norm check: evacuation corridor width vs minWidthMm (auto 1200 mm / СП РК if omitted). " +
                     "Returns violators with ids + source citation. Part of floor norm-audit.",
-                    P(("levelName", S(), null), ("minWidthMm", N(), "mm, default 1200"),
+                    P(("levelName", S(), null),
+                      ("levelId", N(), "level ElementId"),
+                      ("viewId", N(), "floor plan view ElementId"),
+                      ("filterByActiveView", B(), "scope to active view, default true"),
+                      ("minWidthMm", N(), "mm, default 1200"),
                       ("mode", reportMode, "report = data only"))),
                 T("check_room_depth",
                     "Norm check: living room depth vs maxDepthMm (auto 6000 mm / СП РК п.4.4.10.22 if omitted). " +
                     "Returns violators with ids + source. Part of floor norm-audit.",
-                    P(("levelName", S(), null), ("maxDepthMm", N(), "mm, default 6000"),
+                    P(("levelName", S(), null),
+                      ("levelId", N(), "level ElementId"),
+                      ("viewId", N(), "floor plan view ElementId"),
+                      ("filterByActiveView", B(), "scope to active view, default true"),
+                      ("maxDepthMm", N(), "mm, default 6000"),
                       ("roomScope", S(), "living"), ("mode", reportMode, "report = data only"))),
                 T("check_min_dimensions",
                     "Norm check: balcony/loggia/pier min size. " +
@@ -831,17 +860,25 @@ namespace revit_mcp_plugin.Core.Assistant
                     "(1.4 m is МГН / п.4.6.5 only). Default catalog uses fire-path/pier limits (~1200). " +
                     "Pass housingType=mgn only when user asks МГН. Returns violators + source.",
                     P(("levelName", S(), null),
+                      ("levelId", N(), "level ElementId"),
+                      ("viewId", N(), "floor plan view ElementId"),
+                      ("filterByActiveView", B(), "scope to active view, default true"),
+                      ("housingType", E("ordinary", "mgn"), "mgn = п.4.6.5 limits (1.4 m)"),
                       ("minFirePathOutdoorWidthMm", N(), "mm, 1200 for Н1 path only"),
                       ("minFirePierToOpeningMm", N(), "mm, default 1200"),
                       ("minFirePierBetweenOpeningsMm", N(), "mm"),
                       ("minBalconyWidthMm", N(), "mm — only if МГН"),
                       ("minLoggiaWidthMm", N(), "mm — only if МГН"),
+                      ("minLoggiaDepthMm", N(), "mm"),
                       ("mode", reportMode, "report = data only"))),
                 T("check_fire_doors",
                     "Norm check: fire doors. Returns doors with requiresFireDoor/compliant/reason/source " +
                     "and annotationHints[{elementId,text,leader}] for create_text_notes. " +
                     "Paint non-compliant doors red AND place leaders — never color without callouts.",
-                    P(("levelName", S(), null))),
+                    P(("levelName", S(), null),
+                      ("levelId", N(), "level ElementId"),
+                      ("viewId", N(), "floor plan view ElementId"),
+                      ("filterByActiveView", B(), "scope to active view, default true"))),
                 T("get_room_geometry_metrics",
                     "Returns per-room width/depth/area (мм / м²) for depth and min-size checks. " +
                     "Use before check_room_depth / check_min_dimensions when you need raw geometry. No args.",
@@ -897,9 +934,14 @@ namespace revit_mcp_plugin.Core.Assistant
                 // --- Full MCP parity (Revit commands from command.json) ---
                 T("run_norm_audit",
                     "Unified norm audit for active floor: evacuation width, room depth, min dimensions, fire doors. " +
-                    "Returns findings[] + skippedRules. For violations display: create_filled_regions + operate_element + annotate_norm_findings. " +
+                    "Returns findings[] + skippedRules. mode=highlight paints violations; annotate=true adds leader callouts (default true). " +
                     "Prefer over calling many check_* separately when user says «проверь этаж по нормам».",
-                    P(("levelName", S(), null), ("mode", reportMode, "report = data; highlight = report+paint"),
+                    P(("levelName", S(), null),
+                      ("levelId", N(), "level ElementId"),
+                      ("viewId", N(), "floor plan view ElementId"),
+                      ("filterByActiveView", B(), "scope to active view, default true"),
+                      ("mode", reportMode, "report = data; highlight = report+paint"),
+                      ("annotate", B(), "leader callouts when mode=highlight, default true"),
                       ("includeCompliant", B(), null), ("topics", A("string"), null))),
                 T("annotate_norm_findings",
                     "Place leader callouts for run_norm_audit findings. Template: name: actual < required · document clause.",

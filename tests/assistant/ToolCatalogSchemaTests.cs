@@ -66,6 +66,7 @@ public class ToolCatalogSchemaTests
     [InlineData("configure_grid_display", "bubbleEnd", new[] { "bottomLeft", "topRight", "both" })]
     [InlineData("create_filled_regions", "colorPreset", new[] { "red", "green", "blue", "grey", "gray" })]
     [InlineData("check_evacuation_width", "mode", new[] { "report", "highlight" })]
+    [InlineData("auto_layout_sheet", "order", new[] { "input", "heightDesc", "areaDesc" })]
     public void Enum_parameters_are_declared(string toolName, string propName, string[] values)
     {
         var prop = Prop(ParametersOf(toolName), propName);
