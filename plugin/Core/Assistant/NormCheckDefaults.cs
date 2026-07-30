@@ -133,6 +133,9 @@ namespace revit_mcp_plugin.Core.Assistant
 
         private static void InjectExportRoomDataScope(JObject args, string userText)
         {
+            if (ExportRoomDataScopeRules.WantsModelStatistics(userText))
+                return;
+
             if (args["filterByActiveView"] != null
                 || args["levelName"] != null
                 || args["levelId"] != null)

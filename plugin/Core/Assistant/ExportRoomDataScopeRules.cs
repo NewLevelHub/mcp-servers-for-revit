@@ -4,15 +4,32 @@ namespace revit_mcp_plugin.Core.Assistant
 {
     /// <summary>
     /// When to auto-scope <c>export_room_data</c> to the active floor (REV-132).
-    /// Project-wide queries must not get <c>filterByActiveView</c> injected.
+    /// Project-wide / model-stats queries must not get <c>filterByActiveView</c> injected (REV-133).
     /// </summary>
     public static class ExportRoomDataScopeRules
     {
+        /// <summary>
+        /// «Статистика модели» — counts from <c>analyze_model_statistics</c>, not floor-scoped export.
+        /// </summary>
+        public static bool WantsModelStatistics(string userText)
+        {
+            var text = (userText ?? "").ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+
+            return ContainsAny(text,
+                "статистика модели", "статистик модел", "статистик по модел",
+                "статистику модел", "анализ модел", "analyze_model");
+        }
+
         public static bool WantsProjectWideExport(string userText)
         {
             var text = (userText ?? "").ToLowerInvariant();
             if (string.IsNullOrWhiteSpace(text))
                 return false;
+
+            if (WantsModelStatistics(text))
+                return true;
 
             return ContainsAny(text,
                 "в проект", "всего", "всём здан", "во всем здан", "по всему здан",
@@ -24,6 +41,9 @@ namespace revit_mcp_plugin.Core.Assistant
         {
             var text = (userText ?? "").ToLowerInvariant();
             if (string.IsNullOrWhiteSpace(text))
+                return false;
+
+            if (WantsModelStatistics(text))
                 return false;
 
             return ContainsAny(text,

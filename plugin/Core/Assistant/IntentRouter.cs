@@ -92,6 +92,14 @@ namespace revit_mcp_plugin.Core.Assistant
                 hits.Remove(ToolCatalog.Profiles.Annotation);
             }
 
+            // «Статистика модели» — read-only counts; not layout (REV-133).
+            if (ExportRoomDataScopeRules.WantsModelStatistics(text)
+                || (ContainsAny(text, "статистик") && ContainsAny(text, "стен", "двер", "помещен", "комнат")))
+            {
+                hits.Remove(ToolCatalog.Profiles.Modeling);
+                hits.Remove(ToolCatalog.Profiles.Annotation);
+            }
+
             return hits.ToArray();
         }
 

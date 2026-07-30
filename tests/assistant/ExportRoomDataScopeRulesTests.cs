@@ -22,4 +22,13 @@ public class ExportRoomDataScopeRulesTests
     public void Project_scope_wins_when_both_phrases_present() =>
         Assert.False(ExportRoomDataScopeRules.ShouldInjectActiveViewFilter(
             "Сколько помещений на этаже и сколько всего в проекте?"));
+
+    [Theory]
+    [InlineData("Дай статистику модели: сколько стен, дверей, помещений.")]
+    [InlineData("Статистика модели по проекту")]
+    public void Model_statistics_do_not_inject_floor_filter(string text)
+    {
+        Assert.True(ExportRoomDataScopeRules.WantsModelStatistics(text));
+        Assert.False(ExportRoomDataScopeRules.ShouldInjectActiveViewFilter(text));
+    }
 }

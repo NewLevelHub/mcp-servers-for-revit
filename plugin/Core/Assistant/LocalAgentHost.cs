@@ -1166,6 +1166,7 @@ namespace revit_mcp_plugin.Core.Assistant
                 var compact = CompactResult(toolName, result);
                 var forModel = result.ToString(Newtonsoft.Json.Formatting.None);
                 forModel = SlimFamilyTypesForModel(toolName, forModel);
+                forModel = SlimModelStatisticsForModel(toolName, forModel);
                 forModel = TruncateForHistory(forModel);
                 return (true, compact, forModel);
             }
@@ -1201,6 +1202,12 @@ namespace revit_mcp_plugin.Core.Assistant
                     var s = obj["summary"]?.ToString();
                     if (!string.IsNullOrWhiteSpace(s))
                         return "проверка норм: " + s;
+                }
+                if (toolName.Equals("analyze_model_statistics", StringComparison.OrdinalIgnoreCase))
+                {
+                    var s = obj["summary"]?.ToString();
+                    if (!string.IsNullOrWhiteSpace(s))
+                        return "статистика модели: " + s;
                 }
                 if (obj["count"] != null) return $"{FriendlyToolName(toolName)}: {obj["count"]}";
                 if (obj["createdCount"] != null) return $"{FriendlyToolName(toolName)}: {obj["createdCount"]}";
@@ -1438,6 +1445,81 @@ namespace revit_mcp_plugin.Core.Assistant
             return blob.IndexOf("Wall", StringComparison.OrdinalIgnoreCase) >= 0
                 || blob.IndexOf("OST_Walls", StringComparison.OrdinalIgnoreCase) >= 0
                 || blob.IndexOf("Стен", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        /// <summary>
+        /// Compact model statistics so room/wall/door counts survive the 4k history cap (REV-133).
+        /// </summary>
+        private static string SlimModelStatisticsForModel(string toolName, string forModel)
+        {
+            if (!toolName.Equals("analyze_model_statistics", StringComparison.OrdinalIgnoreCase))
+                return forModel;
+
+            try
+            {
+                var token = JToken.Parse(forModel);
+                var obj = token as JObject;
+                if (obj == null && token is JObject root && root["result"] is JObject wrapped)
+                    obj = wrapped;
+                if (obj == null)
+                    return forModel;
+
+                var categories = obj["categories"] ?? obj["Categories"];
+                if (categories == null || categories.Type != JTokenType.Array)
+                    return forModel;
+
+                var slimCats = new JArray();
+                var summaryParts = new List<string>();
+                foreach (var catTok in categories.OfType<JObject>().Take(25))
+                {
+                    var name = catTok["categoryName"]?.ToString()
+                        ?? catTok["CategoryName"]?.ToString()
+                        ?? "";
+                    var count = catTok["elementCount"]?.Value<int?>()
+                        ?? catTok["ElementCount"]?.Value<int?>();
+                    if (string.IsNullOrWhiteSpace(name) || count == null)
+                        continue;
+
+                    slimCats.Add(new JObject
+                    {
+                        ["categoryName"] = name,
+                        ["elementCount"] = count.Value,
+                    });
+
+                    if (IsKeyStatsCategory(name))
+                        summaryParts.Add($"{name}: {count.Value}");
+                }
+
+                var summary = summaryParts.Count > 0
+                    ? string.Join(", ", summaryParts)
+                    : null;
+
+                return new JObject
+                {
+                    ["ok"] = true,
+                    ["projectName"] = obj["projectName"] ?? obj["ProjectName"],
+                    ["totalElements"] = obj["totalElements"] ?? obj["TotalElements"],
+                    ["summary"] = summary,
+                    ["categories"] = slimCats,
+                    ["hint"] = "Счёт помещений/стен/дверей по проекту — из categories[]/summary. " +
+                               "Не вызывай export_room_data для статистики модели."
+                }.ToString(Newtonsoft.Json.Formatting.None);
+            }
+            catch
+            {
+                return forModel;
+            }
+        }
+
+        private static bool IsKeyStatsCategory(string categoryName)
+        {
+            if (string.IsNullOrWhiteSpace(categoryName))
+                return false;
+            var n = categoryName.ToLowerInvariant();
+            return n.Contains("стен") || n.Contains("wall")
+                || n.Contains("двер") || n.Contains("door")
+                || n.Contains("помещ") || n.Contains("room")
+                || n.Contains("окн") || n.Contains("window");
         }
 
     }

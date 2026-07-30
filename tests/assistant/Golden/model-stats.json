@@ -3,6 +3,6 @@
   "group": "read",
   "userText": "Дай статистику модели: сколько стен, дверей, помещений.",
   "expectTools": ["analyze_model_statistics"],
-  "forbidTools": ["create_line_based_element", "run_norm_audit"],
+  "forbidTools": ["create_line_based_element", "run_norm_audit", "export_room_data"],
   "maxRounds": 3
 }

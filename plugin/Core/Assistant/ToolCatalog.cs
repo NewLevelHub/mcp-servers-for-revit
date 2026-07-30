@@ -932,8 +932,9 @@ namespace revit_mcp_plugin.Core.Assistant
                     "Call before picking dimensionType / gridTypeName / textTypeName.",
                     Empty()),
                 T("analyze_model_statistics",
-                    "Returns element counts by category (walls, doors, windows, rooms, floors, etc.) for the active document. " +
-                    "Use for «сколько стен/дверей» overview — not for detailed room areas (use export_room_data).",
+                    "Project-wide element counts by category (walls, doors, rooms, etc.) for the active document. " +
+                    "Use for «статистика модели» / «сколько стен, дверей, помещений» — room count from categories[], " +
+                    "not export_room_data. Do not pair with export_room_data for counts. Floor room areas → export_room_data separately.",
                     Empty()),
 
                 // --- Full MCP parity (Revit commands from command.json) ---
