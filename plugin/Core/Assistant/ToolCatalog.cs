@@ -612,18 +612,64 @@ namespace revit_mcp_plugin.Core.Assistant
 
         private static List<ToolDef> BuildDefinitions()
         {
+            var xyz = XyzMm();
+            var locationLine = P(R("p0", "p1"),
+                ("p0", xyz, "start point, mm"),
+                ("p1", xyz, "end point, mm"));
+            var lineItem = P(R("category", "typeId", "locationLine"),
+                ("category", S(), "OST_Walls"),
+                ("typeId", N(), "from get_available_family_types"),
+                ("locationLine", locationLine, "wall centerline, mm"),
+                ("height", N(), "mm, e.g. 3000"),
+                ("baseLevel", N(), "mm = level elevation"),
+                ("baseOffset", N(), "mm, usually 0"));
+            var pointItem = P(R("typeId", "hostWallId", "locationPoint"),
+                ("typeId", N(), "from get_available_family_types"),
+                ("hostWallId", N(), "host wall ElementId"),
+                ("locationPoint", xyz, "insertion point, mm"),
+                ("baseLevel", N(), "mm"),
+                ("baseOffset", N(), "mm"),
+                ("height", N(), "mm"),
+                ("width", N(), "mm"));
+            var surfaceItem = P(R("typeId"),
+                ("typeId", N(), "from get_available_family_types OST_Floors"),
+                ("category", E("OST_Floors", "OST_Ceilings", "OST_Roofs"), "surface category"),
+                ("boundary", O(), "outerLoop:[{p0,p1}...] in mm"),
+                ("baseLevel", N(), "mm"),
+                ("baseOffset", N(), "mm"));
+            var roomItem = P(R("location"),
+                ("name", S(), "room name"),
+                ("number", S(), "room number label"),
+                ("location", xyz, "point inside room cell, mm"));
+            var operateData = P(R("action"),
+                ("action", E(
+                        "Select", "SelectionBox", "SetColor", "SetTransparency", "Delete", "Hide",
+                        "TempHide", "Isolate", "Unhide", "ResetIsolate", "ResetOverrides", "Highlight"),
+                    "operation"),
+                ("elementIds", A("number"), "target element ids; may be empty with categoryNames"),
+                ("categoryNames", A("string"), "e.g. Doors, Windows for ResetOverrides"),
+                ("transparencyValue", N(), "0-100 for SetTransparency"),
+                ("colorValue", A("number"), "RGB for SetColor, default [255,0,0]"));
+            var reportMode = E("report", "highlight");
+            var bubbleEnd = E("bottomLeft", "topRight", "both");
+
             return new List<ToolDef>
             {
-                T("get_current_view_info", "Active view: type, name, scale, level.", Empty()),
-                T("get_current_view_elements", "Elements on the active view (mm).", P(
+                T("get_current_view_info",
+                    "Active view: type, name, scale, level elevation (mm). Call first before create_* or dimensions.",
+                    Empty()),
+                T("get_current_view_elements", "Elements on the active view. Coordinates in mm.", P(
                     ("modelCategoryList", A("string"), "e.g. OST_Walls"),
                     ("limit", N(), "Max elements"))),
-                T("say_hello", "Test connection with Revit.", Empty()),
+                T("say_hello",
+                    "Test MCP/plugin connection. Returns a greeting — use when checking the link is alive.",
+                    Empty()),
                 T("query_norm_rules",
                     "Search the offline GOST/СП/СН РК norm catalog by topic (e.g. «ширина коридора», «глубина лоджии»). " +
                     "Returns document/clause/quote — cite only these, never invent norms. " +
                     "If catalogMissing=true, tell the architect to run seed + export:norm-catalog.",
-                    P(("topic", S(), "natural language topic"),
+                    P(R("topic"),
+                      ("topic", S(), "natural language topic"),
                       ("limit", N(), "max rules, default 5"))),
                 T("get_available_family_types",
                     "List family types. For walls MUST pass categoryName=\"OST_Walls\" (or categoryList:[\"OST_Walls\"]). " +
@@ -632,64 +678,71 @@ namespace revit_mcp_plugin.Core.Assistant
                       ("categoryList", A("string"), "[\"OST_Walls\"]"),
                       ("limit", N(), "40"))),
                 T("create_line_based_element",
-                    "Create walls along lines (mm). REQUIRED data array. Each item MUST have: " +
-                    "category=\"OST_Walls\", typeId (number from get_available_family_types), " +
-                    "locationLine:{p0:{x,y,z}, p1:{x,y,z}} (mm, z usually 0), height (mm, e.g. 3000), " +
-                    "baseLevel (mm = level elevation from get_current_view_info), baseOffset (usually 0). " +
+                    "Create walls along lines (mm). Each item needs category, typeId, locationLine. " +
                     "Batch all wall segments in one call. If this fails — STOP, do not create rooms. NOT create_grid.",
-                    P(("data", A("object"),
-                        "REQUIRED array [{category:\"OST_Walls\", typeId:123, locationLine:{p0:{x,y,z:0}, p1:{x,y,z:0}}, height:3000, baseLevel:0, baseOffset:0}]"))),
+                    P(R("data"),
+                      ("data", AItems(lineItem), "wall segments"))),
                 T("create_room",
                     "Place rooms ONLY after walls exist and enclose cells. Point must be inside its wall cell. " +
                     "1–2 rooms per call. Save response Id as ElementId for dimension_room_walls (NOT room number 1,2,3). " +
                     "If walls failed — do NOT call this.",
-                    P(
-                    ("data", A("object"), "{name, number, location:{x,y,z}}"))),
+                    P(R("data"),
+                      ("data", AItems(roomItem), "rooms to place"))),
                 T("dimension_room_walls",
                     "Interior width×depth. roomId = Revit ElementId from create_room response (e.g. 1820053), NEVER room number 1/2/3.",
-                    P(
-                    ("roomId", N(), "ElementId from create_room"), ("placement", S(), "interior"),
-                    ("offsetMm", N(), null), ("dimensionType", S(), null))),
+                    P(R("roomId"),
+                    ("roomId", N(), "ElementId from create_room"),
+                    ("placement", E("interior", "exterior"), "interior = inside room (default)"),
+                    ("offsetMm", N(), "mm offset from room boundary"),
+                    ("dimensionType", S(), "dimension type name"))),
                 T("set_element_parameter",
                     "Set parameter. «Room Bounding»/«Граница помещения»=true ONLY on Wall element ids, never on Room ids.",
-                    P(("elementId", N(), "wall id"),
+                    P(R("elementId", "parameterName", "value"),
+                      ("elementId", N(), "wall id"),
                       ("parameterName", S(), "Room Bounding"),
                       ("value", O(), "true"))),
                 T("create_point_based_element",
-                    "Create doors, windows, furniture at a point (mm). REQUIRED: typeId + hostWallId for doors/windows. " +
+                    "Create doors, windows, furniture at a point (mm). REQUIRED: typeId + hostWallId + locationPoint. " +
                     "Get hostWallId from create_line_based_element / get_current_view_elements OST_Walls after walls exist.",
-                    P(("data", A("object"),
-                        "{typeId, locationPoint:{x,y,z}, hostWallId, baseLevel, baseOffset, height, width}"))),
+                    P(R("data"),
+                      ("data", AItems(pointItem), "doors/windows/furniture"))),
                 T("create_surface_based_element",
-                    "Create floors, ceilings, roofs from boundary loops (mm). REQUIRED: typeId from get_available_family_types (OST_Floors).",
-                    P(("data", A("object"),
-                        "{typeId, category:OST_Floors, boundary:{outerLoop:[{p0,p1}...]}, baseLevel, baseOffset}"))),
+                    "Create floors, ceilings, roofs from boundary loops (mm). REQUIRED: typeId from get_available_family_types.",
+                    P(R("data"),
+                      ("data", AItems(surfaceItem), "floors/ceilings/roofs"))),
                 T("create_grid",
                     "Create coordination GRIDS (оси) — NOT walls. Only when walls already exist; autoFromWalls=true.",
                     P(
                     ("autoFromWalls", B(), "structural wall centerlines"),
-                    ("bubbleEnd", S(), "bottomLeft"),
+                    ("bubbleEnd", bubbleEnd, "bubble side"),
                     ("gridTypeName", S(), "Марка оси 5 мм"),
                     ("wallFilter", S(), "structural"),
-                    ("minWallThicknessMm", N(), null))),
-                T("configure_grid_display", "Adjust existing grid extents/bubbles.", P(
-                    ("gridTypeName", S(), null), ("bubbleEnd", S(), null),
-                    ("xExtentMin", N(), null), ("xExtentMax", N(), null),
-                    ("yExtentMin", N(), null), ("yExtentMax", N(), null))),
+                    ("minWallThicknessMm", N(), "mm min wall thickness"))),
+                T("configure_grid_display", "Adjust existing grid extents/bubbles. Extents in mm.", P(
+                    ("gridTypeName", S(), null), ("bubbleEnd", bubbleEnd, null),
+                    ("xExtentMin", N(), "mm"), ("xExtentMax", N(), "mm"),
+                    ("yExtentMin", N(), "mm"), ("yExtentMax", N(), "mm"))),
                 T("dimension_grids", "Exterior axial dimensions from building envelope.", P(
-                    ("firstOffsetMm", N(), null), ("tierGapMm", N(), null),
+                    ("firstOffsetMm", N(), "mm from building envelope"),
+                    ("tierGapMm", N(), "mm between dimension tiers"),
                     ("numericSide", S(), null), ("letterSide", S(), null), ("dimensionType", S(), null))),
                 T("tag_rooms", "Place room tags (марки помещений) on the active view; prefer type with area.", P(
                     ("tagTypeId", S(), null), ("roomIds", A("string"), null))),
-                T("export_room_data", "Export room ids, names, areas.", P(
-                    ("includeUnplacedRooms", B(), null), ("includeNotEnclosedRooms", B(), null))),
+                T("export_room_data",
+                    "Export room ElementIds, names, numbers, areas (м²). Use before schedules or norm area checks.",
+                    P(("includeUnplacedRooms", B(), null), ("includeNotEnclosedRooms", B(), null))),
                 T("create_door_schedule",
-                    "Door schedule (спецификация дверей). NOT TEP / not ТЭП. Returns schedule id for place_view_on_sheet / auto_layout_sheet.",
+                    "Create door schedule (спецификация дверей). Returns schedule ElementId for place_view_on_sheet / auto_layout_sheet. " +
+                    "NOT TEP — for ТЭП use render_tep_table. No args; uses project template.",
                     Empty()),
                 T("create_window_schedule",
-                    "Window schedule (спецификация окон). NOT TEP / not ТЭП.",
+                    "Create window schedule (спецификация окон). Returns schedule ElementId for sheet placement. " +
+                    "NOT TEP. No args; uses project template.",
                     Empty()),
-                T("create_floor_schedule", "Floor finish schedule (полы)*.", Empty()),
+                T("create_floor_schedule",
+                    "Create floor finish schedule / экспликация полов for (полы)* finishes only (м²). " +
+                    "Returns schedule ElementId. No args; uses project template. Not structural slabs.",
+                    Empty()),
                 T("create_floor_explication", "Floor explication + sheet layout.", P(
                     ("sheetFormat", S(), "A2"), ("autoLayout", B(), null))),
                 T("export_tep_data",
@@ -706,16 +759,17 @@ namespace revit_mcp_plugin.Core.Assistant
                       ("createSheetIfMissing", B(), "true"),
                       ("title", S(), "Технико-экономические показатели"),
                       ("templateScheduleName", S(), "e.g. О_АР_Квартиры_ТЭП if exists"),
-                      ("positionX", N(), "50"), ("positionY", N(), "40"),
+                      ("positionX", N(), "mm from sheet lower-left"),
+                      ("positionY", N(), "mm from sheet lower-left"),
                       ("includeLevels", B(), "true"), ("includeRoomsByPurpose", B(), "true"))),
                 T("create_sheet", "Create sheet with project title block.", P(
                     ("sheetNumber", S(), null), ("sheetName", S(), null), ("titleBlockName", S(), null))),
                 T("place_view_on_sheet",
                     "Place an existing floor plan or schedule on a sheet. " +
-                    "REQUIRED: viewId (or viewUniqueId) from create_* / get_* result AND sheetId. " +
                     "Do not call without viewId. Not for TEP — use render_tep_table.",
-                    P(("sheetId", N(), "required sheet element id"),
-                      ("viewId", N(), "REQUIRED view or schedule element id"),
+                    P(R("sheetId", "viewId"),
+                      ("sheetId", N(), "sheet element id"),
+                      ("viewId", N(), "view or schedule element id"),
                       ("positionX", N(), "mm from sheet lower-left"),
                       ("positionY", N(), "mm from sheet lower-left"),
                       ("placement", O(), "optional nested {sheetId,viewId,positionX,positionY}"))),
@@ -726,38 +780,42 @@ namespace revit_mcp_plugin.Core.Assistant
                 T("check_evacuation_width",
                     "Norm check: evacuation corridor width vs minWidthMm (auto 1200 mm / СП РК if omitted). " +
                     "Returns violators with ids + source citation. Part of floor norm-audit.",
-                    P(("levelName", S(), null), ("minWidthMm", N(), "1200"),
-                      ("mode", S(), "report"))),
+                    P(("levelName", S(), null), ("minWidthMm", N(), "mm, default 1200"),
+                      ("mode", reportMode, "report = data only"))),
                 T("check_room_depth",
                     "Norm check: living room depth vs maxDepthMm (auto 6000 mm / СП РК п.4.4.10.22 if omitted). " +
                     "Returns violators with ids + source. Part of floor norm-audit.",
-                    P(("levelName", S(), null), ("maxDepthMm", N(), "6000"),
-                      ("roomScope", S(), "living"), ("mode", S(), "report"))),
+                    P(("levelName", S(), null), ("maxDepthMm", N(), "mm, default 6000"),
+                      ("roomScope", S(), "living"), ("mode", reportMode, "report = data only"))),
                 T("check_min_dimensions",
                     "Norm check: balcony/loggia/pier min size. " +
                     "For ordinary housing do NOT pass minBalconyWidthMm/minLoggiaWidthMm=1400 " +
                     "(1.4 m is МГН / п.4.6.5 only). Default catalog uses fire-path/pier limits (~1200). " +
                     "Pass housingType=mgn only when user asks МГН. Returns violators + source.",
                     P(("levelName", S(), null),
-                      ("minFirePathOutdoorWidthMm", N(), "1200 for Н1 path only"),
-                      ("minFirePierToOpeningMm", N(), "1200"),
-                      ("minFirePierBetweenOpeningsMm", N(), null),
-                      ("minBalconyWidthMm", N(), "only if МГН — do not use 1400 for ordinary"),
-                      ("minLoggiaWidthMm", N(), "only if МГН"),
-                      ("mode", S(), "report"))),
+                      ("minFirePathOutdoorWidthMm", N(), "mm, 1200 for Н1 path only"),
+                      ("minFirePierToOpeningMm", N(), "mm, default 1200"),
+                      ("minFirePierBetweenOpeningsMm", N(), "mm"),
+                      ("minBalconyWidthMm", N(), "mm — only if МГН"),
+                      ("minLoggiaWidthMm", N(), "mm — only if МГН"),
+                      ("mode", reportMode, "report = data only"))),
                 T("check_fire_doors",
                     "Norm check: fire doors. Returns doors with requiresFireDoor/compliant/reason/source " +
                     "and annotationHints[{elementId,text,leader}] for create_text_notes. " +
                     "Paint non-compliant doors red AND place leaders — never color without callouts.",
                     P(("levelName", S(), null))),
-                T("get_room_geometry_metrics", "Room width/depth/area metrics for checks.", Empty()),
+                T("get_room_geometry_metrics",
+                    "Returns per-room width/depth/area (мм / м²) for depth and min-size checks. " +
+                    "Use before check_room_depth / check_min_dimensions when you need raw geometry. No args.",
+                    Empty()),
                 T("create_filled_regions",
                     "Paint room areas as Filled Region (цветовая область). " +
                     "After successful norm checks ONLY: pass roomIds of violators, colorPreset=red, clearPrevious=true. " +
                     "Do not call with empty roomIds (that paints all rooms). " +
                     "To remove prior MCP markup without painting: clearOnly=true.",
                     P(("roomIds", A("string"), "violating room element ids"),
-                      ("colorPreset", S(), "red"), ("clearPrevious", B(), "true"),
+                      ("colorPreset", E("red", "green", "blue", "grey", "gray"), "fill color"),
+                      ("clearPrevious", B(), "true"),
                       ("clearOnly", B(), "true = only remove prior MCP-FR regions"))),
                 T("create_text_notes",
                     "Text notes with leaders (выноски) for rooms AND doors. " +
@@ -775,23 +833,32 @@ namespace revit_mcp_plugin.Core.Assistant
                     "Delete / hide / color / reset view overrides. After fire-door check: SetColor red on compliant=false doors, " +
                     "then always create_text_notes for the same ids. " +
                     "To clear norm markup: action=ResetOverrides, elementIds=[], categoryNames=[Doors,Windows,Ramps].",
-                    P(("data", O(), "{action, elementIds, categoryNames?}"))),
-                T("delete_element", "Delete elements by id.", P(
-                    ("elementIds", A("string"), null))),
+                    P(R("data"),
+                      ("data", operateData, "action + elementIds"))),
+                T("delete_element", "Delete elements by id.", P(R("elementIds"),
+                    ("elementIds", A("string"), "element id strings"))),
                 T("ai_element_filter", "Filter elements by category.", P(
                     ("categoryName", S(), null), ("filter", O(), null))),
-                T("get_selected_elements", "Currently selected elements.", Empty()),
+                T("get_selected_elements",
+                    "Returns currently selected elements (ids, category, name). Use when user says «выделенное» / selection.",
+                    Empty()),
                 T("color_splash", "View color scheme by parameter.", P(
                     ("categoryName", S(), null), ("parameterName", S(), null))),
-                T("get_document_styles", "Annotation styles: dims, grids, text, title blocks.", Empty()),
-                T("analyze_model_statistics", "Model statistics.", Empty()),
+                T("get_document_styles",
+                    "Returns annotation styles available in the project: dimension types, grid types, text types, title blocks. " +
+                    "Call before picking dimensionType / gridTypeName / textTypeName.",
+                    Empty()),
+                T("analyze_model_statistics",
+                    "Returns element counts by category (walls, doors, windows, rooms, floors, etc.) for the active document. " +
+                    "Use for «сколько стен/дверей» overview — not for detailed room areas (use export_room_data).",
+                    Empty()),
 
                 // --- Full MCP parity (Revit commands from command.json) ---
                 T("run_norm_audit",
                     "Unified norm audit for active floor: evacuation width, room depth, min dimensions, fire doors. " +
                     "Returns findings[] + skippedRules. For violations display: create_filled_regions + operate_element + annotate_norm_findings. " +
                     "Prefer over calling many check_* separately when user says «проверь этаж по нормам».",
-                    P(("levelName", S(), null), ("mode", S(), "report|highlight"),
+                    P(("levelName", S(), null), ("mode", reportMode, "report = data; highlight = report+paint"),
                       ("includeCompliant", B(), null), ("topics", A("string"), null))),
                 T("annotate_norm_findings",
                     "Place leader callouts for run_norm_audit findings. Template: name: actual < required · document clause.",
@@ -800,40 +867,64 @@ namespace revit_mcp_plugin.Core.Assistant
                       ("clearPrevious", B(), "true"))),
                 T("tag_all_rooms", "Alias for tag_rooms — place room tags with area.", P(
                     ("tagTypeId", S(), null), ("roomIds", A("string"), null))),
-                T("tag_walls", "Tag all walls on the active view.", Empty()),
-                T("tag_all_walls", "Alias for tag_walls.", Empty()),
+                T("tag_walls",
+                    "Place wall tags on all walls of the active floor plan. Returns created tag ids. No args.",
+                    Empty()),
+                T("tag_all_walls",
+                    "Alias for tag_walls — place wall tags on the active view. Returns created tag ids. No args.",
+                    Empty()),
                 T("color_elements",
                     "View color scheme by parameter (NOT filled regions for violations — use create_filled_regions).",
                     P(("categoryName", S(), "Помещения"), ("parameterName", S(), "Имя"),
                       ("useGradient", B(), null))),
                 T("create_stair",
                     "Create stair: layout straight/L/U, typeId (StairsType), widthMm, shaftRect or path. Units mm.",
-                    P(("typeId", N(), null), ("layout", S(), "straight"), ("widthMm", N(), null),
-                      ("baseLevelId", N(), null), ("topLevelId", N(), null), ("shaftRect", O(), null))),
+                    P(R("typeId"),
+                      ("typeId", N(), "StairsType ElementId"),
+                      ("layout", E("straight", "L", "U"), "stair plan layout"),
+                      ("widthMm", N(), "mm run width"),
+                      ("baseLevelId", N(), null), ("topLevelId", N(), null),
+                      ("shaftRect", O(), "shaft bounds in mm"))),
                 T("create_railing",
                     "Create railing by path or host stair. typeId required (RailingType).",
-                    P(("typeId", N(), null), ("hostElementId", N(), null), ("pathPoints", A("object"), null),
+                    P(R("typeId"),
+                      ("typeId", N(), "RailingType ElementId"),
+                      ("hostElementId", N(), "host stair id"),
+                      ("pathPoints", A("object"), "path points mm"),
                       ("levelId", N(), null))),
                 T("create_floor_opening",
-                    "Floor cut or vertical shaft. mode=floor|shaft, rect or boundaryPoints mm.",
-                    P(("mode", S(), "floor|shaft"), ("hostFloorId", N(), null), ("levelId", N(), null),
-                      ("baseLevelId", N(), null), ("topLevelId", N(), null), ("rect", O(), null))),
+                    "Floor cut or vertical shaft. rect or boundaryPoints in mm.",
+                    P(R("mode"),
+                      ("mode", E("floor", "shaft"), "floor cut vs vertical shaft"),
+                      ("hostFloorId", N(), null), ("levelId", N(), null),
+                      ("baseLevelId", N(), null), ("topLevelId", N(), null),
+                      ("rect", O(), "bounds in mm"))),
                 T("create_level", "Create level at elevation mm with optional floor plan view.", P(
-                    ("name", S(), null), ("elevationMm", N(), null))),
+                    R("name", "elevationMm"),
+                    ("name", S(), "level name"),
+                    ("elevationMm", N(), "mm elevation"))),
                 T("create_dimensions", "Create dimension chains between points or elements.", P(
                     ("data", A("object"), null))),
                 T("create_structural_framing_system", "Beam system with spacing and direction.", P(
                     ("data", O(), null))),
                 T("get_element_parameters", "Read all parameters of one element by id.", P(
-                    ("elementId", N(), "required"))),
-                T("get_elements_parameters", "Batch read parameters (max 100 ids).", P(
-                    ("elementIds", A("number"), null))),
-                T("get_material_quantities", "Material takeoffs with areas and volumes.", Empty()),
-                T("export_apartment_data", "Apartment grouping + СП РК area coefficients.", Empty()),
+                    R("elementId"),
+                    ("elementId", N(), "element id"))),
+                T("get_elements_parameters", "Batch read parameters (max 100 ids).", P(R("elementIds"),
+                    ("elementIds", A("number"), "up to 100 element ids"))),
+                T("get_material_quantities",
+                    "Returns material takeoffs: areas (м²) and volumes (м³) by material. " +
+                    "Use for quantity surveys / ведомости материалов. No args.",
+                    Empty()),
+                T("export_apartment_data",
+                    "Returns apartment grouping with СП РК area coefficients (м²). " +
+                    "Use for квартирография / ТЭП living area breakdown. No args.",
+                    Empty()),
                 T("export_room_finish_data", "Room finish parameters (walls/floors/ceilings).", P(
                     ("levelName", S(), null), ("limit", N(), null), ("offset", N(), null))),
-                T("validate_schedule", "Compare schedule counts vs model (Doors/Windows/Floors).", P(
-                    ("category", S(), "Doors|Windows|Floors|CurtainWalls"))),
+                T("validate_schedule", "Compare schedule counts vs model.", P(
+                    R("category"),
+                    ("category", E("Doors", "Windows", "Floors", "CurtainWalls"), "schedule category"))),
                 T("create_schedule", "Create ViewSchedule from template.", P(
                     ("scheduleName", S(), null), ("templateName", S(), null))),
                 T("configure_schedule", "Edit existing schedule columns/filters.", P(
@@ -842,41 +933,59 @@ namespace revit_mcp_plugin.Core.Assistant
                     ("scheduleId", N(), null), ("sheetId", N(), null))),
                 T("create_finish_schedule", "Room finish schedule chain (ADSK).", P(
                     ("templateName", S(), null))),
-                T("create_curtain_wall_schedule", "Curtain wall schedule data.", Empty()),
+                T("create_curtain_wall_schedule",
+                    "Create curtain-wall schedule data / ViewSchedule. Returns schedule id for sheet placement. No args.",
+                    Empty()),
                 T("get_schedule_definition", "Read schedule fields/filters.", P(
                     ("scheduleId", N(), null), ("scheduleName", S(), null))),
                 T("get_door_egress_info", "Door widths, egress paths, ramp slopes.", P(
                     ("levelName", S(), null))),
-                T("get_opening_geometry_info", "Window sill height, opening height.", P(
+                T("get_opening_geometry_info", "Window sill height, opening height (mm).", P(
                     ("levelName", S(), null))),
-                T("get_vertical_circulation_info", "Stair/ramp/railing geometry for norms.", P(
+                T("get_vertical_circulation_info", "Stair/ramp/railing geometry for norms (mm).", P(
                     ("levelName", S(), null))),
                 T("export_egress_graph", "Egress walkability graph for floor.", P(
                     ("levelName", S(), null))),
                 T("create_detail_lines", "Detail polylines on plan/detail view (mm).", P(
-                    ("points", A("object"), null), ("viewId", N(), null))),
+                    ("points", A("object"), "points in mm"), ("viewId", N(), null))),
                 T("create_detail_view", "Detail callout or drafting view.", P(
                     ("name", S(), null), ("parentViewId", N(), null), ("scale", N(), null))),
                 T("place_detail_component", "Place 2D detail component on detail view.", P(
                     ("data", A("object"), null))),
                 T("create_text_note", "Single text note with optional leader.", P(
-                    ("text", S(), null), ("location", O(), null), ("leader", B(), null))),
+                    R("text"),
+                    ("text", S(), "note text"),
+                    ("location", O(), "point mm"),
+                    ("leader", B(), null))),
                 T("batch_execute",
                     "Run up to 20 Revit commands in one request. commands=[{method, params}].",
-                    P(("commands", A("object"), "[{method, params}]"))),
+                    P(R("commands"),
+                      ("commands", A("object"), "[{method, params}]"))),
                 T("send_code_to_revit",
                     "Execute C# in Revit. ONLY if user explicitly allowed. Prefer create_* tools.",
-                    P(("code", S(), "C# source"), ("description", S(), null))),
+                    P(R("code"),
+                      ("code", S(), "C# source"),
+                      ("description", S(), null))),
             };
         }
 
         private static ToolDef T(string name, string description, JObject parameters) =>
             new ToolDef { Name = name, Description = description, Parameters = parameters };
 
-        private static JObject Empty() =>
-            new JObject { ["type"] = "object", ["properties"] = new JObject() };
+        private static string[] R(params string[] names) => names;
 
-        private static JObject P(params (string name, JObject schema, string desc)[] items)
+        private static JObject Empty() =>
+            new JObject
+            {
+                ["type"] = "object",
+                ["properties"] = new JObject(),
+                ["additionalProperties"] = false
+            };
+
+        private static JObject P(params (string name, JObject schema, string? desc)[] items) =>
+            P(null, items);
+
+        private static JObject P(string[]? required, params (string name, JObject schema, string? desc)[] items)
         {
             var props = new JObject();
             foreach (var item in items)
@@ -886,14 +995,45 @@ namespace revit_mcp_plugin.Core.Assistant
                     copy["description"] = item.desc;
                 props[item.name] = copy;
             }
-            return new JObject { ["type"] = "object", ["properties"] = props };
+
+            var obj = new JObject
+            {
+                ["type"] = "object",
+                ["properties"] = props,
+                ["additionalProperties"] = false
+            };
+            if (required != null && required.Length > 0)
+                obj["required"] = new JArray(required);
+            return obj;
         }
+
+        private static JObject E(params string[] values) =>
+            new JObject
+            {
+                ["type"] = "string",
+                ["enum"] = new JArray(values)
+            };
+
+        private static JObject XyzMm() =>
+            P(R("x", "y", "z"),
+                ("x", N(), "mm"),
+                ("y", N(), "mm"),
+                ("z", N(), "mm"));
 
         private static JObject S() => new JObject { ["type"] = "string" };
         private static JObject N() => new JObject { ["type"] = "number" };
         private static JObject B() => new JObject { ["type"] = "boolean" };
-        private static JObject O() => new JObject { ["type"] = "object" };
+        private static JObject O() =>
+            new JObject
+            {
+                ["type"] = "object",
+                ["additionalProperties"] = true
+            };
+
         private static JObject A(string itemType) =>
             new JObject { ["type"] = "array", ["items"] = new JObject { ["type"] = itemType } };
+
+        private static JObject AItems(JObject itemSchema) =>
+            new JObject { ["type"] = "array", ["items"] = itemSchema };
     }
 }

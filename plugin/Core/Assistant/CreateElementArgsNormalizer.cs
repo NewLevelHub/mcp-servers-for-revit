@@ -7,6 +7,8 @@ namespace revit_mcp_plugin.Core.Assistant
     /// <summary>
     /// Fixes common LLM mistakes for create_*_element / create_room payloads
     /// before they hit Revit (missing data wrapper, single object instead of array, null lines).
+    /// Schema <c>required</c>/<c>enum</c> in <see cref="ToolCatalog"/> are advisory without OpenAI
+    /// strict mode — keep these shape remaps (aliases, findings→ids) even after REV-113.
     /// </summary>
     public static class CreateElementArgsNormalizer
     {
