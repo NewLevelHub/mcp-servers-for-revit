@@ -1,0 +1,8 @@
+{
+  "id": "tag-rooms-simple",
+  "group": "annotate",
+  "userText": "Поставь марки на все комнаты с площадью",
+  "expectTools": ["tag_rooms"],
+  "forbidTools": ["color_splash", "create_room", "run_norm_audit", "create_filled_regions"],
+  "maxRounds": 4
+}

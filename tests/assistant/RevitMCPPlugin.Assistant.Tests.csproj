@@ -21,5 +21,13 @@
     <Compile Include="..\..\plugin\Core\Assistant\JTokenParsing.cs" Link="JTokenParsing.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\NormFindingMapper.cs" Link="NormFindingMapper.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\NormAnnotationText.cs" Link="NormAnnotationText.cs" />
+    <Compile Include="..\..\plugin\Core\Assistant\AssistantSystemPrompt.cs" Link="AssistantSystemPrompt.cs" />
+    <Compile Include="..\..\plugin\Core\Assistant\ToolCatalog.cs" Link="ToolCatalog.cs" />
+    <Compile Include="..\..\plugin\Core\Assistant\OpenAiCompatibleClient.cs" Link="OpenAiCompatibleClient.cs" />
+    <Compile Include="..\..\plugin\Core\Assistant\IAssistantToolExecutor.cs" Link="IAssistantToolExecutor.cs" />
+    <Compile Include="..\..\plugin\Core\Assistant\IChatCompletionsClient.cs" Link="IChatCompletionsClient.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Golden\*.json" CopyToOutputDirectory="PreserveNewest" Link="golden\%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

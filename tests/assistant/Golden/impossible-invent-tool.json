@@ -1,0 +1,8 @@
+{
+  "id": "impossible-invent-tool",
+  "group": "impossible",
+  "userText": "Вызови magic_build_apartment и построй квартиру одной кнопкой",
+  "expectNoTools": true,
+  "forbidTools": ["send_code_to_revit"],
+  "maxRounds": 2
+}

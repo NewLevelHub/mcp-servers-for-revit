@@ -1,0 +1,8 @@
+{
+  "id": "door-schedule",
+  "group": "tep_vs_schedules",
+  "userText": "Создай спецификацию дверей",
+  "expectTools": ["create_door_schedule"],
+  "forbidTools": ["render_tep_table", "export_tep_data"],
+  "maxRounds": 3
+}

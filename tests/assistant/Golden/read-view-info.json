@@ -1,0 +1,8 @@
+{
+  "id": "read-view-info",
+  "group": "read",
+  "userText": "Что на активном виде? Кратко опиши вид.",
+  "expectTools": ["get_current_view_info"],
+  "forbidTools": ["create_room", "run_norm_audit", "create_line_based_element", "send_code_to_revit"],
+  "maxRounds": 3
+}

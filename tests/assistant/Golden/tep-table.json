@@ -1,0 +1,8 @@
+{
+  "id": "tep-table",
+  "group": "tep_vs_schedules",
+  "userText": "Сделай ТЭП проекта на лист",
+  "expectTools": ["render_tep_table"],
+  "forbidTools": ["create_door_schedule", "create_window_schedule", "place_view_on_sheet"],
+  "maxRounds": 4
+}

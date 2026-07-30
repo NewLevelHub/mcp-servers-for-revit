@@ -1,0 +1,13 @@
+{
+  "id": "multistep-walls-doors-rooms",
+  "group": "multistep",
+  "userText": "Построй две комнаты: стены по контуру, дверь между ними и помещения с марками",
+  "expectTools": ["get_current_view_info", "get_available_family_types", "create_line_based_element", "create_room"],
+  "expectToolsOrdered": true,
+  "forbidTools": ["run_norm_audit", "send_code_to_revit"],
+  "maxRounds": 15,
+  "requireArgs": {
+    "create_line_based_element": ["typeId"],
+    "create_room": ["location"]
+  }
+}

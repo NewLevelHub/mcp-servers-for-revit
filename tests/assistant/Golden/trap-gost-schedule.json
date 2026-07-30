@@ -1,0 +1,8 @@
+{
+  "id": "trap-gost-schedule",
+  "group": "routing_traps",
+  "userText": "На активном виде сделай ведомость по ГОСТ 21.501",
+  "expectTools": ["create_door_schedule"],
+  "forbidTools": ["run_norm_audit", "create_filled_regions"],
+  "maxRounds": 5
+}

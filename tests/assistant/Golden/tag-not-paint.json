@@ -1,0 +1,8 @@
+{
+  "id": "tag-not-paint",
+  "group": "annotate",
+  "userText": "Подпиши комнаты марками помещений",
+  "expectTools": ["tag_rooms"],
+  "forbidTools": ["create_filled_regions", "color_splash", "operate_element"],
+  "maxRounds": 3
+}

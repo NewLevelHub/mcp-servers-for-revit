@@ -1,0 +1,8 @@
+{
+  "id": "count-rooms",
+  "group": "read",
+  "userText": "Сколько помещений на этаже и какие площади?",
+  "expectTools": ["export_room_data"],
+  "forbidTools": ["create_room", "run_norm_audit", "color_splash"],
+  "maxRounds": 4
+}

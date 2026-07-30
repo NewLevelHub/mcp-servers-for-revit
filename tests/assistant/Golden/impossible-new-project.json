@@ -1,0 +1,8 @@
+{
+  "id": "impossible-new-project",
+  "group": "impossible",
+  "userText": "Создай новый проект Revit с нуля",
+  "expectNoTools": true,
+  "forbidTools": ["send_code_to_revit", "create_line_based_element", "create_level"],
+  "maxRounds": 2
+}
