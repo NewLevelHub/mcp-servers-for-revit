@@ -840,7 +840,7 @@ namespace revit_mcp_plugin.Core.Assistant
                         RaiseStatus("Выполняет…");
                         string rawResult;
                         var toolName = name;
-                        var enrichedArgs = NormCheckDefaults.EnrichArgs(toolName, argsJson);
+                        var enrichedArgs = NormCheckDefaults.EnrichArgs(toolName, argsJson, userMessage);
                         enrichedArgs = CreateElementArgsNormalizer.Normalize(toolName, enrichedArgs);
                         var argsBeforeInject = enrichedArgs;
                         enrichedArgs = InjectMissingTypeIds(toolResultCache, toolName, enrichedArgs);

@@ -11,15 +11,26 @@ namespace RevitMCPCommandSet.Services.DataExtraction
     {
         private bool _includeUnplacedRooms;
         private bool _includeNotEnclosedRooms;
+        private bool _filterByActiveView;
+        private string _levelName;
+        private long? _levelId;
 
         public ExportRoomDataResult ResultInfo { get; private set; }
         public bool TaskCompleted { get; private set; }
         private readonly ManualResetEvent _resetEvent = new ManualResetEvent(false);
 
-        public void SetParameters(bool includeUnplacedRooms = false, bool includeNotEnclosedRooms = false)
+        public void SetParameters(
+            bool includeUnplacedRooms = false,
+            bool includeNotEnclosedRooms = false,
+            bool filterByActiveView = false,
+            string levelName = null,
+            long? levelId = null)
         {
             _includeUnplacedRooms = includeUnplacedRooms;
             _includeNotEnclosedRooms = includeNotEnclosedRooms;
+            _filterByActiveView = filterByActiveView;
+            _levelName = string.IsNullOrWhiteSpace(levelName) ? null : levelName.Trim();
+            _levelId = levelId;
             TaskCompleted = false;
             _resetEvent.Reset();
         }
@@ -37,6 +48,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                 var doc = app.ActiveUIDocument.Document;
                 var rooms = new List<RoomDataModel>();
                 double totalArea = 0;
+                var totalInProject = 0;
 
                 var levelsByElevation = new FilteredElementCollector(doc)
                     .OfClass(typeof(Level))
@@ -45,6 +57,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                     .ToList();
 
                 var floorThicknessByLevelId = BuildFloorThicknessByLevel(doc);
+                ResolveFilterScope(app, doc, out var filterLevel, out var filterLevelName, out var filteredBy);
 
                 // Collect all rooms in the project
                 var roomCollector = new FilteredElementCollector(doc)
@@ -60,6 +73,11 @@ namespace RevitMCPCommandSet.Services.DataExtraction
 
                     // Skip not enclosed rooms if not included
                     if (!_includeNotEnclosedRooms && room.Area == 0)
+                        continue;
+
+                    totalInProject++;
+
+                    if (!PassesLevelFilter(room, filterLevel, filterLevelName))
                         continue;
 
                     double areaSquareMeters = RevitUnitConversion.ToSquareMeters(room.Area);
@@ -148,13 +166,19 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                     totalArea += areaSquareMeters;
                 }
 
+                var hasFilter = !string.IsNullOrWhiteSpace(filteredBy);
                 ResultInfo = new ExportRoomDataResult
                 {
                     TotalRooms = rooms.Count,
                     TotalArea = totalArea,
                     Rooms = rooms,
                     Success = true,
-                    Message = $"Successfully exported {rooms.Count} rooms"
+                    FilteredBy = filteredBy,
+                    LevelName = filterLevelName,
+                    TotalInProject = hasFilter ? totalInProject : (int?)null,
+                    Message = hasFilter
+                        ? $"Successfully exported {rooms.Count} rooms (filtered by {filteredBy}; {totalInProject} in project)"
+                        : $"Successfully exported {rooms.Count} rooms"
                 };
             }
             catch (Exception ex)
@@ -170,6 +194,66 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                 TaskCompleted = true;
                 _resetEvent.Set();
             }
+        }
+
+        private void ResolveFilterScope(
+            UIApplication app,
+            Document doc,
+            out Level filterLevel,
+            out string filterLevelName,
+            out string filteredBy)
+        {
+            filterLevel = null;
+            filterLevelName = null;
+            filteredBy = null;
+
+            if (_filterByActiveView)
+            {
+                var activeView = app.ActiveUIDocument?.ActiveView;
+                if (activeView is ViewPlan viewPlan)
+                {
+                    filterLevel = viewPlan.GenLevel;
+                    filterLevelName = filterLevel?.Name;
+                    filteredBy = "activeView";
+                    return;
+                }
+            }
+
+            if (_levelId.HasValue)
+            {
+#if REVIT2024_OR_GREATER
+                var level = doc.GetElement(new ElementId(_levelId.Value)) as Level;
+#else
+                var level = doc.GetElement(new ElementId((int)_levelId.Value)) as Level;
+#endif
+                if (level != null)
+                {
+                    filterLevel = level;
+                    filterLevelName = level.Name;
+                    filteredBy = "levelId";
+                    return;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(_levelName))
+            {
+                filterLevelName = _levelName;
+                filteredBy = "levelName";
+            }
+        }
+
+        public static bool PassesLevelFilter(Room room, Level filterLevel, string filterLevelName)
+        {
+            if (filterLevel != null)
+                return room.Level != null && room.Level.Id == filterLevel.Id;
+
+            if (!string.IsNullOrWhiteSpace(filterLevelName))
+            {
+                var roomLevelName = room.Level?.Name ?? "";
+                return string.Equals(roomLevelName, filterLevelName, StringComparison.OrdinalIgnoreCase);
+            }
+
+            return true;
         }
 
         private static Level FindNextLevelAbove(List<Level> levelsByElevation, Level roomLevel)

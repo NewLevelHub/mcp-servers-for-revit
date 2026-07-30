@@ -23,9 +23,19 @@ namespace RevitMCPCommandSet.Commands.DataExtraction
                 // Parse optional parameters
                 bool includeUnplacedRooms = parameters?["includeUnplacedRooms"]?.Value<bool>() ?? false;
                 bool includeNotEnclosedRooms = parameters?["includeNotEnclosedRooms"]?.Value<bool>() ?? false;
+                bool filterByActiveView = parameters?["filterByActiveView"]?.Value<bool>() ?? false;
+                var levelName = parameters?["levelName"]?.Value<string>();
+                long? levelId = parameters?["levelId"]?.Type == JTokenType.Null
+                    ? null
+                    : parameters?["levelId"]?.Value<long?>();
 
                 // Set parameters
-                _handler.SetParameters(includeUnplacedRooms, includeNotEnclosedRooms);
+                _handler.SetParameters(
+                    includeUnplacedRooms,
+                    includeNotEnclosedRooms,
+                    filterByActiveView,
+                    levelName,
+                    levelId);
 
                 // Execute and wait
                 if (RaiseAndWaitForCompletion(60000)) // 60 second timeout

@@ -31,10 +31,14 @@ namespace revit_mcp_plugin.Core.Assistant
                 {
                     "filterByActiveView", "levelId", "viewId", "levelName"
                 },
+                ["export_room_data"] = new[]
+                {
+                    "filterByActiveView"
+                },
             };
 
         /// <summary>Runtime-only enrichment — not exposed to the model in tool schemas.</summary>
-        public static readonly IReadOnlySet<string> InternalEnrichmentKeys =
+        public static readonly HashSet<string> InternalEnrichmentKeys =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
                 "source", "catalogUsed", "catalogMissing"

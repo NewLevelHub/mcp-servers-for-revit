@@ -19,7 +19,16 @@ namespace revit_mcp_plugin.Core.Assistant
             Sheets,
             Norms,
             Typology,
+            Data,
         };
+
+        public const string Data =
+            "=== ЧТЕНИЕ ДАННЫХ ===\n" +
+            "«На этаже» / «какие площади на плане» → export_room_data filterByActiveView=true (или levelName из get_current_view_info). " +
+            "«По всему зданию» / «в проекте» / «всего» → export_room_data без filterByActiveView (или filterByActiveView=false).\n" +
+            "Отвечай по totalRooms/count после фильтра, не по totalInProject.\n" +
+            "Пример: «Сколько помещений на этаже?» → export_room_data filterByActiveView=true.\n" +
+            "Пример: «Статистика модели» → analyze_model_statistics.";
 
         public const string Modeling =
             "=== ПЛАНИРОВКА (только при создании геометрии) ===\n" +
@@ -34,7 +43,7 @@ namespace revit_mcp_plugin.Core.Assistant
             "Помещения только внутри замкнутых стен. Room Bounding=true — на стенах, не на комнатах.\n" +
             "Пример: «Построй 2-комнатную» → get_current_view_info → get_available_family_types → " +
             "create_line_based_element → create_point_based_element → create_room → tag_rooms.\n" +
-            "Пример: «Сколько комнат?» — только export_room_data (без create_*).";
+            "Пример: «Сколько комнат на этаже?» → export_room_data filterByActiveView=true (не весь проект).";
 
         public const string Annotation =
             "=== ОСИ, РАЗМЕРЫ, МАРКИ ===\n" +
@@ -99,6 +108,16 @@ namespace revit_mcp_plugin.Core.Assistant
                 "автомойк", "car wash", "типолог", "40 мест", "пищеблок");
         }
 
+        public static bool ShouldIncludeReadHints(string userText)
+        {
+            var text = (userText ?? "").ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+
+            return ContainsAny(text,
+                "сколько помещен", "сколько комнат", "площади помещен", "на этаже", "какие площади");
+        }
+
         public static string Build(IReadOnlyList<string> profiles, string userText = null)
         {
             var normalized = ToolCatalog.NormalizeProfiles(profiles);
@@ -124,11 +143,16 @@ namespace revit_mcp_plugin.Core.Assistant
                     Add(Sheets);
                 else if (profile.Equals(ToolCatalog.Profiles.Norms, StringComparison.OrdinalIgnoreCase))
                     Add(Norms);
+                else if (profile.Equals(ToolCatalog.Profiles.Data, StringComparison.OrdinalIgnoreCase))
+                    Add(Data);
             }
 
             if (normalized.Any(p => p.Equals(ToolCatalog.Profiles.Modeling, StringComparison.OrdinalIgnoreCase))
                 && ShouldIncludeTypology(userText))
                 Add(Typology);
+
+            if (parts.Count == 0 && ShouldIncludeReadHints(userText))
+                Add(Data);
 
             if (parts.Count == 0)
                 return "";

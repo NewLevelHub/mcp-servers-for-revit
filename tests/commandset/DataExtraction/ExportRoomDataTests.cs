@@ -2,6 +2,7 @@ using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Architecture;
 using Nice3point.TUnit.Revit;
 using Nice3point.TUnit.Revit.Executors;
+using RevitMCPCommandSet.Services.DataExtraction;
 using TUnit.Core;
 using TUnit.Core.Executors;
 
@@ -159,5 +160,27 @@ public class ExportRoomDataTests : RevitApiTest
         double expectedTotal = rooms.Sum(r => r.Area);
         await Assert.That(totalArea).IsEqualTo(expectedTotal).Within(0.001);
         await Assert.That(totalArea).IsGreaterThan(0);
+    }
+
+    [Test]
+    public async Task PassesLevelFilter_MatchesLevelName_CaseInsensitive()
+    {
+        var rooms = new FilteredElementCollector(_doc)
+            .OfCategory(BuiltInCategory.OST_Rooms)
+            .WhereElementIsNotElementType()
+            .Cast<Room>()
+            .Where(r => r.Area > 0)
+            .ToList();
+
+        await Assert.That(rooms.Count).IsGreaterThan(0);
+
+        foreach (var room in rooms)
+        {
+            var levelName = room.Level?.Name ?? "";
+            await Assert.That(
+                ExportRoomDataEventHandler.PassesLevelFilter(room, null, levelName)).IsTrue();
+            await Assert.That(
+                ExportRoomDataEventHandler.PassesLevelFilter(room, null, "Nonexistent Level")).IsFalse();
+        }
     }
 }

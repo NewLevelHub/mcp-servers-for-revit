@@ -21,7 +21,7 @@ public class AssistantSystemPromptTests
         Assert.True(
             dataOnly.Length < AssistantSystemPrompt.LegacyMonolithLength / 2,
             $"data prompt {dataOnly.Length} should be < {AssistantSystemPrompt.LegacyMonolithLength / 2}");
-        Assert.Equal(AssistantSystemPrompt.Core, dataOnly);
+        Assert.Contains("filterByActiveView", dataOnly);
     }
 
     [Fact]
@@ -56,6 +56,13 @@ public class AssistantSystemPromptTests
         Assert.Contains("mode=report", AssistantPlaybooks.Norms);
         Assert.Contains("create_filled_regions", AssistantPlaybooks.Norms);
         Assert.DoesNotContain("mode=highlight", AssistantPlaybooks.Norms);
+    }
+
+    [Fact]
+    public void Read_hints_playbook_attached_for_floor_room_count_queries()
+    {
+        var prompt = AssistantSystemPrompt.Build(Array.Empty<string>(), "Сколько помещений на этаже?");
+        Assert.Contains("filterByActiveView", prompt);
     }
 
     [Fact]
