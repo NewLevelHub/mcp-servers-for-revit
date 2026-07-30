@@ -21,7 +21,8 @@ namespace revit_mcp_plugin.Core.Assistant
 
         public static IReadOnlyList<string> CollectInstructionTexts()
         {
-            var texts = new List<string> { AssistantSystemPrompt.Text };
+            var texts = new List<string>();
+            texts.AddRange(AssistantSystemPrompt.CollectAllInstructionTexts());
             foreach (var preset in ScenarioPresets.Pilot)
             {
                 if (!string.IsNullOrWhiteSpace(preset.AgentInstruction))

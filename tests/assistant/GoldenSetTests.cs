@@ -232,6 +232,10 @@ internal static class ScriptedChains
                 ScriptedChatClient.MakeTextCompletion(
                     "Такого инструмента нет. Могу построить стены/помещения через стандартные команды."),
             ]),
+            "trap-ambiguous-check" => new ScriptedChatClient([
+                ScriptedChatClient.MakeTextCompletion(
+                    "Уточните, пожалуйста: проверить нормы на этаже, данные модели или что-то другое?"),
+            ]),
             "impossible-csharp-no-consent" => ScriptedChatClient.FromToolChain([
                 ("get_available_family_types", new { categoryName = "OST_Walls" }),
                 ("create_line_based_element", new

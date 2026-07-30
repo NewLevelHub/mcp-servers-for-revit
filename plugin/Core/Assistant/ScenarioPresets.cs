@@ -83,8 +83,10 @@ namespace revit_mcp_plugin.Core.Assistant
                     "По нарушениям: красная заливка помещений, красные двери, выноски с пунктом нормы. " +
                     "В ответе — сколько нарушений и какие проверки сработали.",
                 AgentInstruction =
-                    "Сначала run_norm_audit mode=highlight annotate=true (один вызов). " +
-                    "Каталог PDF не обязателен — есть встроенные нормы. Не отменяй проверку из‑за query_norm_rules."
+                    "run_norm_audit mode=report. Нарушения: create_filled_regions roomIds из findings " +
+                    "(violation + nearLimit), colorPreset=red, clearPrevious=true; двери — operate_element SetColor красным. " +
+                    "Подписи: annotate_norm_findings style=leader после заливки. " +
+                    "Каталог PDF не обязателен — есть встроенные нормы."
             },
             new ScenarioPreset
             {
