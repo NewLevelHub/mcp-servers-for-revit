@@ -31,4 +31,9 @@ public class ExportRoomDataScopeRulesTests
         Assert.True(ExportRoomDataScopeRules.WantsModelStatistics(text));
         Assert.False(ExportRoomDataScopeRules.ShouldInjectActiveViewFilter(text));
     }
+
+    [Fact]
+    public void Room_depth_metrics_do_not_inject_export_room_data_filter() =>
+        Assert.False(ExportRoomDataScopeRules.ShouldInjectActiveViewFilter(
+            "Сколько глубина этого помещения на этаже?"));
 }

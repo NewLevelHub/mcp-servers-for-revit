@@ -3,6 +3,6 @@
   "group": "routing_traps",
   "userText": "Сколько глубина этого помещения на этаже?",
   "expectTools": ["get_room_geometry_metrics"],
-  "forbidTools": ["run_norm_audit", "create_filled_regions"],
+  "forbidTools": ["run_norm_audit", "create_filled_regions", "export_room_data"],
   "maxRounds": 4
 }

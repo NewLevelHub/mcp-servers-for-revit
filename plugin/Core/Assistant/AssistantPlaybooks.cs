@@ -25,9 +25,12 @@ namespace revit_mcp_plugin.Core.Assistant
         public const string Data =
             "=== ЧТЕНИЕ ДАННЫХ ===\n" +
             "«Статистика модели» → только analyze_model_statistics (categories[]); не export_room_data.\n" +
+            "«Глубина помещения» / «сколько глубина» → get_room_geometry_metrics (depthMm по комнатам); " +
+            "не export_room_data, не run_norm_audit.\n" +
             "«На этаже» / площади на плане → export_room_data filterByActiveView=true.\n" +
             "«В проекте» / «всего» → export_room_data без filterByActiveView; count/totalRooms, не totalInProject.\n" +
-            "Пример: «Сколько помещений на этаже?» → export_room_data filterByActiveView=true.";
+            "Пример: «Сколько помещений на этаже?» → export_room_data filterByActiveView=true.\n" +
+            "Пример: «Сколько глубина помещения на этаже?» → get_room_geometry_metrics.";
 
         public const string Modeling =
             "=== ПЛАНИРОВКА (только при создании геометрии) ===\n" +
@@ -56,8 +59,11 @@ namespace revit_mcp_plugin.Core.Assistant
             "=== ТЭП И ВЕДОМОСТИ ===\n" +
             "ТЭП — render_tep_table. Спеки: create_door_schedule, create_window_schedule, " +
             "create_floor_schedule, create_floor_explication. Шаблоны и рамка — только из проекта.\n" +
+            "«Ведомость по ГОСТ 21.501» → create_door_schedule (спецификация заполнения проёмов); " +
+            "не create_schedule/configure_schedule и не query_norm_rules.\n" +
             "Пример: «Сделай ТЭП» → render_tep_table.\n" +
-            "Пример: «Спецификация дверей» → create_door_schedule (не render_tep_table).";
+            "Пример: «Спецификация дверей» → create_door_schedule (не render_tep_table).\n" +
+            "Пример: «Ведомость по ГОСТ 21.501» → create_door_schedule.";
 
         public const string Sheets =
             "=== ЛИСТЫ ===\n" +
@@ -77,7 +83,8 @@ namespace revit_mcp_plugin.Core.Assistant
             "Подписи с выноской: annotate_norm_findings style=leader (после заливки).\n" +
             "Не заливай этаж без roomIds из аудита. Не используй color_splash вместо заливки нарушений.\n" +
             "Пример: «Покажи нарушения» → run_norm_audit mode=report → create_filled_regions roomIds=[…].\n" +
-            "Пример: «Какая норма на коридор?» → query_norm_rules topic=ширина коридора (без run_norm_audit).";
+            "Пример: «Какая норма на коридор?» → query_norm_rules topic=ширина коридора (без run_norm_audit).\n" +
+            "Пример: «Сколько глубина помещения?» → get_room_geometry_metrics (не check_room_depth без запроса проверки).";
 
         public const string Typology =
             "=== КОММЕРЧЕСКИЕ ТИПОЛОГИИ (кафе, офис, СТО, автомойка) ===\n" +
@@ -115,7 +122,8 @@ namespace revit_mcp_plugin.Core.Assistant
 
             return ContainsAny(text,
                 "сколько помещен", "сколько комнат", "площади помещен", "на этаже", "какие площади",
-                "статистик модел", "статистика модел", "сколько стен", "сколько дверей");
+                "статистик модел", "статистика модел", "сколько стен", "сколько дверей",
+                "сколько глубин", "глубина помещен", "глубин помещен", "гост 21.501", "ведомость по гост");
         }
 
         public static string Build(IReadOnlyList<string> profiles, string userText = null)

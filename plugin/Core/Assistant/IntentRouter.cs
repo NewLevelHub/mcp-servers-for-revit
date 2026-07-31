@@ -51,8 +51,8 @@ namespace revit_mcp_plugin.Core.Assistant
                     "тамбур", "покажи нарушен", "подпиши нарушен", "check_"))
                 hits.Add(ToolCatalog.Profiles.Norms);
 
-            // «Сколько глубина» — metrics (norms profile), not audit-only path.
-            if (ContainsAny(text, "глубин") && ContainsAny(text, "помещен", "комнат", "сколько"))
+            // «Сколько глубина» — metrics (norms profile), not audit-only path (REV-134).
+            if (AssistantQueryRouting.WantsRoomDepthMetrics(text))
                 hits.Add(ToolCatalog.Profiles.Norms);
 
             if (ContainsAny(text,
@@ -98,6 +98,21 @@ namespace revit_mcp_plugin.Core.Assistant
             {
                 hits.Remove(ToolCatalog.Profiles.Modeling);
                 hits.Remove(ToolCatalog.Profiles.Annotation);
+            }
+
+            // Room depth metrics — not layout / export_room_data (REV-134).
+            if (AssistantQueryRouting.WantsRoomDepthMetrics(text))
+            {
+                hits.Add(ToolCatalog.Profiles.Norms);
+                hits.Remove(ToolCatalog.Profiles.Modeling);
+                hits.Remove(ToolCatalog.Profiles.Annotation);
+            }
+
+            // ГОСТ 21.501 door schedule — schedules profile, not norm audit (REV-134).
+            if (AssistantQueryRouting.WantsGostDoorSchedule(text))
+            {
+                hits.Add(ToolCatalog.Profiles.Schedules);
+                hits.Remove(ToolCatalog.Profiles.Norms);
             }
 
             return hits.ToArray();
