@@ -46,6 +46,9 @@ namespace revit_mcp_plugin.Core.Assistant
             if (WantsModelStatistics(text))
                 return false;
 
+            if (AssistantQueryRouting.WantsRoomDepthMetrics(text))
+                return false;
+
             return ContainsAny(text,
                 "на этаже", "на плане", "на этом этаже", "на виде", "на текущ",
                 "на активн", "сколько помещен", "сколько комнат", "какие площади",

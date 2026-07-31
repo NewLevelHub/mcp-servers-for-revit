@@ -129,6 +129,27 @@ public class ToolProfileTests
     }
 
     [Fact]
+    public void Room_depth_trap_routes_norms_not_modeling()
+    {
+        var profiles = IntentRouter.ResolveHeuristic(
+            "Сколько глубина этого помещения на этаже?");
+        Assert.Contains(ToolCatalog.Profiles.Norms, profiles);
+        Assert.DoesNotContain(ToolCatalog.Profiles.Modeling, profiles);
+        Assert.True(ToolCatalog.IsToolAllowed("get_room_geometry_metrics", profiles));
+        Assert.False(ToolCatalog.IsToolAllowed("create_line_based_element", profiles));
+    }
+
+    [Fact]
+    public void Gost_schedule_trap_routes_schedules_not_norms()
+    {
+        var profiles = IntentRouter.ResolveHeuristic(
+            "На активном виде сделай ведомость по ГОСТ 21.501");
+        Assert.Contains(ToolCatalog.Profiles.Schedules, profiles);
+        Assert.DoesNotContain(ToolCatalog.Profiles.Norms, profiles);
+        Assert.True(ToolCatalog.IsToolAllowed("create_door_schedule", profiles));
+    }
+
+    [Fact]
     public void Prioritize_brings_capped_tool_into_catalog()
     {
         var profiles = new[]

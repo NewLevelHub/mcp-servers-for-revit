@@ -103,6 +103,7 @@ namespace revit_mcp_plugin.Core.Assistant
                 },
                 [Profiles.Norms] = new[]
                 {
+                    "get_room_geometry_metrics",
                     "run_norm_audit",
                     "check_evacuation_width",
                     "check_room_depth",
@@ -112,13 +113,13 @@ namespace revit_mcp_plugin.Core.Assistant
                     "annotate_norm_findings",
                     "apply_norm_result",
                     "create_text_notes",
-                    "get_room_geometry_metrics",
                     "get_door_egress_info",
                     "get_opening_geometry_info",
                     "get_vertical_circulation_info",
                 },
                 [Profiles.Data] = new[]
                 {
+                    "get_room_geometry_metrics",
                     "export_apartment_data",
                     "export_room_finish_data",
                     "export_tep_data",
@@ -781,7 +782,9 @@ namespace revit_mcp_plugin.Core.Assistant
                     "Alias tag_all_rooms is accepted by the host.",
                     P(("tagTypeId", S(), null), ("roomIds", A("string"), null))),
                 T("export_room_data",
-                    "Export room ElementIds, names, numbers, areas (м²). «На этаже» → filterByActiveView=true or levelName from get_current_view_info. " +
+                    "Export room ElementIds, names, numbers, areas (м²). Counts and floor areas only — " +
+                    "NOT width/depth; for «глубина помещения» / «сколько глубина» use get_room_geometry_metrics. " +
+                    "«На этаже» → filterByActiveView=true or levelName from get_current_view_info. " +
                     "Whole building → omit filter. Response may include totalInProject when filtered.",
                     P(("includeUnplacedRooms", B(), null),
                       ("includeNotEnclosedRooms", B(), null),
@@ -789,7 +792,9 @@ namespace revit_mcp_plugin.Core.Assistant
                       ("levelName", S(), "filter by level name"),
                       ("levelId", N(), "filter by level ElementId"))),
                 T("create_door_schedule",
-                    "Create door schedule (спецификация дверей). Returns schedule ElementId for place_view_on_sheet / auto_layout_sheet. " +
+                    "Create door schedule (спецификация дверей / ведомость заполнения проёмов по ГОСТ 21.501). " +
+                    "Use for «ведомость по ГОСТ 21.501» on the active view. " +
+                    "Returns schedule ElementId for place_view_on_sheet / auto_layout_sheet. " +
                     "NOT TEP — for ТЭП use render_tep_table. No args; uses project template.",
                     Empty()),
                 T("create_window_schedule",
@@ -885,8 +890,9 @@ namespace revit_mcp_plugin.Core.Assistant
                       ("viewId", N(), "floor plan view ElementId"),
                       ("filterByActiveView", B(), "scope to active view, default true"))),
                 T("get_room_geometry_metrics",
-                    "Returns per-room width/depth/area (мм / м²) for depth and min-size checks. " +
-                    "Use before check_room_depth / check_min_dimensions when you need raw geometry. No args.",
+                    "REQUIRED for «глубина помещения», «сколько глубина», width/depth questions. " +
+                    "Returns per-room widthMm/depthMm/area for the active floor. " +
+                    "Do NOT use export_room_data or run_norm_audit for depth-only questions. No args.",
                     Empty()),
                 T("create_filled_regions",
                     "Paint room areas as Filled Region (цветовая область). " +
@@ -1006,7 +1012,9 @@ namespace revit_mcp_plugin.Core.Assistant
                 T("validate_schedule", "Compare schedule counts vs model.", P(
                     R("category"),
                     ("category", E("Doors", "Windows", "Floors", "CurtainWalls"), "schedule category"))),
-                T("create_schedule", "Create ViewSchedule from template.", P(
+                T("create_schedule", "Create ViewSchedule from template. " +
+                    "NOT for «ведомость по ГОСТ 21.501» — use create_door_schedule (no categoryName needed).",
+                    P(
                     ("scheduleName", S(), null), ("templateName", S(), null))),
                 T("configure_schedule", "Edit existing schedule columns/filters.", P(
                     ("scheduleId", N(), null), ("changes", O(), null))),
