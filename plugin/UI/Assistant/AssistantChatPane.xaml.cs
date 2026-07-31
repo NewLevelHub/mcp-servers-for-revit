@@ -25,6 +25,7 @@ namespace revit_mcp_plugin.UI.Assistant
         private UIApplication _uiApp;
         private readonly LocalAgentHost _agent = new LocalAgentHost();
         private readonly List<ChatAttachment> _pendingAttachments = new List<ChatAttachment>();
+        private ScenarioPreset _pendingPreset;
         private CancellationTokenSource _runCts;
         private TaskCompletionSource<bool> _confirmTcs;
         private bool _busy;
@@ -47,6 +48,7 @@ namespace revit_mcp_plugin.UI.Assistant
         {
             AddBotMessage(
                 "Напишите запрос обычным языком или выберите сценарий ниже.\n" +
+                "Чип: клик — вставить и править, Ctrl+клик — сразу.\n" +
                 "Enter — отправить, Shift+Enter — новая строка.\n" +
                 "Файл: 📎, перетащить в чат или Ctrl+V (скрин).\n" +
                 "Пример: «Проверь этаж и подпиши нарушения».\n\n" +
@@ -162,6 +164,7 @@ namespace revit_mcp_plugin.UI.Assistant
             _agent.ClearHistory();
             MessagesPanel.Children.Clear();
             ConfirmBar.Visibility = System.Windows.Visibility.Collapsed;
+            _pendingPreset = null;
             InputBox.Clear();
             ClearPendingAttachments();
             ShowWelcomeMessage();
@@ -188,33 +191,38 @@ namespace revit_mcp_plugin.UI.Assistant
         {
             ChipsPanel.Children.Clear();
             foreach (var preset in ScenarioPresets.Pilot)
-            {
-                var content = new StackPanel { Orientation = Orientation.Horizontal };
-                content.Children.Add(new TextBlock
-                {
-                    Text = string.IsNullOrEmpty(preset.Icon) ? "•" : preset.Icon,
-                    FontSize = 12,
-                    Margin = new Thickness(0, 0, 6, 0),
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x3D, 0x7E, 0xA6))
-                });
-                content.Children.Add(new TextBlock
-                {
-                    Text = preset.Label,
-                    FontSize = 11.5,
-                    VerticalAlignment = VerticalAlignment.Center
-                });
+                ChipsPanel.Children.Add(MakeChipButton(preset));
+        }
 
-                var btn = new Button
-                {
-                    Content = content,
-                    Style = (Style)FindResource("ChipButton"),
-                    Tag = preset,
-                    ToolTip = string.IsNullOrWhiteSpace(preset.Hint) ? preset.Label : preset.Hint
-                };
-                btn.Click += Chip_Click;
-                ChipsPanel.Children.Add(btn);
-            }
+        private Button MakeChipButton(ScenarioPreset preset)
+        {
+            var content = new StackPanel { Orientation = Orientation.Horizontal };
+            content.Children.Add(new TextBlock
+            {
+                Text = string.IsNullOrEmpty(preset.Icon) ? "•" : preset.Icon,
+                FontSize = 12,
+                Margin = new Thickness(0, 0, 6, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x3D, 0x7E, 0xA6))
+            });
+            content.Children.Add(new TextBlock
+            {
+                Text = preset.Label,
+                FontSize = 11.5,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+
+            var tip = (string.IsNullOrWhiteSpace(preset.Hint) ? preset.Label : preset.Hint)
+                + "\nКлик — править · Ctrl+клик — сразу";
+            var btn = new Button
+            {
+                Content = content,
+                Style = (Style)FindResource("ChipButton"),
+                Tag = preset,
+                ToolTip = tip
+            };
+            btn.Click += Chip_Click;
+            return btn;
         }
 
         private void Chip_Click(object sender, RoutedEventArgs e)
@@ -222,20 +230,39 @@ namespace revit_mcp_plugin.UI.Assistant
             if (_busy) return;
             var preset = (sender as Button)?.Tag as ScenarioPreset;
             if (preset == null) return;
-            InputBox.Text = preset.Prompt;
-            InputBox.CaretIndex = InputBox.Text.Length;
-            InputBox.Focus();
-            var attachments = _pendingAttachments.Count > 0 ? _pendingAttachments.ToList() : null;
-            ClearPendingAttachments();
-            InputBox.Clear();
 
-            if (AssistantNormAuditRouting.ShouldRunDirectNormAudit(preset.Id))
+            if ((Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
             {
-                _ = StartNormAuditAsync(preset.Prompt);
+                RunPresetImmediate(preset);
                 return;
             }
 
-            _ = StartRunAsync(preset.Prompt, attachments, ScenarioPresets.BuildAgentMessage(preset), preset.Profiles);
+            _pendingPreset = preset;
+            InputBox.Text = preset.Prompt ?? "";
+            InputBox.CaretIndex = InputBox.Text.Length;
+            InputBox.Focus();
+        }
+
+        private void RunPresetImmediate(ScenarioPreset preset)
+        {
+            if (preset == null || _busy) return;
+
+            _pendingPreset = null;
+
+            if (!string.IsNullOrWhiteSpace(preset.Hint))
+                AddBotMessage(preset.Hint);
+
+            var text = preset.Prompt;
+            var attachments = _pendingAttachments.Count > 0 ? _pendingAttachments.ToList() : null;
+            ClearPendingAttachments();
+
+            if (AssistantNormAuditRouting.ShouldRunDirectNormAudit(preset.Id))
+            {
+                _ = StartNormAuditAsync(text);
+                return;
+            }
+
+            _ = StartRunAsync(text, attachments, ScenarioPresets.BuildAgentMessage(preset, text), preset.Profiles);
         }
 
         private async Task StartNormAuditAsync(string displayText)
@@ -282,9 +309,23 @@ namespace revit_mcp_plugin.UI.Assistant
             if (string.IsNullOrEmpty(text) && _pendingAttachments.Count == 0) return;
 
             var attachments = _pendingAttachments.ToList();
+            var pending = _pendingPreset;
             InputBox.Clear();
             ClearPendingAttachments();
-            _ = StartRunAsync(string.IsNullOrEmpty(text) ? "Смотри вложение." : text, attachments);
+            _pendingPreset = null;
+
+            var display = string.IsNullOrEmpty(text) ? "Смотри вложение." : text;
+            if (pending != null)
+            {
+                _ = StartRunAsync(
+                    display,
+                    attachments,
+                    ScenarioPresets.BuildAgentMessage(pending, display),
+                    pending.Profiles);
+                return;
+            }
+
+            _ = StartRunAsync(display, attachments);
         }
 
         private void CancelButton_Click(object sender, RoutedEventArgs e)
