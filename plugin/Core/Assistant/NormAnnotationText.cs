@@ -43,12 +43,19 @@ namespace revit_mcp_plugin.Core.Assistant
             if (!a.HasValue || !r.HasValue)
                 return f["note"]?.ToString() ?? "";
 
+            // Compare with raw values; display mm rounded to whole units (REV-135 float noise).
             var op = a.Value < r.Value ? "<" : a.Value > r.Value ? ">" : "=";
 
             if ((f["checkType"]?.ToString() ?? "").Contains("room_area"))
-                return a.Value + " " + op + " " + r.Value + " м²";
+            {
+                var aM2 = Math.Round(a.Value, 2, MidpointRounding.AwayFromZero);
+                var rM2 = Math.Round(r.Value, 2, MidpointRounding.AwayFromZero);
+                return aM2 + " " + op + " " + rM2 + " м²";
+            }
 
-            return a.Value + " " + op + " " + r.Value + " мм";
+            var aMm = (long)Math.Round(a.Value, MidpointRounding.AwayFromZero);
+            var rMm = (long)Math.Round(r.Value, MidpointRounding.AwayFromZero);
+            return aMm + " " + op + " " + rMm + " мм";
         }
 
         private static string JoinNonEmpty(string a, string b)
