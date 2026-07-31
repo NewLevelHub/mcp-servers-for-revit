@@ -34,6 +34,9 @@ namespace revit_mcp_plugin.UI
                 ? s.AssistantMaxTokens.Value.ToString(CultureInfo.InvariantCulture)
                 : "";
             RequireConfirmCheckBox.IsChecked = s.AssistantRequireConfirmations;
+            ConfirmDeleteThresholdBox.Text = (s.AssistantConfirmDeleteThreshold > 0
+                ? s.AssistantConfirmDeleteThreshold
+                : 20).ToString(CultureInfo.InvariantCulture);
         }
 
         private void SaveButton_Click(object sender, RoutedEventArgs e)
@@ -45,6 +48,7 @@ namespace revit_mcp_plugin.UI
             s.AssistantTemperature = ParseTemperature(TemperatureBox.Text);
             s.AssistantMaxTokens = ParseMaxTokens(MaxTokensBox.Text);
             s.AssistantRequireConfirmations = RequireConfirmCheckBox.IsChecked == true;
+            s.AssistantConfirmDeleteThreshold = ParseThreshold(ConfirmDeleteThresholdBox.Text);
             PluginSettingsStore.SaveSettings(s);
             SaveStatusText.Text = "Сохранено";
         }
@@ -66,6 +70,14 @@ namespace revit_mcp_plugin.UI
                 return null;
             if (!int.TryParse(text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) || n <= 0)
                 return null;
+            return n;
+        }
+
+        private static int ParseThreshold(string text)
+        {
+            if (!int.TryParse((text ?? "").Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) || n < 1)
+                return 20;
+            if (n > 100000) return 100000;
             return n;
         }
     }

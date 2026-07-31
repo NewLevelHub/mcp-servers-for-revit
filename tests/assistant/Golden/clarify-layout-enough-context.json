@@ -1,0 +1,9 @@
+{
+  "id": "clarify-layout-enough-context",
+  "group": "routing_traps",
+  "userText": "Сделай планировку кафе 60 м² у оси А на текущем этаже",
+  "expectTools": ["declare_plan", "get_current_view_info", "get_available_family_types"],
+  "forbidTools": ["ask_user", "send_code_to_revit", "run_norm_audit"],
+  "expectToolsOrdered": true,
+  "maxRounds": 6
+}

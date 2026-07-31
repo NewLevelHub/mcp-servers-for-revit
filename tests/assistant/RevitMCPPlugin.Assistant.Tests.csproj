@@ -33,6 +33,9 @@
     <Compile Include="..\..\plugin\Core\Assistant\WallTypePicker.cs" Link="WallTypePicker.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\MissingTypeIdGuard.cs" Link="MissingTypeIdGuard.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\AgentPlan.cs" Link="AgentPlan.cs" />
+    <Compile Include="..\..\plugin\Core\Assistant\AskUser.cs" Link="AskUser.cs" />
+    <Compile Include="..\..\plugin\Core\Assistant\DeleteConfirmSummary.cs" Link="DeleteConfirmSummary.cs" />
+    <Compile Include="..\..\plugin\Core\Assistant\TypologyPrograms.cs" Link="TypologyPrograms.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\IntentRouter.cs" Link="IntentRouter.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\OpenAiCompatibleClient.cs" Link="OpenAiCompatibleClient.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\IAssistantToolExecutor.cs" Link="IAssistantToolExecutor.cs" />

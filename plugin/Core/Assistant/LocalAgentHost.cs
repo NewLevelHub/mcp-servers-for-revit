@@ -72,6 +72,8 @@ namespace revit_mcp_plugin.Core.Assistant
 
         public event Action<string> StatusChanged;
         public event Func<PendingToolConfirmation, Task<bool>> ConfirmationRequested;
+        /// <summary>REV-125: pause for ask_user option card.</summary>
+        public event Func<PendingAskUser, Task<AskUserAnswer>> AskUserRequested;
         /// <summary>Raised when older messages were dropped to keep context within limits.</summary>
         public event Action HistoryTrimmed;
         /// <summary>REV-120: plan checklist declared or a step status changed.</summary>
@@ -668,6 +670,7 @@ namespace revit_mcp_plugin.Core.Assistant
             var loopGuard = new ToolCallLoopGuard();
             AgentPlan activePlan = null;
             var budgetWarningSent = false;
+            var askUserUsed = false;
             var turnLog = new TurnLogEntry
             {
                 TurnId = turnId ?? Guid.NewGuid().ToString("N").Substring(0, 12),
@@ -853,7 +856,13 @@ namespace revit_mcp_plugin.Core.Assistant
                             continue;
                         }
 
-                        if (settings.AssistantRequireConfirmations && ToolCatalog.RequiresConfirmation(name, argsJson))
+                        if (ToolCatalog.ShouldConfirm(
+                                name,
+                                argsJson,
+                                settings.AssistantRequireConfirmations,
+                                settings.AssistantConfirmDeleteThreshold > 0
+                                    ? settings.AssistantConfirmDeleteThreshold
+                                    : DeleteConfirmSummary.DefaultThreshold))
                         {
                             var pending = new PendingToolConfirmation
                             {
@@ -946,6 +955,111 @@ namespace revit_mcp_plugin.Core.Assistant
                                 Ok = true,
                                 DurationMs = toolSw.ElapsedMilliseconds,
                                 ResultBytes = planPayload.ToString().Length,
+                            });
+                            continue;
+                        }
+
+                        // REV-125: ask_user — pause for UI card (max one per turn).
+                        if (toolName.Equals("ask_user", StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (askUserUsed)
+                            {
+                                var dup = ToolResultShaper.FailurePayload(new ToolCatalog.FailureHint(
+                                    "ask_user уже вызывали в этом запросе.",
+                                    "Используй полученный ответ; не спрашивай повторно."));
+                                AppendToolResult(callId, dup.ToString());
+                                done.Add("ошибка: повторный вопрос");
+                                toolSw.Stop();
+                                turnLog.ToolCalls.Add(new ToolCallLog
+                                {
+                                    Round = round,
+                                    Name = toolName,
+                                    Args = argsJson,
+                                    NormalizedArgs = enrichedArgs,
+                                    Ok = false,
+                                    DurationMs = toolSw.ElapsedMilliseconds,
+                                    Error = "ask_user_already_used",
+                                    ResultBytes = dup.ToString().Length,
+                                });
+                                continue;
+                            }
+
+                            if (!AskUserParser.TryParse(enrichedArgs, out var pendingAsk, out var askErr))
+                            {
+                                var failAsk = ToolResultShaper.FailurePayload(new ToolCatalog.FailureHint(
+                                    askErr ?? "Некорректный ask_user.",
+                                    "Передай question и options (2–6 строк)."));
+                                AppendToolResult(callId, failAsk.ToString());
+                                done.Add("ошибка: вопрос");
+                                toolSw.Stop();
+                                turnLog.ToolCalls.Add(new ToolCallLog
+                                {
+                                    Round = round,
+                                    Name = toolName,
+                                    Args = argsJson,
+                                    NormalizedArgs = enrichedArgs,
+                                    Ok = false,
+                                    DurationMs = toolSw.ElapsedMilliseconds,
+                                    Error = askErr,
+                                    ResultBytes = failAsk.ToString().Length,
+                                });
+                                continue;
+                            }
+
+                            askUserUsed = true;
+                            RaiseStatus("Ждёт ответ");
+                            var askHandler = AskUserRequested;
+                            AskUserAnswer answer = null;
+                            if (askHandler != null)
+                                answer = await askHandler(pendingAsk).ConfigureAwait(false);
+
+                            if (answer == null || answer.Cancelled || string.IsNullOrWhiteSpace(answer.DisplayText))
+                            {
+                                var cancelled = AskUserParser.ToCancelledPayload();
+                                AppendToolResult(callId, cancelled.ToString());
+                                done.Add("отменено: вопрос");
+                                toolSw.Stop();
+                                turnLog.ToolCalls.Add(new ToolCallLog
+                                {
+                                    Round = round,
+                                    Name = toolName,
+                                    Args = argsJson,
+                                    NormalizedArgs = enrichedArgs,
+                                    Ok = false,
+                                    DurationMs = toolSw.ElapsedMilliseconds,
+                                    Error = "ask_user_cancelled",
+                                    ResultBytes = cancelled.ToString().Length,
+                                });
+                                continue;
+                            }
+
+                            var askPayload = AskUserParser.ToSuccessPayload(answer);
+                            var typologyHint = TypologyPrograms.BuildHintForAnswer(answer.DisplayText);
+                            if (!string.IsNullOrWhiteSpace(typologyHint))
+                            {
+                                askPayload["typologyGuidance"] = typologyHint;
+                                askPayload["summary"] = "ответ: " + answer.DisplayText + " · программа типологии приложена";
+                            }
+
+                            AppendToolResult(callId, askPayload.ToString());
+                            if (!string.IsNullOrWhiteSpace(typologyHint))
+                            {
+                                AppendSystemMessage(
+                                    "Архитектор выбрал: " + answer.DisplayText + ".\n" +
+                                    typologyHint + "\n" +
+                                    "Собери declare_plan и геометрию по этой программе. Не своди к двум комнатам.");
+                            }
+                            done.Add(askPayload["summary"]?.ToString() ?? "вопрос");
+                            toolSw.Stop();
+                            turnLog.ToolCalls.Add(new ToolCallLog
+                            {
+                                Round = round,
+                                Name = toolName,
+                                Args = argsJson,
+                                NormalizedArgs = enrichedArgs,
+                                Ok = true,
+                                DurationMs = toolSw.ElapsedMilliseconds,
+                                ResultBytes = askPayload.ToString().Length,
                             });
                             continue;
                         }
@@ -1213,6 +1327,13 @@ namespace revit_mcp_plugin.Core.Assistant
             var text = left <= 1
                 ? "Остался 1 шаг бюджета. Завершай: краткий отчёт что сделано и что не успели."
                 : $"Осталось {left} шага бюджета. Завершай работу и отчитайся: что сделано, что нет.";
+            AppendSystemMessage(text);
+        }
+
+        private void AppendSystemMessage(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return;
             lock (_historyLock)
             {
                 _history.Add(new JObject
@@ -1227,20 +1348,24 @@ namespace revit_mcp_plugin.Core.Assistant
         {
             try
             {
-                var args = JObject.Parse(string.IsNullOrWhiteSpace(argsJson) ? "{}" : argsJson);
-                if (toolName.Equals("delete_element", StringComparison.OrdinalIgnoreCase))
+                var n = toolName ?? "";
+                if (n.Equals("delete_element", StringComparison.OrdinalIgnoreCase)
+                    || (n.Equals("operate_element", StringComparison.OrdinalIgnoreCase)
+                        && ToolCatalog.RequiresConfirmation(n, argsJson)))
                 {
-                    var ids = args["elementIds"] as JArray;
-                    var n = ids?.Count ?? 0;
-                    return $"Удалить элементы ({n} шт.)?";
+                    return DeleteConfirmSummary.Format(n, argsJson);
                 }
-                if (toolName.StartsWith("create_", StringComparison.OrdinalIgnoreCase))
+
+                if (n.StartsWith("create_", StringComparison.OrdinalIgnoreCase))
                     return $"Выполнить создание: {FriendlyToolName(toolName)}?";
-                if (toolName.Equals("operate_element", StringComparison.OrdinalIgnoreCase))
+                if (n.Equals("operate_element", StringComparison.OrdinalIgnoreCase))
                 {
+                    var args = JObject.Parse(string.IsNullOrWhiteSpace(argsJson) ? "{}" : argsJson);
                     var action = args["data"]?["action"]?.ToString() ?? args["action"]?.ToString() ?? "изменить";
                     return $"Выполнить действие «{action}» над элементами?";
                 }
+                if (n.Equals("send_code_to_revit", StringComparison.OrdinalIgnoreCase))
+                    return "Выполнить произвольный C# код в модели?";
                 return $"Разрешить действие «{FriendlyToolName(toolName)}»?";
             }
             catch

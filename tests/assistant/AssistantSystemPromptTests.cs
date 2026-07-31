@@ -19,10 +19,45 @@ public class AssistantSystemPromptTests
     public void Simple_read_prompt_is_much_smaller_than_legacy_monolith()
     {
         var dataOnly = AssistantSystemPrompt.Build(new[] { ToolCatalog.Profiles.Data }, "Сколько помещений?");
+        // Core + always-on Clarification (REV-125) + Data — still well under the old monolith.
         Assert.True(
-            dataOnly.Length < AssistantSystemPrompt.LegacyMonolithLength * 3 / 5,
-            $"data prompt {dataOnly.Length} should be < {AssistantSystemPrompt.LegacyMonolithLength * 3 / 5}");
+            dataOnly.Length < AssistantSystemPrompt.LegacyMonolithLength,
+            $"data prompt {dataOnly.Length} should be < {AssistantSystemPrompt.LegacyMonolithLength}");
         Assert.Contains("filterByActiveView", dataOnly);
+        Assert.Contains("УТОЧНЕНИЯ", dataOnly);
+        Assert.DoesNotContain("ПЛАНИРОВКА", dataOnly);
+    }
+
+    [Fact]
+    public void Build_always_includes_clarification_playbook()
+    {
+        var empty = AssistantSystemPrompt.Build(Array.Empty<string>(), null);
+        Assert.Contains("УТОЧНЕНИЯ", empty);
+        Assert.Contains("ask_user", empty);
+
+        var norms = AssistantSystemPrompt.Build(new[] { ToolCatalog.Profiles.Norms }, "Покажи нарушения");
+        Assert.Contains("УТОЧНЕНИЯ", norms);
+        Assert.Contains("НОРМОКОНТРОЛЬ", norms);
+    }
+
+    [Fact]
+    public void Clarification_lists_five_ask_cases_and_named_defaults()
+    {
+        Assert.Contains("ask_user", AssistantPlaybooks.Clarification);
+        Assert.Contains("планировку", AssistantPlaybooks.Clarification, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("applyToAllFloorPlans", AssistantPlaybooks.Clarification);
+        Assert.Contains("дефолт", AssistantPlaybooks.Clarification, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("двум комнатам", AssistantPlaybooks.Clarification, StringComparison.OrdinalIgnoreCase);
+        for (var i = 1; i <= 5; i++)
+            Assert.Contains(i + ")", AssistantPlaybooks.Clarification);
+    }
+
+    [Fact]
+    public void Modeling_forbids_two_room_template_for_typology()
+    {
+        Assert.Contains("ТОЛЬКО если пользователь явно сказал", AssistantPlaybooks.Modeling);
+        Assert.Contains("Школа", AssistantPlaybooks.Modeling);
+        Assert.DoesNotContain("«Две комнаты»: ровно 5", AssistantPlaybooks.Modeling);
     }
 
     [Fact]

@@ -17,6 +17,15 @@ namespace revit_mcp_plugin.Core.Assistant
             if (toolName.Equals("declare_plan", StringComparison.OrdinalIgnoreCase))
                 return AgentPlan.ExecuteAsTool(argsJson);
 
+            if (toolName.Equals("ask_user", StringComparison.OrdinalIgnoreCase))
+            {
+                return WrapLocalToolResult(new JObject
+                {
+                    ["success"] = false,
+                    ["error"] = "ask_user обрабатывается хостом агента, не через Revit RPC.",
+                }.ToString(Newtonsoft.Json.Formatting.None));
+            }
+
             if (toolName.Equals("run_norm_audit", StringComparison.OrdinalIgnoreCase))
                 return WrapLocalToolResult(NormAuditOrchestrator.Run(argsJson));
 

@@ -54,10 +54,17 @@ namespace revit_mcp_plugin.Configuration
         public int? AssistantMaxTokens { get; set; } = 4096;
 
         /// <summary>
-        /// When true, only delete / send_code_to_revit ask for confirmation in the chat pane.
-        /// Creates, dimensions, tags run without a prompt.
+        /// When true, destructive actions may ask for confirmation in the chat pane (REV-125).
+        /// Deletes confirm only when element count ≥ <see cref="AssistantConfirmDeleteThreshold"/>;
+        /// send_code_to_revit always confirms. Creates, dimensions, tags run without a prompt.
         /// </summary>
         [JsonProperty("assistantRequireConfirmations")]
-        public bool AssistantRequireConfirmations { get; set; } = false;
+        public bool AssistantRequireConfirmations { get; set; } = true;
+
+        /// <summary>
+        /// Minimum number of elements for delete / operate Delete to show a confirmation card (REV-125).
+        /// </summary>
+        [JsonProperty("assistantConfirmDeleteThreshold")]
+        public int AssistantConfirmDeleteThreshold { get; set; } = 20;
     }
 }

@@ -18,24 +18,24 @@ namespace revit_mcp_plugin.UI.Assistant
         private readonly Dictionary<int, TextBlock> _stepMarks = new Dictionary<int, TextBlock>();
         private readonly Dictionary<int, TextBlock> _stepLabels = new Dictionary<int, TextBlock>();
 
-        private static readonly Brush CardBg = new SolidColorBrush(Color.FromRgb(0xF4, 0xF7, 0xFB));
-        private static readonly Brush CardBorder = new SolidColorBrush(Color.FromRgb(0xD0, 0xDA, 0xE6));
-        private static readonly Brush TitleFg = new SolidColorBrush(Color.FromRgb(0x1A, 0x27, 0x44));
-        private static readonly Brush MutedFg = new SolidColorBrush(Color.FromRgb(0x5A, 0x6B, 0x7D));
-        private static readonly Brush DoneFg = new SolidColorBrush(Color.FromRgb(0x1F, 0x7A, 0x4C));
+        private static readonly Brush CardBg = new SolidColorBrush(Color.FromRgb(0xF7, 0xF6, 0xF3));
+        private static readonly Brush CardBorder = new SolidColorBrush(Color.FromRgb(0xE5, 0xE2, 0xDB));
+        private static readonly Brush TitleFg = new SolidColorBrush(Color.FromRgb(0x1F, 0x1E, 0x1B));
+        private static readonly Brush MutedFg = new SolidColorBrush(Color.FromRgb(0x73, 0x6E, 0x66));
+        private static readonly Brush DoneFg = new SolidColorBrush(Color.FromRgb(0x2F, 0x6B, 0x45));
         private static readonly Brush FailFg = new SolidColorBrush(Color.FromRgb(0xB4, 0x2A, 0x2A));
-        private static readonly Brush PendingFg = new SolidColorBrush(Color.FromRgb(0x8A, 0x96, 0xA3));
+        private static readonly Brush PendingFg = new SolidColorBrush(Color.FromRgb(0x9A, 0x94, 0x8B));
 
         public PlanChecklistBubble(AgentPlanSnapshot plan)
         {
-            Margin = new Thickness(36, 0, 36, 10);
+            Margin = new Thickness(44, 4, 28, 10);
             HorizontalAlignment = HorizontalAlignment.Left;
-            MaxWidth = 320;
+            MaxWidth = 360;
             Background = CardBg;
             BorderBrush = CardBorder;
             BorderThickness = new Thickness(1);
-            CornerRadius = new CornerRadius(12);
-            Padding = new Thickness(12, 10, 12, 10);
+            CornerRadius = new CornerRadius(16);
+            Padding = new Thickness(16, 14, 16, 14);
 
             var root = new StackPanel();
 
