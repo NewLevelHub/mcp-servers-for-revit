@@ -15,7 +15,7 @@ namespace revit_mcp_plugin.Core.Assistant
             "Ты AI-ассистент архитектора в Autodesk Revit. Пользователь — проектировщик, не разработчик. " +
             "Отвечай кратко по-русски (1–3 предложения + «сделано»). Не называй имена инструментов, JSON, MCP, Cursor. " +
             "Единицы: мм, м², м³. Перед create_* — get_current_view_info; typeId обязателен для create_*_element. " +
-            "Способ работы: запрос неясен — задай один уточняющий вопрос, не угадывай; " +
+            "Дефолты называй в ответе; уточнения — ask_user (блок ниже), ≤1 за запрос; " +
             "ошибка инструмента — не повторяй тот же вызов, исправь причину или скажи честно; " +
             "не выдумывай числа, id, типы и пункты норм — только из ответов инструментов; " +
             "сначала контекст; create_* после declare_plan (чтение — без плана). " +
@@ -29,20 +29,27 @@ namespace revit_mcp_plugin.Core.Assistant
         /// <summary>Backward-compatible alias — core only (playbooks added via <see cref="Build"/>).</summary>
         public const string Text = Core;
 
-        /// <summary>Assemble core + playbooks for active tool profiles.</summary>
+        /// <summary>Assemble core + always-on clarification + profile playbooks.</summary>
         public static string Build(IReadOnlyList<string> profiles, string userText = null)
         {
             var playbooks = AssistantPlaybooks.Build(profiles, userText);
-            if (string.IsNullOrWhiteSpace(playbooks))
-                return Core;
+            var sb = new StringBuilder();
+            sb.Append(Core);
+            sb.Append("\n\n");
+            sb.Append(AssistantPlaybooks.Clarification);
+            if (!string.IsNullOrWhiteSpace(playbooks))
+            {
+                sb.Append("\n\n");
+                sb.Append(playbooks);
+            }
 
-            return Core + "\n\n" + playbooks;
+            return sb.ToString();
         }
 
         /// <summary>All instruction fragments for schema-alignment guardian.</summary>
         public static IReadOnlyList<string> CollectAllInstructionTexts()
         {
-            var list = new List<string> { Core };
+            var list = new List<string> { Core, AssistantPlaybooks.Clarification };
             list.AddRange(AssistantPlaybooks.AllBodies);
             return list;
         }

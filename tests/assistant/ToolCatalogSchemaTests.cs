@@ -30,6 +30,7 @@ public class ToolCatalogSchemaTests
 
     [Theory]
     [InlineData("declare_plan", new[] { "goal", "steps" })]
+    [InlineData("ask_user", new[] { "question", "options" })]
     [InlineData("create_line_based_element", new[] { "data" })]
     [InlineData("create_point_based_element", new[] { "data" })]
     [InlineData("create_surface_based_element", new[] { "data" })]

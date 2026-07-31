@@ -38,7 +38,9 @@ namespace revit_mcp_plugin.Core.Assistant
             Cafe40,
             OfficeOpen,
             StoSmall,
-            CarWashTunnel
+            CarWashTunnel,
+            SchoolWing,
+            ResidentialFlat,
         };
 
         public static Typology GetById(string id)
@@ -163,6 +165,104 @@ namespace revit_mcp_plugin.Core.Assistant
                 "Въезд и выезд, стены, двери, марки помещений."
         };
 
+        /// <summary>Small school wing / floor fragment (not a full school building).</summary>
+        public static Typology SchoolWing { get; } = new Typology
+        {
+            Id = "school_wing",
+            Label = "Школа",
+            Icon = "🏫",
+            FootprintHint = "фрагмент этажа ~200–350 м² (не всё здание)",
+            NormTopics = new[] { "школа", "учебное", "коридор эвакуации", "класс", "санузел" },
+            Rooms = new[]
+            {
+                new RoomSlot { Name = "Вестибюль", Purpose = "Входная группа", MinAreaSqM = 20, Adjacency = "улица, коридор" },
+                new RoomSlot { Name = "Коридор", Purpose = "Циркуляция", MinAreaSqM = null, Adjacency = "связывает классы, ширина ≥1,5–2,2 м по нормам" },
+                new RoomSlot { Name = "Класс 1", Purpose = "Учебная", MinAreaSqM = 50, Adjacency = "коридор, окна на фасад" },
+                new RoomSlot { Name = "Класс 2", Purpose = "Учебная", MinAreaSqM = 50, Adjacency = "коридор, окна на фасад" },
+                new RoomSlot { Name = "Класс 3", Purpose = "Учебная", MinAreaSqM = 50, Adjacency = "коридор, окна на фасад" },
+                new RoomSlot { Name = "Учительская", Purpose = "Персонал", MinAreaSqM = 16, Adjacency = "коридор" },
+                new RoomSlot { Name = "Санузел М/Ж", Purpose = "Санитарная зона", MinAreaSqM = 8, Adjacency = "коридор у вестибюля" },
+            },
+            LayoutLogic =
+                "Вход → вестибюль → коридор-ось. Классы с одной или двух сторон коридора, окна на фасад. " +
+                "Учительская и санузлы у коридора, не вместо класса. " +
+                "НЕ две комнаты с одной перегородкой — минимум вестибюль+коридор+3 класса+учительская+санузел.",
+            DefaultPrompt =
+                "Спроектируй фрагмент школьного этажа: вестибюль, коридор, 3 класса, учительская, санузлы. " +
+                "Стены, двери, марки, цвет по назначению."
+        };
+
+        /// <summary>One residential apartment / flat layout.</summary>
+        public static Typology ResidentialFlat { get; } = new Typology
+        {
+            Id = "residential_flat",
+            Label = "Жилой дом",
+            Icon = "🏠",
+            FootprintHint = "квартира ~60–90 м²",
+            NormTopics = new[] { "жилое", "квартира", "кухня", "санузел", "эвакуация" },
+            Rooms = new[]
+            {
+                new RoomSlot { Name = "Прихожая", Purpose = "Входная группа", MinAreaSqM = 4, Adjacency = "вход, коридор/гостиная" },
+                new RoomSlot { Name = "Гостиная", Purpose = "Жилая", MinAreaSqM = 16, Adjacency = "прихожая, кухня" },
+                new RoomSlot { Name = "Кухня", Purpose = "Кухня", MinAreaSqM = 8, Adjacency = "гостиная" },
+                new RoomSlot { Name = "Спальня 1", Purpose = "Жилая", MinAreaSqM = 12, Adjacency = "коридор" },
+                new RoomSlot { Name = "Спальня 2", Purpose = "Жилая", MinAreaSqM = 10, Adjacency = "коридор" },
+                new RoomSlot { Name = "Санузел", Purpose = "Санитарная зона", MinAreaSqM = 4, Adjacency = "коридор/прихожая" },
+            },
+            LayoutLogic =
+                "Вход → прихожая → гостиная/кухня (открытая или смежные). Спальни и санузел от коридора. " +
+                "Не две одинаковые «коробки» — зонирование жилой квартиры.",
+            DefaultPrompt =
+                "Спроектируй квартиру: прихожая, гостиная, кухня, 2 спальни, санузел. Стены, двери, марки."
+        };
+
+        /// <summary>Map ask_user / free-text answer to a known typology (REV-125 follow-up).</summary>
+        public static Typology MatchFromAnswer(string answer)
+        {
+            var t = (answer ?? "").Trim().ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(t))
+                return null;
+
+            if (Contains(t, "школ", "класс", "учебн"))
+                return SchoolWing;
+            if (Contains(t, "жилой", "квартир", "апартамент", "жил "))
+                return ResidentialFlat;
+            if (Contains(t, "офис", "open space", "open-space"))
+                return OfficeOpen;
+            if (Contains(t, "кафе", "ресторан", "общепит"))
+                return Cafe40;
+            if (Contains(t, "сто", "автосервис"))
+                return StoSmall;
+            if (Contains(t, "автомойк", "мойк", "car wash"))
+                return CarWashTunnel;
+
+            foreach (var typ in All)
+            {
+                if (!string.IsNullOrWhiteSpace(typ.Label)
+                    && t.IndexOf(typ.Label.ToLowerInvariant(), System.StringComparison.Ordinal) >= 0)
+                    return typ;
+            }
+
+            return null;
+        }
+
+        /// <summary>Guidance block injected into ask_user tool result.</summary>
+        public static string BuildHintForAnswer(string answer)
+        {
+            var typ = MatchFromAnswer(answer);
+            return typ == null ? "" : BuildAgentInstruction(typ);
+        }
+
+        private static bool Contains(string text, params string[] needles)
+        {
+            foreach (var n in needles)
+            {
+                if (!string.IsNullOrEmpty(n) && text.IndexOf(n, System.StringComparison.Ordinal) >= 0)
+                    return true;
+            }
+            return false;
+        }
+
         /// <summary>Build AgentInstruction text from a typology definition.</summary>
         public static string BuildAgentInstruction(Typology t)
         {
@@ -172,7 +272,7 @@ namespace revit_mcp_plugin.Core.Assistant
             var sb = new System.Text.StringBuilder();
             sb.AppendLine("ТИПОЛОГИЯ: " + t.Label + ". " + t.FootprintHint);
             sb.AppendLine("Нормы: query_norm_rules topics=" + string.Join(", ", t.NormTopics) + " — площади только из каталога.");
-            sb.AppendLine("ПРОГРАММА ПОМЕЩЕНИЙ:");
+            sb.AppendLine("ПРОГРАММА ПОМЕЩЕНИЙ (обязательна — не своди к двум комнатам):");
             foreach (var r in t.Rooms)
             {
                 var area = r.MinAreaSqM.HasValue ? $" ≥{r.MinAreaSqM:0.#} м²" : "";

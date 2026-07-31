@@ -238,6 +238,28 @@ internal static class ScriptedChains
                 ScriptedChatClient.MakeTextCompletion(
                     "Уточните, пожалуйста: проверить нормы на этаже, данные модели или что-то другое?"),
             ]),
+            "clarify-layout-ask-user" => ScriptedChatClient.FromToolChain([
+                ("ask_user", new
+                {
+                    question = "Что проектируем?",
+                    options = new[] { "Жилой дом", "Офис", "Школа", "Кафе", "Другое" },
+                    allowFreeText = true,
+                }),
+            ], "Нужна типология — выберите вариант."),
+            "clarify-layout-enough-context" => ScriptedChatClient.FromToolChain([
+                ("declare_plan", new
+                {
+                    goal = "Планировка кафе 60 м² у оси А",
+                    steps = new object[]
+                    {
+                        new { n = 1, what = "Контекст вида", tool = "get_current_view_info" },
+                        new { n = 2, what = "Типы стен", tool = "get_available_family_types" },
+                        new { n = 3, what = "Стены", tool = "create_line_based_element" },
+                    },
+                }),
+                ("get_current_view_info", null),
+                ("get_available_family_types", new { categoryName = "OST_Walls" }),
+            ], "Взял тип базовой стены — других несущих нет."),
             "impossible-csharp-no-consent" => ScriptedChatClient.FromToolChain([
                 ("get_available_family_types", new { categoryName = "OST_Walls" }),
                 ("create_line_based_element", new

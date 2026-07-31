@@ -1,0 +1,11 @@
+{
+  "id": "clarify-layout-ask-user",
+  "group": "routing_traps",
+  "userText": "Сделай планировку",
+  "expectTools": ["ask_user"],
+  "forbidTools": ["create_line_based_element", "create_room", "send_code_to_revit", "declare_plan"],
+  "maxRounds": 2,
+  "requireArgs": {
+    "ask_user": ["question", "options"]
+  }
+}

@@ -33,7 +33,7 @@ public class ToolProfileTests
     {
         var all = ToolCatalog.GetOpenAiTools();
         Assert.True(all.Count > ToolCatalog.MaxToolsPerRequest);
-        Assert.Equal(71, all.Count);
+        Assert.Equal(72, all.Count);
     }
 
     [Fact]
@@ -174,7 +174,7 @@ public class ToolProfileTests
             .Select(t => t["function"]?["name"]?.ToString())
             .Where(n => n != null)
             .ToList();
-        Assert.True(names.Count <= 71);
+        Assert.True(names.Count <= 72);
         Assert.DoesNotContain("tag_all_rooms", names);
         Assert.DoesNotContain("tag_all_walls", names);
         Assert.DoesNotContain("color_elements", names);

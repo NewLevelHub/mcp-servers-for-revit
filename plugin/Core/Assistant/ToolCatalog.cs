@@ -35,6 +35,7 @@ namespace revit_mcp_plugin.Core.Assistant
         public static readonly IReadOnlyList<string> CoreTools = new[]
         {
             "declare_plan",
+            "ask_user",
             "get_current_view_info",
             "get_current_view_elements",
             "get_selected_elements",
@@ -421,8 +422,8 @@ namespace revit_mcp_plugin.Core.Assistant
         }
 
         /// <summary>
-        /// Only irreversible / high-risk actions ask for a click.
-        /// Create, dimension, tag, schedules, highlight — run immediately (pilot UX).
+        /// Irreversible / high-risk tool families (delete, send_code). Threshold applied via
+        /// <see cref="ShouldConfirm"/>.
         /// </summary>
         public static bool RequiresConfirmation(string toolName, string argsJson = null)
         {
@@ -453,6 +454,30 @@ namespace revit_mcp_plugin.Core.Assistant
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// REV-125: when confirmations are enabled, send_code always asks; deletes ask only if
+        /// target count ≥ <paramref name="deleteThreshold"/> (default 20).
+        /// </summary>
+        public static bool ShouldConfirm(
+            string toolName,
+            string argsJson,
+            bool requireConfirmations,
+            int deleteThreshold = 20)
+        {
+            if (!requireConfirmations)
+                return false;
+            if (!RequiresConfirmation(toolName, argsJson))
+                return false;
+
+            var n = (toolName ?? "").Trim();
+            if (n.Equals("send_code_to_revit", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            var threshold = deleteThreshold < 1 ? 1 : deleteThreshold;
+            var count = DeleteConfirmSummary.CountTargets(toolName, argsJson);
+            return count >= threshold;
         }
 
         /// <summary>Structured failure text for UI + model (REV-119): what broke vs how to fix.</summary>
@@ -605,8 +630,9 @@ namespace revit_mcp_plugin.Core.Assistant
                 || msg.IndexOf("No wall centerlines matched", StringComparison.OrdinalIgnoreCase) >= 0)
             {
                 return new FailureHint(
-                    "Оси ставятся по уже существующим стенам.",
-                    "Чтобы построить новые стены — сначала типы из проекта, затем линейные элементы (стены) по контуру; create_grid для этого не подходит.");
+                    "create_grid не нашёл стены под фильтр (часто: перегородки тоньше minWallThicknessMm).",
+                    "Повтори autoFromWalls с wallFilter=all и minWallThicknessMm=100 (или 50). " +
+                    "Не говори «стен нет», если на виде уже есть стены. create_grid не создаёт стены.");
             }
             if (msg.IndexOf("参数无效", StringComparison.OrdinalIgnoreCase) >= 0
                 || msg.IndexOf("没有指定要操作", StringComparison.OrdinalIgnoreCase) >= 0
@@ -668,6 +694,7 @@ namespace revit_mcp_plugin.Core.Assistant
             {
                 ["say_hello"] = "проверка связи",
                 ["declare_plan"] = "план",
+                ["ask_user"] = "вопрос",
                 ["query_norm_rules"] = "поиск норм",
                 ["get_current_view_info"] = "сведения о виде",
                 ["get_current_view_elements"] = "элементы вида",
@@ -810,6 +837,16 @@ namespace revit_mcp_plugin.Core.Assistant
                     P(R("goal", "steps"),
                       ("goal", S(), "short goal, e.g. Планировка кафе 60 м²"),
                       ("steps", AItems(planStep), "ordered steps with what + tool"))),
+                T("ask_user",
+                    "Ask the architect ONE clarifying question with clickable options. " +
+                    "Local meta-tool — pauses the agent until the user answers. " +
+                    "Use ONLY for the 5 clarification cases (no layout context, ambiguous types, " +
+                    "multi-floor scope, large/foreign delete, applyToAllFloorPlans). " +
+                    "At most ONE ask_user per user request. Prefer 2–6 short options; allowFreeText for «Другое».",
+                    P(R("question", "options"),
+                      ("question", S(), "short question, e.g. Что проектируем?"),
+                      ("options", A("string"), "2–6 button labels"),
+                      ("allowFreeText", B(), "show a free-text field; default true"))),
                 T("get_current_view_info",
                     "Active view: type, name, scale, level elevation (mm). Call first before create_* or dimensions.",
                     Empty()),

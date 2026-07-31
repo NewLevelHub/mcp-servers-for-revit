@@ -28,6 +28,8 @@ namespace revit_mcp_plugin.UI.Assistant
         private ScenarioPreset _pendingPreset;
         private CancellationTokenSource _runCts;
         private TaskCompletionSource<bool> _confirmTcs;
+        private TaskCompletionSource<AskUserAnswer> _askUserTcs;
+        private AskUserBubble _activeAskBubble;
         private bool _busy;
         private PlanChecklistBubble _activePlanBubble;
 
@@ -37,6 +39,7 @@ namespace revit_mcp_plugin.UI.Assistant
             Loaded += OnLoaded;
             _agent.StatusChanged += OnAgentStatus;
             _agent.ConfirmationRequested += OnConfirmationRequested;
+            _agent.AskUserRequested += OnAskUserRequested;
             _agent.HistoryTrimmed += OnHistoryTrimmed;
             _agent.PlanChanged += OnPlanChanged;
             BuildChips();
@@ -115,6 +118,8 @@ namespace revit_mcp_plugin.UI.Assistant
             {
                 try { _runCts?.Cancel(); } catch { /* ignore */ }
                 try { _confirmTcs?.TrySetResult(false); } catch { /* ignore */ }
+                try { _askUserTcs?.TrySetResult(new AskUserAnswer { Cancelled = true }); } catch { /* ignore */ }
+                try { _activeAskBubble?.Cancel(); } catch { /* ignore */ }
             }
 
             StartNewChat(showNotice: true);
@@ -161,6 +166,9 @@ namespace revit_mcp_plugin.UI.Assistant
 
         private void StartNewChat(bool showNotice)
         {
+            try { _askUserTcs?.TrySetResult(new AskUserAnswer { Cancelled = true }); } catch { /* ignore */ }
+            _activeAskBubble = null;
+            _activePlanBubble = null;
             _agent.ClearHistory();
             MessagesPanel.Children.Clear();
             ConfirmBar.Visibility = System.Windows.Visibility.Collapsed;
@@ -332,6 +340,8 @@ namespace revit_mcp_plugin.UI.Assistant
         {
             try { _runCts?.Cancel(); } catch { /* ignore */ }
             try { _confirmTcs?.TrySetResult(false); } catch { /* ignore */ }
+            try { _askUserTcs?.TrySetResult(new AskUserAnswer { Cancelled = true }); } catch { /* ignore */ }
+            try { _activeAskBubble?.Cancel(); } catch { /* ignore */ }
         }
 
         private void AttachButton_Click(object sender, RoutedEventArgs e)
@@ -670,6 +680,7 @@ namespace revit_mcp_plugin.UI.Assistant
             _busy = true;
             SetBusyUi(true);
             _activePlanBubble = null;
+            _activeAskBubble = null;
             AddUserMessage(displayText, attachments);
             RefreshContextAndBanner();
 
@@ -715,6 +726,7 @@ namespace revit_mcp_plugin.UI.Assistant
                 _busy = false;
                 SetBusyUi(false);
                 ConfirmBar.Visibility = System.Windows.Visibility.Collapsed;
+                _activeAskBubble = null;
                 RefreshContextAndBanner();
             }
         }
@@ -726,10 +738,78 @@ namespace revit_mcp_plugin.UI.Assistant
 
             Dispatcher.BeginInvoke(new Action(() =>
             {
-                ConfirmText.Text = pending?.Summary
-                    ?? "Подтвердите действие в модели.";
+                var summary = EnrichConfirmSummary(pending);
+                ConfirmText.Text = summary;
+                var isDelete = IsDeleteConfirmation(pending);
+                ConfirmOkButton.Content = isDelete ? "Удалить" : "Выполнить";
                 ConfirmBar.Visibility = System.Windows.Visibility.Visible;
                 SetStatus("Подтвердите", StatusTone.Warn);
+            }));
+
+            return tcs.Task;
+        }
+
+        private static bool IsDeleteConfirmation(PendingToolConfirmation pending)
+        {
+            if (pending == null) return false;
+            var name = pending.ToolName ?? "";
+            return name.Equals("delete_element", StringComparison.OrdinalIgnoreCase)
+                   || ToolCatalog.RequiresConfirmation(name, pending.ArgumentsJson)
+                      && !name.Equals("send_code_to_revit", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private string EnrichConfirmSummary(PendingToolConfirmation pending)
+        {
+            if (pending == null)
+                return "Подтвердите действие в модели.";
+
+            var name = pending.ToolName ?? "";
+            if (name.Equals("delete_element", StringComparison.OrdinalIgnoreCase)
+                || (name.Equals("operate_element", StringComparison.OrdinalIgnoreCase)
+                    && ToolCatalog.RequiresConfirmation(name, pending.ArgumentsJson)))
+            {
+                return DeleteConfirmSummary.Format(name, pending.ArgumentsJson, ResolveElementCategory);
+            }
+
+            return string.IsNullOrWhiteSpace(pending.Summary)
+                ? "Подтвердите действие в модели."
+                : pending.Summary;
+        }
+
+        private string ResolveElementCategory(string idText)
+        {
+            try
+            {
+                var doc = _uiApp?.ActiveUIDocument?.Document;
+                if (doc == null || string.IsNullOrWhiteSpace(idText))
+                    return null;
+                if (!int.TryParse(idText.Trim(), out var idInt))
+                    return null;
+                var el = doc.GetElement(new ElementId(idInt));
+                return el?.Category?.Name;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private Task<AskUserAnswer> OnAskUserRequested(PendingAskUser pending)
+        {
+            var tcs = new TaskCompletionSource<AskUserAnswer>();
+            _askUserTcs = tcs;
+
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                var bubble = new AskUserBubble(pending);
+                _activeAskBubble = bubble;
+                bubble.Answered += answer =>
+                {
+                    _askUserTcs?.TrySetResult(answer ?? new AskUserAnswer { Cancelled = true });
+                };
+                MessagesPanel.Children.Add(bubble);
+                ScrollToEnd();
+                SetStatus("Ждёт ответ", StatusTone.Warn);
             }));
 
             return tcs.Task;
@@ -742,6 +822,7 @@ namespace revit_mcp_plugin.UI.Assistant
                 if (string.IsNullOrWhiteSpace(status)) return;
                 var tone = status.IndexOf("подтверж", StringComparison.OrdinalIgnoreCase) >= 0
                     || status.IndexOf("ключ", StringComparison.OrdinalIgnoreCase) >= 0
+                    || status.IndexOf("Ждёт", StringComparison.OrdinalIgnoreCase) >= 0
                     ? StatusTone.Warn
                     : StatusTone.Busy;
                 if (string.Equals(status, "Готов", StringComparison.OrdinalIgnoreCase))

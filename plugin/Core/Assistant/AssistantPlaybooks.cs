@@ -10,7 +10,7 @@ namespace revit_mcp_plugin.Core.Assistant
     /// </summary>
     public static class AssistantPlaybooks
     {
-        /// <summary>All playbook bodies for schema-alignment tests.</summary>
+        /// <summary>All playbook bodies for schema-alignment tests (excluding always-on Clarification).</summary>
         public static IReadOnlyList<string> AllBodies { get; } = new[]
         {
             Modeling,
@@ -21,6 +21,25 @@ namespace revit_mcp_plugin.Core.Assistant
             Typology,
             Data,
         };
+
+        /// <summary>
+        /// Always appended (REV-125): when to call ask_user vs act on named defaults.
+        /// </summary>
+        public const string Clarification =
+            "=== УТОЧНЕНИЯ (ask_user) ===\n" +
+            "Действуй по разумным дефолтам и в итоге перечисли их " +
+            "(«взял тип ADSK_Основной_2 мм — других нет»).\n" +
+            "Спрашивай через ask_user только в этих случаях (один вызов за запрос, 2–6 options):\n" +
+            "1) Нет контекста для создания — «сделай планировку» без типологии/площади/места.\n" +
+            "2) Несколько равноправных типов в проекте, ни один не очевиден.\n" +
+            "3) Запрос трогает больше одного этажа или всю модель, а активен один вид.\n" +
+            "4) Удаление большого числа элементов или чужого (без тега MCP) — UI подтвердит сам.\n" +
+            "5) Правка чужих оформленных планов / applyToAllFloorPlans=true без явного согласия.\n" +
+            "Иначе не спрашивай. Не вызывай ask_user повторно в том же запросе.\n" +
+            "После ответа ask_user (Школа/Офис/Жилой дом/Кафе…) — строй программу помещений этой типологии. " +
+            "ЗАПРЕЩЕНО сводить любую типологию к двум комнатам с одной перегородкой.\n" +
+            "Пример: «Сделай планировку» → ask_user question=Что проектируем? options=[Жилой дом,Офис,Школа,Кафе,Другое].\n" +
+            "Пример: «Кафе 60 м² у оси А» → без ask_user, declare_plan и создание.";
 
         public const string Data =
             "=== ЧТЕНИЕ ДАННЫХ ===\n" +
@@ -41,8 +60,10 @@ namespace revit_mcp_plugin.Core.Assistant
             "(Базовая стена / перегородка). Не Витраж/Curtain — они дают таймаут. " +
             "Без typeId create_*_element вернёт ошибку с candidates — автоподстановки нет.\n" +
             "C) create_line_based_element: все сегменты ОДНИМ вызовом; typeId обязателен; height≈3000; baseLevel из вида. " +
-            "«Две комнаты»: ровно 5 сегментов (прямоугольник + 1 перегородка). Не дроби стены и не строй поверх старых — " +
-            "сначала удали мусор operate_element/delete или работай в чистой зоне.\n" +
+            "Состав и число помещений — из запроса/типологии (школа, офис, жилой, кафе…), не из демо-шаблона. " +
+            "Шаблон «две комнаты» (прямоугольник + 1 перегородка, 5 сегментов) — ТОЛЬКО если пользователь явно сказал " +
+            "«две комнаты» / «2 комнаты». Для школы/офиса/жилого — полный контур и несколько помещений. " +
+            "Не строй поверх старых — сначала удали мусор или работай в чистой зоне.\n" +
             "D) Если стены не создались — остановись, сообщи ошибку; не вызывай create_room и размеры.\n" +
             "E) Двери: get_available_family_types OST_Doors → typeId. " +
             "Между комнатами: hostWallId = общая ПЕРЕГОРОДКА (не наружный контур), " +
@@ -54,13 +75,15 @@ namespace revit_mcp_plugin.Core.Assistant
             "G) tag_rooms; dimension_room_walls roomId=ElementId, placement=interior.\n" +
             "H) run_norm_audit — только после готовой планировки.\n" +
             "Помещения только внутри замкнутых стен. Room Bounding=true — на стенах, не на комнатах.\n" +
-            "Пример: «Построй две комнаты» → declare_plan → view → types(OST_Walls) → " +
-            "5 сегментов стен → types(OST_Doors) → дверь в середине общей перегородки → create_room ×2 → tag_rooms.\n" +
-            "Пример: «Сколько комнат на этаже?» → export_room_data filterByActiveView=true (не весь проект, без плана).";
+            "Пример: «Построй две комнаты» → declare_plan → view → types → 5 сегментов → дверь в перегородке → create_room ×2.\n" +
+            "Пример: «Школа» / ask_user=Школа → вестибюль, коридор, ≥3 класса, учительская, санузлы — не две комнаты.\n" +
+            "Пример: «Сколько комнат на этаже?» → export_room_data filterByActiveView=true (без плана).";
 
         public const string Annotation =
             "=== ОСИ, РАЗМЕРЫ, МАРКИ ===\n" +
-            "create_grid autoFromWalls — только если стены уже есть; марка оси 5 мм; bubbleEnd=bottomLeft.\n" +
+            "create_grid autoFromWalls — только если стены уже есть; марка оси 5 мм; bubbleEnd=bottomLeft. " +
+            "Дефолт tool ищет несущие ≥400 мм — для перегородок 100–140 мм ставь wallFilter=all и minWallThicknessMm=100. " +
+            "Пустой результат ≠ «стен нет»: снизь порог, не предлагай строить стены заново.\n" +
             "dimension_grids — от габарита здания, не от линии оси. dimension_room_walls placement=interior по умолчанию.\n" +
             "tag_rooms / tag_walls — тип марки из проекта (с площадью для комнат). color_splash — цветовая схема вида.\n" +
             "Пример: «Размеры внутри комнат» → export_room_data или get_current_view_info → dimension_room_walls placement=interior.\n" +
@@ -98,21 +121,22 @@ namespace revit_mcp_plugin.Core.Assistant
             "Пример: «Сколько глубина помещения?» → get_room_geometry_metrics (не check_room_depth без запроса проверки).";
 
         public const string Typology =
-            "=== КОММЕРЧЕСКИЕ ТИПОЛОГИИ (кафе, офис, СТО, автомойка) ===\n" +
+            "=== ТИПОЛОГИИ (кафе, офис, СТО, автомойка, школа, жилой) ===\n" +
             "1) query_norm_rules по теме — мин. площади только из каталога.\n" +
-            "2) Зонирование: вход→тамбур→зал; санузлы блоком; производство отдельно; МГН доступен из зала.\n" +
-            "3) Стены одним вызовом; двери batch_execute до 4 (деревянные на базовых стенах, hostWallId обязателен).\n" +
-            "4) Вход с улицы на наружной стене; окна на зал/фасад; не линейная «коробка в ряд».\n" +
-            "5) tag_rooms своих помещений; color_splash по «Назначение»; dimension_room_walls на ключевые.\n" +
-            "6) run_norm_audit mode=report в конце. Вложение — ориентир по зонам, не слепое копирование.\n" +
-            "Работай в чистой зоне плана — не размечай весь жилой дом.\n" +
-            "Пример: «Кафе на 40 мест» → declare_plan → query_norm_rules → create_line_based_element → … → run_norm_audit mode=report.";
+            "2) Зонирование по программе типологии — не «две комнаты».\n" +
+            "3) Стены одним вызовом; двери batch_execute до 4 (hostWallId обязателен).\n" +
+            "4) Вход с улицы на наружной стене; окна на основные помещения/фасад.\n" +
+            "5) tag_rooms; color_splash по «Назначение»; dimension_room_walls на ключевые.\n" +
+            "6) run_norm_audit mode=report в конце.\n" +
+            "Работай в чистой зоне плана.\n" +
+            "Пример: «Кафе на 40 мест» → declare_plan → query_norm_rules → стены → … → run_norm_audit.\n" +
+            "Пример: «Школа» → вестибюль+коридор+классы+учительская+санузлы, не 2 комнаты.";
 
         /// <summary>Rules referenced from <see cref="TypologyPrograms.BuildAgentInstruction"/>.</summary>
         public const string TypologyAgentRules =
             "Скорость: стены — один create_line_based_element. Двери — batch_execute до 4 (create_point_based_element). " +
             "Помещения — create_room по 2 за вызов. После комнат: tag_rooms, color_splash по «Назначение», dimension_room_walls. " +
-            "Вход с улицы (hostWallId наружной стены). Окна на зал. run_norm_audit mode=report в конце.";
+            "Вход с улицы (hostWallId наружной стены). Окна на основные помещения. run_norm_audit mode=report в конце.";
 
         public static bool ShouldIncludeTypology(string userText)
         {
@@ -122,7 +146,8 @@ namespace revit_mcp_plugin.Core.Assistant
 
             return ContainsAny(text,
                 "кафе", "общепит", "ресторан", "офис", "open space", "сто", "автосервис",
-                "автомойк", "car wash", "типолог", "40 мест", "пищеблок");
+                "автомойк", "car wash", "типолог", "40 мест", "пищеблок",
+                "школ", "класс", "жилой", "квартир", "апартамент");
         }
 
         public static bool ShouldIncludeReadHints(string userText)
