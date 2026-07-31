@@ -42,6 +42,18 @@ namespace revit_mcp_plugin.Configuration
         public string AssistantModel { get; set; } = "gpt-4o-mini";
 
         /// <summary>
+        /// Sampling temperature for chat.completions (REV-121). Default 0 for reliable tool-calling.
+        /// </summary>
+        [JsonProperty("assistantTemperature")]
+        public double AssistantTemperature { get; set; } = 0;
+
+        /// <summary>
+        /// Optional max_tokens cap for completions (REV-121). Null or ≤0 = provider default.
+        /// </summary>
+        [JsonProperty("assistantMaxTokens")]
+        public int? AssistantMaxTokens { get; set; } = 4096;
+
+        /// <summary>
         /// When true, only delete / send_code_to_revit ask for confirmation in the chat pane.
         /// Creates, dimensions, tags run without a prompt.
         /// </summary>

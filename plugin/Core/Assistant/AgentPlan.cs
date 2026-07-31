@@ -184,12 +184,10 @@ namespace revit_mcp_plugin.Core.Assistant
                     && !string.Equals(s.Status, statusEquals, StringComparison.OrdinalIgnoreCase))
                     continue;
 
+                // Empty tool must NOT steal the mark from a later concrete step
+                // (e.g. "Двери" without tool would get ✓ when create_room succeeds).
                 if (string.IsNullOrWhiteSpace(s.Tool))
-                {
-                    if (pendingOnly)
-                        return s;
                     continue;
-                }
 
                 var stepTool = ToolCatalog.ResolveToolAlias(s.Tool);
                 if (stepTool.Equals(canonicalTool, StringComparison.OrdinalIgnoreCase))

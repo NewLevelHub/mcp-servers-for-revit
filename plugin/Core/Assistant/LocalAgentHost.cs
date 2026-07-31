@@ -623,7 +623,9 @@ namespace revit_mcp_plugin.Core.Assistant
             var client = new OpenAiCompatibleClient(
                 settings.AssistantApiKey,
                 settings.AssistantApiBaseUrl,
-                settings.AssistantModel);
+                settings.AssistantModel,
+                settings.AssistantTemperature,
+                settings.AssistantMaxTokens);
 
             var activeProfiles = ToolCatalog.NormalizeProfiles(toolProfiles);
             if (activeProfiles.Count == 0)
@@ -742,12 +744,11 @@ namespace revit_mcp_plugin.Core.Assistant
                         };
                     }
 
-                    // Capture token usage from API response
-                    var usage = completion["usage"];
-                    if (usage != null)
+                    // Capture token usage from API response (REV-121: usage available to caller/logs).
+                    if (OpenAiCompatibleClient.TryReadUsage(completion, out var promptTok, out var completionTok))
                     {
-                        turnLog.PromptTokens += usage["prompt_tokens"]?.Value<int>() ?? 0;
-                        turnLog.CompletionTokens += usage["completion_tokens"]?.Value<int>() ?? 0;
+                        turnLog.PromptTokens += promptTok;
+                        turnLog.CompletionTokens += completionTok;
                     }
 
                     var choice = completion["choices"]?[0]?["message"] as JObject;
@@ -881,10 +882,30 @@ namespace revit_mcp_plugin.Core.Assistant
                         var toolName = name;
                         var enrichedArgs = NormCheckDefaults.EnrichArgs(toolName, argsJson, userMessage);
                         enrichedArgs = CreateElementArgsNormalizer.Normalize(toolName, enrichedArgs);
-                        var argsBeforeInject = enrichedArgs;
-                        enrichedArgs = InjectMissingTypeIds(toolResultCache, toolName, enrichedArgs);
-                        var injectedTypeId = !string.Equals(argsBeforeInject, enrichedArgs, StringComparison.Ordinal);
                         var toolSw = System.Diagnostics.Stopwatch.StartNew();
+
+                        // REV-121: never silently inject typeId — teach the model with candidates.
+                        var typeIdCheck = MissingTypeIdGuard.Check(toolResultCache, toolName, enrichedArgs);
+                        if (typeIdCheck.Missing)
+                        {
+                            var failJson = typeIdCheck.Payload.ToString(Newtonsoft.Json.Formatting.None);
+                            AppendToolResult(callId, failJson);
+                            done.Add("ошибка: " + typeIdCheck.Error);
+                            toolSw.Stop();
+                            turnLog.ToolCalls.Add(new ToolCallLog
+                            {
+                                Round = round,
+                                Name = toolName,
+                                Args = argsJson,
+                                NormalizedArgs = enrichedArgs,
+                                Ok = false,
+                                DurationMs = toolSw.ElapsedMilliseconds,
+                                Error = typeIdCheck.Error,
+                                ResultBytes = failJson.Length,
+                                MissingTypeId = true,
+                            });
+                            continue;
+                        }
 
                         // REV-120: declare_plan is a local meta-tool — no Revit call.
                         if (toolName.Equals("declare_plan", StringComparison.OrdinalIgnoreCase))
@@ -1022,7 +1043,6 @@ namespace revit_mcp_plugin.Core.Assistant
                             DurationMs = toolSw.ElapsedMilliseconds,
                             Error = ok ? null : summary,
                             ResultBytes = rawResult?.Length ?? 0,
-                            InjectedTypeId = injectedTypeId,
                         });
 
                         if (ok)
@@ -1330,92 +1350,6 @@ namespace revit_mcp_plugin.Core.Assistant
         private static string CompactResult(string toolName, JToken result)
         {
             return ToolResultShaper.CompactSummary(toolName, result);
-        }
-
-        private static string InjectMissingTypeIds(
-            Dictionary<string, string> cache,
-            string toolName,
-            string argsJson)
-        {
-            if (cache == null || cache.Count == 0)
-                return argsJson;
-            if (!toolName.Equals("create_line_based_element", StringComparison.OrdinalIgnoreCase)
-                && !toolName.Equals("create_point_based_element", StringComparison.OrdinalIgnoreCase)
-                && !toolName.Equals("create_surface_based_element", StringComparison.OrdinalIgnoreCase))
-                return argsJson;
-
-            JObject args;
-            try { args = JObject.Parse(argsJson ?? "{}"); }
-            catch { return argsJson; }
-
-            var data = args["data"] as JArray;
-            if (data == null || data.Count == 0)
-                return argsJson;
-
-            var wallTypeId = FindCachedTypeId(cache, preferWall: true);
-            var anyTypeId = FindCachedTypeId(cache, preferWall: false);
-            var changed = false;
-
-            foreach (var itemTok in data)
-            {
-                var item = itemTok as JObject;
-                if (item == null) continue;
-                var tid = item["typeId"]?.Value<long?>() ?? item["TypeId"]?.Value<long?>();
-                if (tid.HasValue && tid.Value > 0)
-                    continue;
-
-                long? pick = null;
-                if (toolName.Equals("create_line_based_element", StringComparison.OrdinalIgnoreCase))
-                    pick = wallTypeId ?? anyTypeId;
-                else
-                    pick = anyTypeId ?? wallTypeId;
-
-                if (pick.HasValue && pick.Value > 0)
-                {
-                    item["typeId"] = pick.Value;
-                    changed = true;
-                }
-            }
-
-            return changed ? args.ToString(Newtonsoft.Json.Formatting.None) : argsJson;
-        }
-
-        private static long? FindCachedTypeId(Dictionary<string, string> cache, bool preferWall)
-        {
-            foreach (var kv in cache)
-            {
-                if (kv.Key.IndexOf("get_available_family_types", StringComparison.OrdinalIgnoreCase) < 0)
-                    continue;
-                try
-                {
-                    var token = JToken.Parse(kv.Value);
-                    // Unwrap JSON-RPC result if present
-                    if (token is JObject root && root["result"] != null)
-                        token = root["result"];
-
-                    JArray types = token as JArray;
-                    if (types == null && token is JObject obj)
-                        types = (obj["types"] ?? obj["Types"] ?? obj["familyTypes"] ?? obj["Response"]) as JArray;
-
-                    if (types == null)
-                        continue;
-
-                    foreach (var t in types.OfType<JObject>().OrderByDescending(WallTypePicker.Rank))
-                    {
-                        if (preferWall && WallTypePicker.Rank(t) <= 0)
-                            continue;
-                        var id = WallTypePicker.TryGetTypeId(t);
-                        if (id.HasValue)
-                            return id.Value;
-                    }
-                }
-                catch
-                {
-                    // ignore bad cache entry
-                }
-            }
-
-            return null;
         }
 
         private static bool TryGetCachedToolResult(

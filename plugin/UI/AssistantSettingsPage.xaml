@@ -58,6 +58,14 @@
           <TextBlock Text="Модель" FontSize="12" Foreground="#5B6B7C" Margin="0,12,0,4"/>
           <TextBox x:Name="ModelBox" Style="{StaticResource FieldBox}" Text="gpt-4o-mini"/>
 
+          <TextBlock Text="Temperature (0 — стабильный tool-calling)" FontSize="12" Foreground="#5B6B7C"
+                     Margin="0,12,0,4"/>
+          <TextBox x:Name="TemperatureBox" Style="{StaticResource FieldBox}" Text="0"/>
+
+          <TextBlock Text="Max tokens (пусто — лимит провайдера)" FontSize="12" Foreground="#5B6B7C"
+                     Margin="0,12,0,4"/>
+          <TextBox x:Name="MaxTokensBox" Style="{StaticResource FieldBox}" Text="4096"/>
+
           <CheckBox x:Name="RequireConfirmCheckBox"
                     Content="Подтверждать только удаление и выполнение кода"
                     IsChecked="False" Margin="0,16,0,0" FontSize="12.5" Foreground="#1A2744"/>

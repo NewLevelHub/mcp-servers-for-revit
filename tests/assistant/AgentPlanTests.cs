@@ -73,6 +73,33 @@ public class AgentPlanTests
     }
 
     [Fact]
+    public void TryMarkTool_does_not_mark_empty_tool_door_step_when_rooms_succeed()
+    {
+        Assert.True(AgentPlan.TryParse(
+            """{"goal":"G","steps":[{"n":1,"what":"Двери","tool":""},{"n":2,"what":"Комнаты","tool":"create_room"}]}""",
+            out var plan, out _));
+
+        Assert.True(plan!.TryMarkTool("create_room", ok: true));
+        Assert.Equal("pending", plan.Steps[0].Status);
+        Assert.Equal("done", plan.Steps[1].Status);
+    }
+
+    [Fact]
+    public void TryMarkTool_only_marks_matching_tool_not_sibling_create()
+    {
+        Assert.True(AgentPlan.TryParse(
+            """{"goal":"G","steps":[{"n":1,"what":"Стены","tool":"create_line_based_element"},{"n":2,"what":"Двери","tool":"create_point_based_element"},{"n":3,"what":"Комнаты","tool":"create_room"}]}""",
+            out var plan, out _));
+
+        Assert.True(plan!.TryMarkTool("create_line_based_element", ok: true));
+        Assert.True(plan.TryMarkTool("create_room", ok: true));
+
+        Assert.Equal("done", plan.Steps[0].Status);
+        Assert.Equal("pending", plan.Steps[1].Status);
+        Assert.Equal("done", plan.Steps[2].Status);
+    }
+
+    [Fact]
     public void BuildPartialReply_lists_done_and_pending()
     {
         Assert.True(AgentPlan.TryParse(

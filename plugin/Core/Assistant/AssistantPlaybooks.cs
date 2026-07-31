@@ -38,19 +38,24 @@ namespace revit_mcp_plugin.Core.Assistant
             "Одно чтение («сколько комнат») — без плана.\n" +
             "A) get_current_view_info → elevation уровня (мм) = baseLevel.\n" +
             "B) get_available_family_types categoryName=OST_Walls → typeId = suggestedWallTypeId " +
-            "(Базовая стена / перегородка). Не Витраж/Curtain — они дают таймаут.\n" +
+            "(Базовая стена / перегородка). Не Витраж/Curtain — они дают таймаут. " +
+            "Без typeId create_*_element вернёт ошибку с candidates — автоподстановки нет.\n" +
             "C) create_line_based_element: все сегменты ОДНИМ вызовом; typeId обязателен; height≈3000; baseLevel из вида. " +
             "«Две комнаты»: ровно 5 сегментов (прямоугольник + 1 перегородка). Не дроби стены и не строй поверх старых — " +
             "сначала удали мусор operate_element/delete или работай в чистой зоне.\n" +
             "D) Если стены не создались — остановись, сообщи ошибку; не вызывай create_room и размеры.\n" +
-            "E) Двери: get_available_family_types OST_Doors → typeId; hostWallId = наружная стена комнаты; " +
-            "locationPoint = середина Start/End ЭТОЙ стены (≥600 мм от углов). Не в стык/угол — Revit: конфликт с примыкающей стеной.\n" +
+            "E) Двери: get_available_family_types OST_Doors → typeId. " +
+            "Между комнатами: hostWallId = общая ПЕРЕГОРОДКА (не наружный контур), " +
+            "locationPoint = середина Start/End этой перегородки (≥600 мм от углов/Т-стыка). " +
+            "Вход с улицы — hostWallId наружной стены, тоже середина. " +
+            "Не стык/угол — иначе дверь уезжает «поперёк» на примыкающую стену. " +
+            "Никогда не подставляй typeId стены в create_point_based_element.\n" +
             "F) create_room по 1–2 за вызов; точка внутри ячейки; Id из ответа — ElementId, не номер.\n" +
             "G) tag_rooms; dimension_room_walls roomId=ElementId, placement=interior.\n" +
             "H) run_norm_audit — только после готовой планировки.\n" +
             "Помещения только внутри замкнутых стен. Room Bounding=true — на стенах, не на комнатах.\n" +
             "Пример: «Построй две комнаты» → declare_plan → view → types(OST_Walls) → " +
-            "5 сегментов стен → types(OST_Doors) → дверь в середине каждой наружной стены → create_room ×2 → tag_rooms.\n" +
+            "5 сегментов стен → types(OST_Doors) → дверь в середине общей перегородки → create_room ×2 → tag_rooms.\n" +
             "Пример: «Сколько комнат на этаже?» → export_room_data filterByActiveView=true (не весь проект, без плана).";
 
         public const string Annotation =
