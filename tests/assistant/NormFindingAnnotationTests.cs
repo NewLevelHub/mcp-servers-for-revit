@@ -71,4 +71,25 @@ public class NormFindingAnnotationTests
         Assert.Equal("Гостиная", NormAnnotationText.Format(finding));
         Assert.False(NormAnnotationText.HasUsefulContent(finding));
     }
+
+    [Fact]
+    public void Float_mm_noise_rounds_to_whole_millimeters()
+    {
+        var finding = new JObject
+        {
+            ["name"] = "Гостиная",
+            ["actualMm"] = 6868.9999999995,
+            ["requiredMm"] = 6000.0,
+            ["source"] = new JObject
+            {
+                ["document"] = "СП РК 3.02-101-2012",
+                ["clause"] = "п. 4.4.10-22"
+            }
+        };
+
+        var text = NormAnnotationText.Format(finding);
+        Assert.Equal("Гостиная: 6869 > 6000 мм · СП РК 3.02-101-2012 п. 4.4.10-22", text);
+        Assert.DoesNotContain("99999", text);
+        Assert.DoesNotContain(",", text); // no locale decimal junk in mm display
+    }
 }
