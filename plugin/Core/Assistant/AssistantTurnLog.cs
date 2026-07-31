@@ -53,6 +53,9 @@ namespace revit_mcp_plugin.Core.Assistant
         public long DurationMs;
         public string Error;
         public int ResultBytes;
+        /// <summary>True when create_*_element was blocked because typeId was omitted (REV-121 metric).</summary>
+        public bool MissingTypeId;
+        /// <summary>Legacy: silent typeId injection removed in REV-121; always false.</summary>
         public bool InjectedTypeId;
     }
 
@@ -116,6 +119,7 @@ namespace revit_mcp_plugin.Core.Assistant
                             ["durationMs"] = tc.DurationMs,
                             ["error"] = tc.Error,
                             ["resultBytes"] = tc.ResultBytes,
+                            ["missingTypeId"] = tc.MissingTypeId,
                             ["injectedTypeId"] = tc.InjectedTypeId,
                         });
                     }

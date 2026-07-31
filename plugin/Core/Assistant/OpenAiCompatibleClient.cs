@@ -19,12 +19,26 @@ namespace revit_mcp_plugin.Core.Assistant
         private readonly string _apiKey;
         private readonly string _baseUrl;
         private readonly string _model;
+        private readonly double _temperature;
+        private readonly int? _maxTokens;
 
         public OpenAiCompatibleClient(string apiKey, string baseUrl, string model)
+            : this(apiKey, baseUrl, model, temperature: 0, maxTokens: null)
+        {
+        }
+
+        public OpenAiCompatibleClient(
+            string apiKey,
+            string baseUrl,
+            string model,
+            double temperature,
+            int? maxTokens)
         {
             _apiKey = apiKey ?? "";
             _baseUrl = (baseUrl ?? "https://api.openai.com/v1").TrimEnd('/');
             _model = string.IsNullOrWhiteSpace(model) ? "gpt-4o-mini" : model;
+            _temperature = ClampTemperature(temperature);
+            _maxTokens = maxTokens.HasValue && maxTokens.Value > 0 ? maxTokens : null;
         }
 
         public async Task<JObject> ChatCompletionsAsync(
@@ -36,12 +50,21 @@ namespace revit_mcp_plugin.Core.Assistant
             {
                 ["model"] = _model,
                 ["messages"] = messages,
-                ["temperature"] = 0.2
+                // Tool-calling: low temperature; overridable via ServiceSettings.AssistantTemperature (REV-121).
+                ["temperature"] = _temperature
             };
             if (tools != null && tools.Count > 0)
             {
                 body["tools"] = tools;
                 body["tool_choice"] = "auto";
+                // One tool call per round so fail-fast on walls/doors works as the prompt promises (REV-121).
+                body["parallel_tool_calls"] = false;
+            }
+
+            if (_maxTokens.HasValue)
+            {
+                // OpenAI chat.completions accepts max_tokens; some newer models prefer max_completion_tokens.
+                body["max_tokens"] = _maxTokens.Value;
             }
 
             var request = new HttpRequestMessage(HttpMethod.Post, _baseUrl + "/chat/completions")
@@ -60,7 +83,11 @@ namespace revit_mcp_plugin.Core.Assistant
                     {
                         var text = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
                         if (response.IsSuccessStatusCode)
+                        {
+                            // Full API body is returned so callers can read usage.prompt_tokens /
+                            // usage.completion_tokens for dialog logs (REV-121).
                             return JObject.Parse(text);
+                        }
 
                         var status = (int)response.StatusCode;
                         if (status == 429 && attempt < maxAttempts)
@@ -93,6 +120,30 @@ namespace revit_mcp_plugin.Core.Assistant
                 throw new InvalidOperationException(
                     "ИИ не ответил вовремя (таймаут). Упростите запрос или уберите тяжёлые вложения.");
             }
+        }
+
+        /// <summary>Extract token usage from a chat.completions response body.</summary>
+        public static bool TryReadUsage(JObject completion, out int promptTokens, out int completionTokens)
+        {
+            promptTokens = 0;
+            completionTokens = 0;
+            if (completion == null)
+                return false;
+            var usage = completion["usage"];
+            if (usage == null)
+                return false;
+            promptTokens = usage["prompt_tokens"]?.Value<int>() ?? 0;
+            completionTokens = usage["completion_tokens"]?.Value<int>() ?? 0;
+            return promptTokens > 0 || completionTokens > 0 || usage["total_tokens"] != null;
+        }
+
+        private static double ClampTemperature(double temperature)
+        {
+            if (double.IsNaN(temperature) || double.IsInfinity(temperature))
+                return 0;
+            if (temperature < 0) return 0;
+            if (temperature > 2) return 2;
+            return temperature;
         }
 
         private static int ResolveRetryDelayMs(HttpResponseMessage response, int attempt)

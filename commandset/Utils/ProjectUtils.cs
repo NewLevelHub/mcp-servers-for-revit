@@ -808,9 +808,10 @@ namespace RevitMCPCommandSet.Utils
         }
 
         /// <summary>
-        /// Pick host wall for a door/window: prefer explicit host if the point is near it;
-        /// otherwise switch to the closest wall at locationPoint (fixes perpendicular / off-wall doors).
-        /// Among candidates, prefer a longer wall where the point is farther from ends.
+        /// Pick host wall for a door/window: prefer explicit hostWallId when the point is on
+        /// that wall (including near ends — GetSafeOpeningPointOnWall then moves to mid-span).
+        /// Only switch host when the point is clearly off the explicit wall centerline.
+        /// Switching at T-junctions used to place doors on the crossing wall («поперёк»).
         /// </summary>
         public static Wall ResolveHostWallForOpening(
             Document doc,
@@ -826,13 +827,13 @@ namespace RevitMCPCommandSet.Utils
 
             double maxOkDist = (explicitHost?.Width ?? 0.5) / 2.0 + 300.0 / 304.8;
             double explicitDist = double.MaxValue;
-            if (explicitHost != null
+            bool onExplicit = explicitHost != null
                 && TryProjectPointOntoWall(explicitHost, locationPoint, 0, out _, out _, out explicitDist)
-                && explicitDist <= maxOkDist
-                && !IsNearWallEnd(explicitHost, locationPoint, doorWidthFt))
-            {
+                && explicitDist <= maxOkDist;
+
+            // Keep caller's host even near ends / T-junctions. Mid-span snap happens next.
+            if (onExplicit)
                 return explicitHost;
-            }
 
             // Prefer the best wall near the point (not just closest centerline if that is a short stub).
             Wall best = PickBestHostWallNearPoint(doc, locationPoint, level, doorWidthFt);
