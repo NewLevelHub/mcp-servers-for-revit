@@ -29,6 +29,7 @@
     <Compile Include="..\..\plugin\Core\Assistant\NormCheckSchemaKeys.cs" Link="NormCheckSchemaKeys.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\PromptSchemaAlignment.cs" Link="PromptSchemaAlignment.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\ToolCatalog.cs" Link="ToolCatalog.cs" />
+    <Compile Include="..\..\plugin\Core\Assistant\ToolResultShaper.cs" Link="ToolResultShaper.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\IntentRouter.cs" Link="IntentRouter.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\OpenAiCompatibleClient.cs" Link="OpenAiCompatibleClient.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\IAssistantToolExecutor.cs" Link="IAssistantToolExecutor.cs" />
