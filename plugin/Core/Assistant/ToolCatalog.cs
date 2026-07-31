@@ -454,7 +454,37 @@ namespace revit_mcp_plugin.Core.Assistant
             return false;
         }
 
+        /// <summary>Structured failure text for UI + model (REV-119): what broke vs how to fix.</summary>
+        public struct FailureHint
+        {
+            public string Error;
+            public string Fix;
+
+            public FailureHint(string error, string fix = null)
+            {
+                Error = error ?? "ошибка";
+                Fix = fix;
+            }
+
+            /// <summary>Single-line form for UI «Сделано» / logs.</summary>
+            public string Combined
+            {
+                get
+                {
+                    if (string.IsNullOrWhiteSpace(Fix))
+                        return Error;
+                    return Error + " " + Fix;
+                }
+            }
+        }
+
+        /// <summary>Backward-compatible single string (UI). Prefer <see cref="DescribeFailure"/> for model payloads.</summary>
         public static string HumanizeFailure(string toolName, string rawMessage)
+        {
+            return DescribeFailure(toolName, rawMessage).Combined;
+        }
+
+        public static FailureHint DescribeFailure(string toolName, string rawMessage)
         {
             var label = FriendlyName(toolName);
             var msg = rawMessage ?? "";
@@ -462,99 +492,130 @@ namespace revit_mcp_plugin.Core.Assistant
                 || (msg.IndexOf("typeId", StringComparison.OrdinalIgnoreCase) >= 0
                     && msg.IndexOf("required", StringComparison.OrdinalIgnoreCase) >= 0))
             {
-                return "Не передан typeId стены. Сначала get_available_family_types (OST_Walls) и подставьте число typeId.";
+                return new FailureHint(
+                    "Не передан typeId стены.",
+                    "Сначала get_available_family_types (OST_Walls) и подставьте число typeId.");
             }
             if (msg.IndexOf("is not a WallType", StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                return "typeId не является типом стены. Вызовите get_available_family_types с categoryName=OST_Walls и возьмите typeId из списка.";
+                return new FailureHint(
+                    "typeId не является типом стены.",
+                    "Вызовите get_available_family_types с categoryName=OST_Walls и возьмите typeId из списка.");
             }
             if (msg.IndexOf("typeId", StringComparison.OrdinalIgnoreCase) >= 0
                 && msg.IndexOf("not found", StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                return "typeId не найден в проекте. Возьмите актуальный typeId из get_available_family_types (OST_Walls).";
+                return new FailureHint(
+                    "typeId не найден в проекте.",
+                    "Возьмите актуальный typeId из get_available_family_types (OST_Walls).");
             }
             if (msg.IndexOf("typeId", StringComparison.OrdinalIgnoreCase) >= 0
                 || msg.IndexOf("type id", StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                return "Проблема с typeId. Вызовите get_available_family_types categoryName=OST_Walls и передайте числовой typeId в create_line_based_element.";
+                return new FailureHint(
+                    "Проблема с typeId.",
+                    "Вызовите get_available_family_types categoryName=OST_Walls и передайте числовой typeId в create_line_based_element.");
             }
             if (msg.IndexOf("host", StringComparison.OrdinalIgnoreCase) >= 0
                 && msg.IndexOf("wall", StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                return "Для двери/окна нужна стена-хост. Укажите стену или создайте проём в существующей стене.";
+                return new FailureHint(
+                    "Для двери/окна нужна стена-хост.",
+                    "Укажите стену или создайте проём в существующей стене.");
             }
             if (msg.IndexOf("Method not found", StringComparison.OrdinalIgnoreCase) >= 0
                 || msg.IndexOf("未找到方法", StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                return $"Команда «{label}» недоступна. Включите её в Настройки → Наборы команд и перезапустите сервер.";
+                return new FailureHint(
+                    $"Команда «{label}» недоступна.",
+                    "Включите её в Настройки → Наборы команд и перезапустите сервер.");
             }
             if (msg.IndexOf("title block", StringComparison.OrdinalIgnoreCase) >= 0
                 || msg.IndexOf("рамк", StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                return "В проекте нет подходящей рамки (основная надпись). Добавьте семейство из шаблона.";
+                return new FailureHint(
+                    "В проекте нет подходящей рамки (основная надпись).",
+                    "Добавьте семейство из шаблона.");
             }
             if (msg.IndexOf("viewId", StringComparison.OrdinalIgnoreCase) >= 0
                 || msg.IndexOf("viewUniqueId", StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                return "Не удалось разместить на лист: нет id вида/спецификации. " +
-                       "Сначала создайте вид или спеку и возьмите id из ответа, либо для ТЭП используйте таблицу ТЭП.";
+                return new FailureHint(
+                    "Не удалось разместить на лист: нет id вида/спецификации.",
+                    "Сначала создайте вид или спеку и возьмите id из ответа, либо для ТЭП используйте таблицу ТЭП.");
             }
             if (msg.IndexOf("Create room operation timed out", StringComparison.OrdinalIgnoreCase) >= 0
                 || msg.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0
                     && msg.IndexOf("room", StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                return "Создание помещений заняло слишком долго. Создавайте по 1–2 помещения за вызов, " +
-                       "после замкнутого контура стен.";
+                return new FailureHint(
+                    "Создание помещений заняло слишком долго.",
+                    "Создавайте по 1–2 помещения за вызов, после замкнутого контура стен.");
             }
             if (msg.IndexOf("was not found", StringComparison.OrdinalIgnoreCase) >= 0
                 && msg.IndexOf("Room", StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                return "Для размеров нужен ElementId помещения из ответа create_room, а не номер 1/2/3.";
+                return new FailureHint(
+                    "Помещение не найдено по id.",
+                    "Для размеров нужен ElementId помещения из ответа create_room, а не номер 1/2/3.");
             }
             if (msg.IndexOf("Избыточн", StringComparison.OrdinalIgnoreCase) >= 0
                 || msg.IndexOf("Redundant", StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                return "Несколько помещений в одной области — сначала постройте стены-перегородки, потом комнаты по ячейкам.";
+                return new FailureHint(
+                    "Несколько помещений в одной области.",
+                    "Сначала постройте стены-перегородки, потом комнаты по ячейкам.");
             }
             if (msg.IndexOf("locationLine", StringComparison.OrdinalIgnoreCase) >= 0
                 || msg.IndexOf("Значение не может быть неопределенным", StringComparison.OrdinalIgnoreCase) >= 0
                 || msg.IndexOf("data is required", StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                return "Стены: передайте data[{typeId, locationLine:{p0,p1}, height, baseLevel, baseOffset}]. " +
-                       "typeId — число из get_available_family_types. Без стен помещения не создавайте.";
+                return new FailureHint(
+                    "Некорректные аргументы создания стен.",
+                    "Передайте data[{typeId, locationLine:{p0,p1}, height, baseLevel, baseOffset}]. " +
+                    "typeId — число из get_available_family_types. Без стен помещения не создавайте.");
             }
             if (msg.IndexOf("Граница помещения", StringComparison.OrdinalIgnoreCase) >= 0
                 || msg.IndexOf("Room Bounding", StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                return "«Граница помещения» есть только у стен. Укажите id стены, не помещения.";
+                return new FailureHint(
+                    "«Граница помещения» есть только у стен.",
+                    "Укажите id стены, не помещения.");
             }
             if (msg.IndexOf("No grid positions", StringComparison.OrdinalIgnoreCase) >= 0
                 || msg.IndexOf("No wall centerlines matched", StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                return "Оси ставятся по уже существующим стенам. Чтобы построить новые стены — сначала типы из проекта, " +
-                       "затем линейные элементы (стены) по контуру; create_grid для этого не подходит.";
+                return new FailureHint(
+                    "Оси ставятся по уже существующим стенам.",
+                    "Чтобы построить новые стены — сначала типы из проекта, затем линейные элементы (стены) по контуру; create_grid для этого не подходит.");
             }
             if (msg.IndexOf("参数无效", StringComparison.OrdinalIgnoreCase) >= 0
                 || msg.IndexOf("没有指定要操作", StringComparison.OrdinalIgnoreCase) >= 0
                 || msg.IndexOf("Не указаны elementIds", StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                return "Не указаны id элементов. Для дверей — doorElementIds из run_norm_audit; " +
-                       "для помещений — roomIds. Или run_norm_audit mode=highlight.";
+                return new FailureHint(
+                    "Не указаны id элементов.",
+                    "Для дверей — doorElementIds из run_norm_audit; для помещений — roomIds. Или run_norm_audit mode=highlight.");
             }
             if (msg.IndexOf("操作元素", StringComparison.OrdinalIgnoreCase) >= 0
                 || msg.IndexOf("Ошибка операции с элементом", StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                return "Не удалось изменить элементы на виде. Проверьте id из аудита или вызовите run_norm_audit mode=highlight.";
+                return new FailureHint(
+                    "Не удалось изменить элементы на виде.",
+                    "Проверьте id из аудита или вызовите run_norm_audit mode=highlight.");
             }
             if (msg.IndexOf("Укажите roomIds", StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                return "Для заливки нужны roomIds из run_norm_audit. Без них весь этаж не заливается — это защита.";
+                return new FailureHint(
+                    "Для заливки нужны roomIds из run_norm_audit.",
+                    "Без них весь этаж не заливается — это защита.");
             }
 
-            var firstLine = msg.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)[0].Trim();
-            if (firstLine.Length > 280)
-                firstLine = firstLine.Substring(0, 277) + "…";
-            return firstLine;
+            var firstLine = msg.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            var text = firstLine.Length > 0 ? firstLine[0].Trim() : "ошибка";
+            if (text.Length > 280)
+                text = text.Substring(0, 277) + "…";
+            return new FailureHint(text);
         }
 
         /// <summary>

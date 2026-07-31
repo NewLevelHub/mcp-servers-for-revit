@@ -364,12 +364,38 @@ namespace revit_mcp_plugin.Core.Assistant
             return n;
         }
 
+        /// <summary>
+        /// Cap tool/history payloads without mid-JSON cuts (REV-119). Prefer shaping first.
+        /// </summary>
         private static string TruncateForHistory(string content)
         {
             if (string.IsNullOrEmpty(content))
                 return content ?? "";
             if (content.Length <= MaxToolResultChars)
                 return content;
+
+            try
+            {
+                var token = JToken.Parse(content);
+                if (token is JObject jo)
+                    return ToolResultShaper.EnsureUnderBudget(jo, MaxToolResultChars);
+                if (token is JArray arr)
+                {
+                    var wrapped = new JObject
+                    {
+                        ["ok"] = true,
+                        ["summary"] = $"элементов: {arr.Count}",
+                        ["count"] = arr.Count,
+                        ["items"] = new JArray(arr.Take(ToolResultShaper.DefaultItemLimit))
+                    };
+                    return ToolResultShaper.EnsureUnderBudget(wrapped, MaxToolResultChars);
+                }
+            }
+            catch
+            {
+                // Non-JSON — keep a safe prefix (should be rare after Shape).
+            }
+
             return content.Substring(0, MaxToolResultChars) + "…";
         }
 
@@ -1133,8 +1159,9 @@ namespace revit_mcp_plugin.Core.Assistant
                 if (jo["error"] != null)
                 {
                     var msg = jo["error"]?["message"]?.ToString() ?? "ошибка";
-                    var human = ToolCatalog.HumanizeFailure(toolName, msg);
-                    return (false, human, new JObject { ["ok"] = false, ["error"] = human }.ToString());
+                    var hint = ToolCatalog.DescribeFailure(toolName, msg);
+                    var fail = ToolResultShaper.FailurePayload(hint);
+                    return (false, hint.Combined, ToolResultShaper.EnsureUnderBudget(fail, MaxToolResultChars));
                 }
 
                 var result = ExtractResultPayload(jo);
@@ -1146,34 +1173,31 @@ namespace revit_mcp_plugin.Core.Assistant
                         var msg = resultObj["Message"]?.ToString()
                             ?? resultObj["message"]?.ToString()
                             ?? "неуспех";
-                        var human = ToolCatalog.HumanizeFailure(toolName, msg);
-                        var failPayload = new JObject
-                        {
-                            ["ok"] = false,
-                            ["error"] = human,
-                            ["result"] = resultObj
-                        };
-                        return (false, human, failPayload.ToString(Newtonsoft.Json.Formatting.None));
+                        var hint = ToolCatalog.DescribeFailure(toolName, msg);
+                        var fail = ToolResultShaper.FailurePayload(hint);
+                        return (false, hint.Combined, ToolResultShaper.EnsureUnderBudget(fail, MaxToolResultChars));
                     }
                 }
 
                 if (result == null)
                 {
-                    var human = ToolCatalog.HumanizeFailure(toolName, "пустой ответ");
-                    return (false, human, new JObject { ["ok"] = false, ["error"] = human }.ToString());
+                    var hint = ToolCatalog.DescribeFailure(toolName, "пустой ответ");
+                    var fail = ToolResultShaper.FailurePayload(hint);
+                    return (false, hint.Combined, ToolResultShaper.EnsureUnderBudget(fail, MaxToolResultChars));
                 }
 
-                var compact = CompactResult(toolName, result);
-                var forModel = result.ToString(Newtonsoft.Json.Formatting.None);
-                forModel = SlimFamilyTypesForModel(toolName, forModel);
-                forModel = SlimModelStatisticsForModel(toolName, forModel);
-                forModel = TruncateForHistory(forModel);
-                return (true, compact, forModel);
+                var shaped = ToolResultShaper.Shape(toolName, result);
+                var summary = shaped["summary"]?.ToString();
+                if (string.IsNullOrWhiteSpace(summary))
+                    summary = CompactResult(toolName, result);
+                var forModel = ToolResultShaper.EnsureUnderBudget(shaped, MaxToolResultChars);
+                return (true, summary, forModel);
             }
             catch
             {
-                var human = ToolCatalog.HumanizeFailure(toolName, raw);
-                return (false, human, new JObject { ["ok"] = false, ["error"] = human }.ToString());
+                var hint = ToolCatalog.DescribeFailure(toolName, raw);
+                var fail = ToolResultShaper.FailurePayload(hint);
+                return (false, hint.Combined, ToolResultShaper.EnsureUnderBudget(fail, MaxToolResultChars));
             }
         }
 
@@ -1193,35 +1217,7 @@ namespace revit_mcp_plugin.Core.Assistant
 
         private static string CompactResult(string toolName, JToken result)
         {
-            if (result is JArray arr)
-                return $"{FriendlyToolName(toolName)}: {arr.Count}";
-            if (result is JObject obj)
-            {
-                if (toolName.Equals("run_norm_audit", StringComparison.OrdinalIgnoreCase))
-                {
-                    var s = obj["summary"]?.ToString();
-                    if (!string.IsNullOrWhiteSpace(s))
-                        return "проверка норм: " + s;
-                }
-                if (toolName.Equals("analyze_model_statistics", StringComparison.OrdinalIgnoreCase))
-                {
-                    var s = obj["summary"]?.ToString();
-                    if (!string.IsNullOrWhiteSpace(s))
-                        return "статистика модели: " + s;
-                }
-                if (obj["count"] != null) return $"{FriendlyToolName(toolName)}: {obj["count"]}";
-                if (obj["createdCount"] != null) return $"{FriendlyToolName(toolName)}: {obj["createdCount"]}";
-                if (obj["nonCompliantCount"] != null)
-                    return $"{FriendlyToolName(toolName)}: нарушений {obj["nonCompliantCount"]}";
-                if (obj["rules"] is JArray rulesArr) return $"{FriendlyToolName(toolName)}: {rulesArr.Count}";
-                if (obj["created"] is JArray created) return $"{FriendlyToolName(toolName)}: {created.Count}";
-                if (obj["Success"] != null || obj["success"] != null)
-                {
-                    var ok = obj["Success"]?.Value<bool>() ?? obj["success"]?.Value<bool>() ?? true;
-                    return ok ? FriendlyToolName(toolName) : FriendlyToolName(toolName) + " (неуспех)";
-                }
-            }
-            return FriendlyToolName(toolName);
+            return ToolResultShaper.CompactSummary(toolName, result);
         }
 
         private static string InjectMissingTypeIds(
@@ -1370,68 +1366,6 @@ namespace revit_mcp_plugin.Core.Assistant
             }
         }
 
-        /// <summary>
-        /// Keep wall/door typeIds visible — prefer Wall types when present.
-        /// </summary>
-        private static string SlimFamilyTypesForModel(string toolName, string forModel)
-        {
-            if (!toolName.Equals("get_available_family_types", StringComparison.OrdinalIgnoreCase))
-                return forModel;
-
-            try
-            {
-                var token = JToken.Parse(forModel);
-                JArray types = null;
-                if (token is JArray arr)
-                    types = arr;
-                else if (token is JObject obj)
-                    types = (obj["types"] ?? obj["Types"] ?? obj["familyTypes"] ?? obj["items"] ?? obj["Response"]) as JArray;
-
-                if (types == null || types.Count == 0)
-                    return forModel;
-
-                // Prefer walls first so model doesn't pick a door typeId for Wall.Create
-                var ordered = types
-                    .OfType<JObject>()
-                    .OrderByDescending(IsLikelyWallType)
-                    .ThenBy(o => o["name"]?.ToString() ?? o["Name"]?.ToString() ?? "")
-                    .Take(30)
-                    .ToList();
-
-                var slim = new JArray();
-                foreach (var o in ordered)
-                {
-                    slim.Add(new JObject
-                    {
-                        ["typeId"] = o["typeId"] ?? o["TypeId"] ?? o["FamilyTypeId"] ?? o["familyTypeId"] ?? o["id"] ?? o["Id"],
-                        ["name"] = o["name"] ?? o["Name"] ?? o["typeName"] ?? o["TypeName"],
-                        ["familyName"] = o["familyName"] ?? o["FamilyName"],
-                        ["category"] = o["category"] ?? o["Category"]
-                    });
-                }
-
-                var firstWall = ordered.FirstOrDefault(IsLikelyWallType);
-                var suggested = firstWall?["typeId"] ?? firstWall?["TypeId"] ?? firstWall?["FamilyTypeId"]
-                    ?? firstWall?["id"]
-                    ?? slim.FirstOrDefault()?["typeId"];
-
-                return new JObject
-                {
-                    ["ok"] = true,
-                    ["count"] = types.Count,
-                    ["shown"] = slim.Count,
-                    ["suggestedWallTypeId"] = suggested,
-                    ["types"] = slim,
-                    ["hint"] = "Для стен используй suggestedWallTypeId или typeId из types[] где category/family содержит Wall. " +
-                               "Передай typeId числом в create_line_based_element."
-                }.ToString(Newtonsoft.Json.Formatting.None);
-            }
-            catch
-            {
-                return forModel;
-            }
-        }
-
         private static bool IsLikelyWallType(JObject o)
         {
             if (o == null) return false;
@@ -1445,81 +1379,6 @@ namespace revit_mcp_plugin.Core.Assistant
             return blob.IndexOf("Wall", StringComparison.OrdinalIgnoreCase) >= 0
                 || blob.IndexOf("OST_Walls", StringComparison.OrdinalIgnoreCase) >= 0
                 || blob.IndexOf("Стен", StringComparison.OrdinalIgnoreCase) >= 0;
-        }
-
-        /// <summary>
-        /// Compact model statistics so room/wall/door counts survive the 4k history cap (REV-133).
-        /// </summary>
-        private static string SlimModelStatisticsForModel(string toolName, string forModel)
-        {
-            if (!toolName.Equals("analyze_model_statistics", StringComparison.OrdinalIgnoreCase))
-                return forModel;
-
-            try
-            {
-                var token = JToken.Parse(forModel);
-                var obj = token as JObject;
-                if (obj == null && token is JObject root && root["result"] is JObject wrapped)
-                    obj = wrapped;
-                if (obj == null)
-                    return forModel;
-
-                var categories = obj["categories"] ?? obj["Categories"];
-                if (categories == null || categories.Type != JTokenType.Array)
-                    return forModel;
-
-                var slimCats = new JArray();
-                var summaryParts = new List<string>();
-                foreach (var catTok in categories.OfType<JObject>().Take(25))
-                {
-                    var name = catTok["categoryName"]?.ToString()
-                        ?? catTok["CategoryName"]?.ToString()
-                        ?? "";
-                    var count = catTok["elementCount"]?.Value<int?>()
-                        ?? catTok["ElementCount"]?.Value<int?>();
-                    if (string.IsNullOrWhiteSpace(name) || count == null)
-                        continue;
-
-                    slimCats.Add(new JObject
-                    {
-                        ["categoryName"] = name,
-                        ["elementCount"] = count.Value,
-                    });
-
-                    if (IsKeyStatsCategory(name))
-                        summaryParts.Add($"{name}: {count.Value}");
-                }
-
-                var summary = summaryParts.Count > 0
-                    ? string.Join(", ", summaryParts)
-                    : null;
-
-                return new JObject
-                {
-                    ["ok"] = true,
-                    ["projectName"] = obj["projectName"] ?? obj["ProjectName"],
-                    ["totalElements"] = obj["totalElements"] ?? obj["TotalElements"],
-                    ["summary"] = summary,
-                    ["categories"] = slimCats,
-                    ["hint"] = "Счёт помещений/стен/дверей по проекту — из categories[]/summary. " +
-                               "Не вызывай export_room_data для статистики модели."
-                }.ToString(Newtonsoft.Json.Formatting.None);
-            }
-            catch
-            {
-                return forModel;
-            }
-        }
-
-        private static bool IsKeyStatsCategory(string categoryName)
-        {
-            if (string.IsNullOrWhiteSpace(categoryName))
-                return false;
-            var n = categoryName.ToLowerInvariant();
-            return n.Contains("стен") || n.Contains("wall")
-                || n.Contains("двер") || n.Contains("door")
-                || n.Contains("помещ") || n.Contains("room")
-                || n.Contains("окн") || n.Contains("window");
         }
 
     }
