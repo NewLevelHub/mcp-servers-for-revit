@@ -257,6 +257,19 @@ internal static class ScriptedChains
                 }),
             ], "Стены через create_*, без C#."),
             "multistep-walls-doors-rooms" => ScriptedChatClient.FromToolChain([
+                ("declare_plan", new
+                {
+                    goal = "Две комнаты со стенами, дверью и марками",
+                    steps = new object[]
+                    {
+                        new { n = 1, what = "Контекст вида", tool = "get_current_view_info" },
+                        new { n = 2, what = "Типы стен", tool = "get_available_family_types" },
+                        new { n = 3, what = "Стены", tool = "create_line_based_element" },
+                        new { n = 4, what = "Дверь", tool = "create_point_based_element" },
+                        new { n = 5, what = "Помещения", tool = "create_room" },
+                        new { n = 6, what = "Марки", tool = "tag_rooms" },
+                    },
+                }),
                 ("get_current_view_info", null),
                 ("get_available_family_types", new { categoryName = "OST_Walls" }),
                 ("create_line_based_element", new

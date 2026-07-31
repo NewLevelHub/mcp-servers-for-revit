@@ -34,18 +34,24 @@ namespace revit_mcp_plugin.Core.Assistant
 
         public const string Modeling =
             "=== ПЛАНИРОВКА (только при создании геометрии) ===\n" +
+            "0) Сначала declare_plan: goal + steps[{n,what,tool}] — чеклист до любых create_*. " +
+            "Одно чтение («сколько комнат») — без плана.\n" +
             "A) get_current_view_info → elevation уровня (мм) = baseLevel.\n" +
-            "B) get_available_family_types categoryName=OST_Walls → typeId из types[] или suggestedWallTypeId.\n" +
-            "C) create_line_based_element: все сегменты стен одним вызовом; typeId обязателен; height≈3000; baseLevel из вида.\n" +
+            "B) get_available_family_types categoryName=OST_Walls → typeId = suggestedWallTypeId " +
+            "(Базовая стена / перегородка). Не Витраж/Curtain — они дают таймаут.\n" +
+            "C) create_line_based_element: все сегменты ОДНИМ вызовом; typeId обязателен; height≈3000; baseLevel из вида. " +
+            "«Две комнаты»: ровно 5 сегментов (прямоугольник + 1 перегородка). Не дроби стены и не строй поверх старых — " +
+            "сначала удали мусор operate_element/delete или работай в чистой зоне.\n" +
             "D) Если стены не создались — остановись, сообщи ошибку; не вызывай create_room и размеры.\n" +
-            "E) После успеха стен: create_point_based_element (двери/окна: typeId + hostWallId).\n" +
+            "E) Двери: get_available_family_types OST_Doors → typeId; hostWallId = наружная стена комнаты; " +
+            "locationPoint = середина Start/End ЭТОЙ стены (≥600 мм от углов). Не в стык/угол — Revit: конфликт с примыкающей стеной.\n" +
             "F) create_room по 1–2 за вызов; точка внутри ячейки; Id из ответа — ElementId, не номер.\n" +
             "G) tag_rooms; dimension_room_walls roomId=ElementId, placement=interior.\n" +
             "H) run_norm_audit — только после готовой планировки.\n" +
             "Помещения только внутри замкнутых стен. Room Bounding=true — на стенах, не на комнатах.\n" +
-            "Пример: «Построй 2-комнатную» → get_current_view_info → get_available_family_types → " +
-            "create_line_based_element → create_point_based_element → create_room → tag_rooms.\n" +
-            "Пример: «Сколько комнат на этаже?» → export_room_data filterByActiveView=true (не весь проект).";
+            "Пример: «Построй две комнаты» → declare_plan → view → types(OST_Walls) → " +
+            "5 сегментов стен → types(OST_Doors) → дверь в середине каждой наружной стены → create_room ×2 → tag_rooms.\n" +
+            "Пример: «Сколько комнат на этаже?» → export_room_data filterByActiveView=true (не весь проект, без плана).";
 
         public const string Annotation =
             "=== ОСИ, РАЗМЕРЫ, МАРКИ ===\n" +
@@ -95,7 +101,7 @@ namespace revit_mcp_plugin.Core.Assistant
             "5) tag_rooms своих помещений; color_splash по «Назначение»; dimension_room_walls на ключевые.\n" +
             "6) run_norm_audit mode=report в конце. Вложение — ориентир по зонам, не слепое копирование.\n" +
             "Работай в чистой зоне плана — не размечай весь жилой дом.\n" +
-            "Пример: «Кафе на 40 мест» → query_norm_rules → create_line_based_element → … → run_norm_audit mode=report.";
+            "Пример: «Кафе на 40 мест» → declare_plan → query_norm_rules → create_line_based_element → … → run_norm_audit mode=report.";
 
         /// <summary>Rules referenced from <see cref="TypologyPrograms.BuildAgentInstruction"/>.</summary>
         public const string TypologyAgentRules =

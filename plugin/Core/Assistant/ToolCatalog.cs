@@ -34,6 +34,7 @@ namespace revit_mcp_plugin.Core.Assistant
         /// </summary>
         public static readonly IReadOnlyList<string> CoreTools = new[]
         {
+            "declare_plan",
             "get_current_view_info",
             "get_current_view_elements",
             "get_selected_elements",
@@ -505,16 +506,26 @@ namespace revit_mcp_plugin.Core.Assistant
             if (msg.IndexOf("typeId", StringComparison.OrdinalIgnoreCase) >= 0
                 && msg.IndexOf("not found", StringComparison.OrdinalIgnoreCase) >= 0)
             {
+                var cat = TypeIdCategoryHint(toolName);
                 return new FailureHint(
                     "typeId не найден в проекте.",
-                    "Возьмите актуальный typeId из get_available_family_types (OST_Walls).");
+                    "Возьмите актуальный typeId из get_available_family_types (" + cat + ").");
             }
             if (msg.IndexOf("typeId", StringComparison.OrdinalIgnoreCase) >= 0
                 || msg.IndexOf("type id", StringComparison.OrdinalIgnoreCase) >= 0)
             {
+                var cat = TypeIdCategoryHint(toolName);
                 return new FailureHint(
                     "Проблема с typeId.",
-                    "Вызовите get_available_family_types categoryName=OST_Walls и передайте числовой typeId в create_line_based_element.");
+                    "Вызовите get_available_family_types categoryName=" + cat +
+                    " и передайте числовой typeId.");
+            }
+            if (msg.IndexOf("locationPoint is too far from host", StringComparison.OrdinalIgnoreCase) >= 0
+                || msg.IndexOf("too far from host wall", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return new FailureHint(
+                    "Точка двери не на стене-хосте.",
+                    "Возьмите hostWallId и середину Start/End той же стены из элементов вида.");
             }
             if (msg.IndexOf("host", StringComparison.OrdinalIgnoreCase) >= 0
                 && msg.IndexOf("wall", StringComparison.OrdinalIgnoreCase) >= 0)
@@ -545,12 +556,20 @@ namespace revit_mcp_plugin.Core.Assistant
                     "Сначала создайте вид или спеку и возьмите id из ответа, либо для ТЭП используйте таблицу ТЭП.");
             }
             if (msg.IndexOf("Create room operation timed out", StringComparison.OrdinalIgnoreCase) >= 0
-                || msg.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0
-                    && msg.IndexOf("room", StringComparison.OrdinalIgnoreCase) >= 0)
+                || (msg.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0
+                    && msg.IndexOf("room", StringComparison.OrdinalIgnoreCase) >= 0))
             {
                 return new FailureHint(
                     "Создание помещений заняло слишком долго.",
                     "Создавайте по 1–2 помещения за вызов, после замкнутого контура стен.");
+            }
+            if (msg.IndexOf("create_line_based_element timed out", StringComparison.OrdinalIgnoreCase) >= 0
+                || (msg.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0
+                    && msg.IndexOf("line-based", StringComparison.OrdinalIgnoreCase) >= 0))
+            {
+                return new FailureHint(
+                    "Создание стен превысило 60 с.",
+                    "Возьми suggestedWallTypeId (Базовая стена / перегородка), не Витраж; меньше сегментов за вызов; свободная зона на плане.");
             }
             if (msg.IndexOf("was not found", StringComparison.OrdinalIgnoreCase) >= 0
                 && msg.IndexOf("Room", StringComparison.OrdinalIgnoreCase) >= 0)
@@ -618,6 +637,16 @@ namespace revit_mcp_plugin.Core.Assistant
             return new FailureHint(text);
         }
 
+        private static string TypeIdCategoryHint(string toolName)
+        {
+            var n = (toolName ?? "").Trim().ToLowerInvariant();
+            if (n.Contains("point") || n.Contains("door") || n.Contains("window"))
+                return "OST_Doors";
+            if (n.Contains("surface") || n.Contains("floor"))
+                return "OST_Floors";
+            return "OST_Walls";
+        }
+
         /// <summary>
         /// Architect-facing RU label for UI (confirmations, «Сделано»). Internal tool ids stay English.
         /// </summary>
@@ -638,6 +667,7 @@ namespace revit_mcp_plugin.Core.Assistant
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["say_hello"] = "проверка связи",
+                ["declare_plan"] = "план",
                 ["query_norm_rules"] = "поиск норм",
                 ["get_current_view_info"] = "сведения о виде",
                 ["get_current_view_elements"] = "элементы вида",
@@ -765,8 +795,21 @@ namespace revit_mcp_plugin.Core.Assistant
             var reportMode = E("report", "highlight");
             var bubbleEnd = E("bottomLeft", "topRight", "both");
 
+            var planStep = P(R("what"),
+                ("n", N(), "step number 1..N"),
+                ("what", S(), "short human description"),
+                ("tool", S(), "intended tool name, e.g. create_line_based_element"));
+
             return new List<ToolDef>
             {
+                T("declare_plan",
+                    "Announce a checklist BEFORE changing the model. Call once at the start of multi-step " +
+                    "create/layout/annotation work. Does NOT change Revit — only records intent. " +
+                    "Skip for simple one-shot reads («сколько комнат», «статистика»). " +
+                    "Then execute steps in order; do not wander on read tools.",
+                    P(R("goal", "steps"),
+                      ("goal", S(), "short goal, e.g. Планировка кафе 60 м²"),
+                      ("steps", AItems(planStep), "ordered steps with what + tool"))),
                 T("get_current_view_info",
                     "Active view: type, name, scale, level elevation (mm). Call first before create_* or dimensions.",
                     Empty()),
@@ -815,7 +858,9 @@ namespace revit_mcp_plugin.Core.Assistant
                       ("value", O(), "true"))),
                 T("create_point_based_element",
                     "Create doors, windows, furniture at a point (mm). REQUIRED: typeId + hostWallId + locationPoint. " +
-                    "Get hostWallId from create_line_based_element / get_current_view_elements OST_Walls after walls exist.",
+                    "For doors/windows: locationPoint MUST lie on the SAME host wall centerline " +
+                    "(use midpoint of that wall Start/End from get_current_view_elements OST_Walls). " +
+                    "Wrong hostWallId for the point → door sits perpendicular / outside. Do not pass rotation for doors.",
                     P(R("data"),
                       ("data", AItems(pointItem), "doors/windows/furniture"))),
                 T("create_surface_based_element",

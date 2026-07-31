@@ -28,6 +28,7 @@ namespace revit_mcp_plugin.UI.Assistant
         private CancellationTokenSource _runCts;
         private TaskCompletionSource<bool> _confirmTcs;
         private bool _busy;
+        private PlanChecklistBubble _activePlanBubble;
 
         public AssistantChatPane()
         {
@@ -36,6 +37,7 @@ namespace revit_mcp_plugin.UI.Assistant
             _agent.StatusChanged += OnAgentStatus;
             _agent.ConfirmationRequested += OnConfirmationRequested;
             _agent.HistoryTrimmed += OnHistoryTrimmed;
+            _agent.PlanChanged += OnPlanChanged;
             BuildChips();
             ShowWelcomeMessage();
             SetStatus("Готов", StatusTone.Ok);
@@ -626,6 +628,7 @@ namespace revit_mcp_plugin.UI.Assistant
 
             _busy = true;
             SetBusyUi(true);
+            _activePlanBubble = null;
             AddUserMessage(displayText, attachments);
             RefreshContextAndBanner();
 
@@ -640,12 +643,13 @@ namespace revit_mcp_plugin.UI.Assistant
 
                 if (result.Cancelled)
                 {
-                    AddBotMessage("Остановлено.");
+                    AddBotMessage(string.IsNullOrWhiteSpace(result.Reply) ? "Остановлено." : result.Reply);
                     return;
                 }
 
                 var reply = result.Reply ?? "";
-                if (result.DoneSummary != null && result.DoneSummary.Count > 0)
+                if (result.DoneSummary != null && result.DoneSummary.Count > 0
+                    && reply.IndexOf("Успели:", StringComparison.OrdinalIgnoreCase) < 0)
                 {
                     var sb = new StringBuilder();
                     sb.AppendLine(reply);
@@ -702,6 +706,24 @@ namespace revit_mcp_plugin.UI.Assistant
                 if (string.Equals(status, "Готов", StringComparison.OrdinalIgnoreCase))
                     tone = StatusTone.Ok;
                 SetStatus(status, tone);
+            }));
+        }
+
+        private void OnPlanChanged(AgentPlanSnapshot plan)
+        {
+            if (plan == null) return;
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (_activePlanBubble == null)
+                {
+                    _activePlanBubble = new PlanChecklistBubble(plan);
+                    MessagesPanel.Children.Add(_activePlanBubble);
+                    ScrollToEnd();
+                }
+                else
+                {
+                    _activePlanBubble.Apply(plan);
+                }
             }));
         }
 

@@ -51,8 +51,25 @@ namespace RevitMCPCommandSet.Utils
 
             FamilyInstance instance = null;
 
+            BuiltInCategory symbolCategory = BuiltInCategory.INVALID;
+            try
+            {
+                if (familySymbol.Category != null)
+                    symbolCategory = (BuiltInCategory)familySymbol.Category.Id.GetIntValue();
+            }
+            catch { /* ignore */ }
+
+            bool forceHostedOpening =
+                explicitHost is Wall
+                && (symbolCategory == BuiltInCategory.OST_Doors
+                    || symbolCategory == BuiltInCategory.OST_Windows);
+
             // 根据族的放置类型选择创建方法
-            switch (familySymbol.Family.FamilyPlacementType)
+            FamilyPlacementType placementType = familySymbol.Family.FamilyPlacementType;
+            if (forceHostedOpening)
+                placementType = FamilyPlacementType.OneLevelBasedHosted;
+
+            switch (placementType)
             {
                 // 基于单个标高的族（如：公制常规模型）
                 case FamilyPlacementType.OneLevelBased:
@@ -85,15 +102,15 @@ namespace RevitMCPCommandSet.Utils
                     Element host = explicitHost;
                     XYZ placementPoint = locationPoint;
 
-                    // If explicit host provided and it's a wall, snap to its centerline
+                    // If explicit host provided and it's a wall, snap to its centerline (clamped to segment).
                     if (host != null && snapToHostCenter && host is Wall explicitWall)
                     {
-                        LocationCurve eLoc = explicitWall.Location as LocationCurve;
-                        if (eLoc != null)
+                        double inset = 600.0 / 304.8; // keep openings clear of corners / adjoining walls
+                        if (ProjectUtils.TryProjectPointOntoWall(
+                                explicitWall, locationPoint, inset,
+                                out var projected, out _, out _))
                         {
-                            IntersectionResult eIr = eLoc.Curve.Project(locationPoint);
-                            if (eIr != null)
-                                placementPoint = new XYZ(eIr.XYZPoint.X, eIr.XYZPoint.Y, locationPoint.Z);
+                            placementPoint = projected;
                         }
                     }
 
@@ -625,10 +642,27 @@ namespace RevitMCPCommandSet.Utils
                 Level level,
                 double tolerance = 5.0 / 304.8)
         {
+            var closest = doc.GetClosestWallByLocationLine(point, level);
+            if (!closest.HasValue)
+                return null;
+
+            double halfWidth = closest.Value.wall.Width / 2.0;
+            if (closest.Value.distance > halfWidth + tolerance)
+                return null;
+
+            return closest;
+        }
+
+        /// <summary>
+        /// Closest wall by planar distance to centerline (no half-width filter).
+        /// Used to correct wrong hostWallId when locationPoint lies on another wall.
+        /// </summary>
+        public static (Wall wall, XYZ projectedPoint, XYZ wallDirection, double distance)?
+            GetClosestWallByLocationLine(this Document doc, XYZ point, Level level)
+        {
             if (doc == null || point == null || level == null)
                 return null;
 
-            // Collect all walls on the given level
             var walls = new FilteredElementCollector(doc)
                 .OfClass(typeof(Wall))
                 .Cast<Wall>()
@@ -646,31 +680,15 @@ namespace RevitMCPCommandSet.Utils
 
             foreach (Wall wall in walls)
             {
-                LocationCurve locCurve = wall.Location as LocationCurve;
-                if (locCurve == null) continue;
+                if (!TryProjectPointOntoWall(wall, point, insetFt: 0, out var projected, out var direction, out var distance))
+                    continue;
 
-                Curve curve = locCurve.Curve;
-                if (curve == null) continue;
-
-                // Use Curve.Project() which handles both lines and arcs
-                IntersectionResult ir = curve.Project(new XYZ(point.X, point.Y, curve.GetEndPoint(0).Z));
-                if (ir == null) continue;
-
-                XYZ projectedPt = ir.XYZPoint;
-                double distance = new XYZ(point.X - projectedPt.X, point.Y - projectedPt.Y, 0).GetLength();
-
-                // Check if point is within half the wall width + tolerance
-                double halfWidth = wall.Width / 2.0;
-                if (distance <= halfWidth + tolerance && distance < bestDistance)
+                if (distance < bestDistance)
                 {
                     bestDistance = distance;
                     bestWall = wall;
-                    bestProjection = new XYZ(projectedPt.X, projectedPt.Y, point.Z);
-
-                    // Compute wall direction from curve tangent at projected parameter
-                    XYZ p0 = curve.GetEndPoint(0);
-                    XYZ p1 = curve.GetEndPoint(1);
-                    bestDirection = new XYZ(p1.X - p0.X, p1.Y - p0.Y, 0).Normalize();
+                    bestProjection = projected;
+                    bestDirection = direction;
                 }
             }
 
@@ -681,11 +699,243 @@ namespace RevitMCPCommandSet.Utils
         }
 
         /// <summary>
+        /// Project a point onto a wall centerline, optionally clamping inward from ends
+        /// so a door/window is not created past the wall segment.
+        /// </summary>
+        public static bool TryProjectPointOntoWall(
+            Wall wall,
+            XYZ point,
+            double insetFt,
+            out XYZ projectedPoint,
+            out XYZ wallDirection,
+            out double planarDistance)
+        {
+            projectedPoint = null;
+            wallDirection = null;
+            planarDistance = double.MaxValue;
+            if (wall == null || point == null)
+                return false;
+
+            LocationCurve locCurve = wall.Location as LocationCurve;
+            Curve curve = locCurve?.Curve;
+            if (curve == null)
+                return false;
+
+            XYZ p0 = curve.GetEndPoint(0);
+            XYZ p1 = curve.GetEndPoint(1);
+            wallDirection = new XYZ(p1.X - p0.X, p1.Y - p0.Y, 0);
+            if (wallDirection.GetLength() < 1e-9)
+                return false;
+            wallDirection = wallDirection.Normalize();
+
+            IntersectionResult ir = curve.Project(new XYZ(point.X, point.Y, p0.Z));
+            if (ir == null)
+                return false;
+
+            XYZ onCurve = ir.XYZPoint;
+            planarDistance = new XYZ(point.X - onCurve.X, point.Y - onCurve.Y, 0).GetLength();
+
+            double length = p0.DistanceTo(p1);
+            double n = curve.ComputeNormalizedParameter(ir.Parameter);
+            if (double.IsNaN(n) || double.IsInfinity(n))
+                n = 0.5;
+
+            if (insetFt > 0 && length > 1e-6)
+            {
+                double insetN = Math.Min(0.45, Math.Max(0.0, insetFt / length));
+                if (n < insetN) n = insetN;
+                if (n > 1.0 - insetN) n = 1.0 - insetN;
+            }
+            else
+            {
+                if (n < 0) n = 0;
+                if (n > 1) n = 1;
+            }
+
+            XYZ clamped = curve.Evaluate(n, true);
+            projectedPoint = new XYZ(clamped.X, clamped.Y, point.Z);
+            return true;
+        }
+
+        /// <summary>
+        /// Place a door/window on the host wall at a fixed span fraction (ignores model XY along wall).
+        /// Near-corner points from the model cause «Конфликт с примыкающей стеной».
+        /// </summary>
+        /// <param name="spanFraction">0..1 along wall; use 0.5 for one door, 1/3 and 2/3 for two.</param>
+        public static XYZ GetSafeOpeningPointOnWall(
+            Wall wall,
+            XYZ requested,
+            double openingWidthFt,
+            out string warning,
+            double spanFraction = 0.5)
+        {
+            warning = null;
+            if (wall == null)
+                return requested;
+
+            LocationCurve locCurve = wall.Location as LocationCurve;
+            Curve curve = locCurve?.Curve;
+            if (curve == null)
+                return requested;
+
+            XYZ p0 = curve.GetEndPoint(0);
+            XYZ p1 = curve.GetEndPoint(1);
+            double length = p0.DistanceTo(p1);
+            double z = requested?.Z ?? p0.Z;
+
+            double n = spanFraction;
+            if (n < 0.05) n = 0.05;
+            if (n > 0.95) n = 0.95;
+
+            // Keep clear of ends even when fraction is extreme.
+            if (length > 1e-6)
+            {
+                double clearanceFt = Math.Max(openingWidthFt * 0.5 + 900.0 / 304.8, 1200.0 / 304.8);
+                double insetN = Math.Min(0.40, clearanceFt / length);
+                if (n < insetN) n = insetN;
+                if (n > 1.0 - insetN) n = 1.0 - insetN;
+            }
+
+            if (length < openingWidthFt + 2400.0 / 304.8)
+            {
+                warning =
+                    $"host wall {wall.Id.GetIntValue()} is short ({length * 304.8:F0} mm) for a door; " +
+                    "prefer a longer exterior wall.";
+            }
+
+            XYZ safe = curve.Evaluate(n, true);
+            return new XYZ(safe.X, safe.Y, z);
+        }
+
+        /// <summary>
+        /// Pick host wall for a door/window: prefer explicit host if the point is near it;
+        /// otherwise switch to the closest wall at locationPoint (fixes perpendicular / off-wall doors).
+        /// Among candidates, prefer a longer wall where the point is farther from ends.
+        /// </summary>
+        public static Wall ResolveHostWallForOpening(
+            Document doc,
+            Wall explicitHost,
+            XYZ locationPoint,
+            Level level,
+            double doorWidthFt,
+            out string warning)
+        {
+            warning = null;
+            if (doc == null || locationPoint == null)
+                return explicitHost;
+
+            double maxOkDist = (explicitHost?.Width ?? 0.5) / 2.0 + 300.0 / 304.8;
+            double explicitDist = double.MaxValue;
+            if (explicitHost != null
+                && TryProjectPointOntoWall(explicitHost, locationPoint, 0, out _, out _, out explicitDist)
+                && explicitDist <= maxOkDist
+                && !IsNearWallEnd(explicitHost, locationPoint, doorWidthFt))
+            {
+                return explicitHost;
+            }
+
+            // Prefer the best wall near the point (not just closest centerline if that is a short stub).
+            Wall best = PickBestHostWallNearPoint(doc, locationPoint, level, doorWidthFt);
+            if (best == null)
+                return explicitHost;
+
+            if (explicitHost != null && best.Id != explicitHost.Id)
+            {
+                warning =
+                    $"hostWallId {explicitHost.Id.GetIntValue()} unsuitable for locationPoint; " +
+                    $"used wall {best.Id.GetIntValue()} instead.";
+            }
+            else if (explicitHost != null && explicitDist > maxOkDist)
+            {
+                warning =
+                    $"locationPoint was {explicitDist * 304.8:F0} mm from hostWallId {explicitHost.Id.GetIntValue()}; " +
+                    $"snapped to wall {best.Id.GetIntValue()}.";
+            }
+
+            return best;
+        }
+
+        private static bool IsNearWallEnd(Wall wall, XYZ point, double openingWidthFt)
+        {
+            if (wall == null || point == null) return true;
+            LocationCurve loc = wall.Location as LocationCurve;
+            Curve curve = loc?.Curve;
+            if (curve == null) return true;
+
+            XYZ p0 = curve.GetEndPoint(0);
+            XYZ p1 = curve.GetEndPoint(1);
+            double length = p0.DistanceTo(p1);
+            if (length < 1e-6) return true;
+
+            IntersectionResult ir = curve.Project(new XYZ(point.X, point.Y, p0.Z));
+            if (ir == null) return true;
+            double n = curve.ComputeNormalizedParameter(ir.Parameter);
+            double clearanceFt = Math.Max(openingWidthFt * 0.5 + 600.0 / 304.8, 900.0 / 304.8);
+            double insetN = Math.Min(0.45, clearanceFt / length);
+            return n < insetN || n > 1.0 - insetN;
+        }
+
+        private static Wall PickBestHostWallNearPoint(
+            Document doc,
+            XYZ point,
+            Level level,
+            double doorWidthFt)
+        {
+            if (doc == null || point == null || level == null)
+                return null;
+
+            var walls = new FilteredElementCollector(doc)
+                .OfClass(typeof(Wall))
+                .Cast<Wall>()
+                .Where(w =>
+                {
+                    Parameter baseLevelParam = w.get_Parameter(BuiltInParameter.WALL_BASE_CONSTRAINT);
+                    return baseLevelParam != null && baseLevelParam.AsElementId() == level.Id;
+                })
+                .ToList();
+
+            Wall best = null;
+            double bestScore = double.MinValue;
+            double maxDist = 800.0 / 304.8; // mm → ft
+
+            foreach (Wall wall in walls)
+            {
+                if (!TryProjectPointOntoWall(wall, point, 0, out _, out _, out var dist))
+                    continue;
+                if (dist > maxDist)
+                    continue;
+
+                LocationCurve loc = wall.Location as LocationCurve;
+                Curve curve = loc?.Curve;
+                if (curve == null) continue;
+                double length = curve.GetEndPoint(0).DistanceTo(curve.GetEndPoint(1));
+                // Need room for door + clearances.
+                if (length < doorWidthFt + 1200.0 / 304.8)
+                    continue;
+
+                IntersectionResult ir = curve.Project(new XYZ(point.X, point.Y, curve.GetEndPoint(0).Z));
+                double n = ir != null ? curve.ComputeNormalizedParameter(ir.Parameter) : 0.5;
+                if (double.IsNaN(n) || double.IsInfinity(n)) n = 0.5;
+                double endClearance = Math.Min(n, 1.0 - n); // 0.5 = mid = best
+
+                // Higher score: closer to wall, longer wall, closer to mid-span.
+                double score = (maxDist - dist) * 10.0 + length + endClearance * 20.0;
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    best = wall;
+                }
+            }
+
+            return best ?? doc.GetClosestWallByLocationLine(point, level)?.wall;
+        }
+
+        /// <summary>
         /// 高亮显示指定的面
         /// </summary>
         /// <param name="doc">当前文档</param>
         /// <param name="faceRef">要高亮显示的面Reference</param>
-        /// <param name="duration">高亮持续时间(毫秒)，默认3000毫秒</param>
+        /// <param name="duration">高亮持续时间(毫секунд)，默认3000毫秒</param>
         public static void HighlightFace(this Document doc, Reference faceRef)
         {
             if (faceRef == null) return;

@@ -14,6 +14,9 @@ namespace revit_mcp_plugin.Core.Assistant
             if (toolName.Equals("query_norm_rules", StringComparison.OrdinalIgnoreCase))
                 return NormCatalogStore.ExecuteQueryTool(argsJson);
 
+            if (toolName.Equals("declare_plan", StringComparison.OrdinalIgnoreCase))
+                return AgentPlan.ExecuteAsTool(argsJson);
+
             if (toolName.Equals("run_norm_audit", StringComparison.OrdinalIgnoreCase))
                 return WrapLocalToolResult(NormAuditOrchestrator.Run(argsJson));
 

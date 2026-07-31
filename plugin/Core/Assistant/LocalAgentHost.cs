@@ -74,6 +74,8 @@ namespace revit_mcp_plugin.Core.Assistant
         public event Func<PendingToolConfirmation, Task<bool>> ConfirmationRequested;
         /// <summary>Raised when older messages were dropped to keep context within limits.</summary>
         public event Action HistoryTrimmed;
+        /// <summary>REV-120: plan checklist declared or a step status changed.</summary>
+        public event Action<AgentPlanSnapshot> PlanChanged;
 
         public int HistoryMessageCount
         {
@@ -659,8 +661,11 @@ namespace revit_mcp_plugin.Core.Assistant
                 }
             }
 
-            const int maxRounds = 30;
+            var maxRounds = RoundBudget.Resolve(activeProfiles, userMessage);
             var toolResultCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var loopGuard = new ToolCallLoopGuard();
+            AgentPlan activePlan = null;
+            var budgetWarningSent = false;
             var turnLog = new TurnLogEntry
             {
                 TurnId = turnId ?? Guid.NewGuid().ToString("N").Substring(0, 12),
@@ -695,6 +700,14 @@ namespace revit_mcp_plugin.Core.Assistant
                     // Refresh tools each round so escalation expands the catalog.
                     tools = ToolCatalog.GetOpenAiTools(activeProfiles);
 
+                    // REV-120: warn the model when the round budget is almost gone.
+                    if (!budgetWarningSent && round >= Math.Max(0, maxRounds - 2))
+                    {
+                        budgetWarningSent = true;
+                        var left = maxRounds - round;
+                        AppendBudgetWarning(left);
+                    }
+
                     JArray messages;
                     lock (_historyLock)
                     {
@@ -714,12 +727,12 @@ namespace revit_mcp_plugin.Core.Assistant
                     }
                     catch (OperationCanceledException)
                     {
-                        return CancelledResult(done);
+                        return CancelledResult(done, activePlan);
                     }
                     catch (Exception ex)
                     {
                         if (IsCancel(ex, cancellationToken))
-                            return CancelledResult(done);
+                            return CancelledResult(done, activePlan);
 
                         return new AgentTurnResult
                         {
@@ -872,6 +885,71 @@ namespace revit_mcp_plugin.Core.Assistant
                         enrichedArgs = InjectMissingTypeIds(toolResultCache, toolName, enrichedArgs);
                         var injectedTypeId = !string.Equals(argsBeforeInject, enrichedArgs, StringComparison.Ordinal);
                         var toolSw = System.Diagnostics.Stopwatch.StartNew();
+
+                        // REV-120: declare_plan is a local meta-tool — no Revit call.
+                        if (toolName.Equals("declare_plan", StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (!AgentPlan.TryParse(enrichedArgs, out activePlan, out var planErr))
+                            {
+                                var fail = ToolResultShaper.FailurePayload(new ToolCatalog.FailureHint(
+                                    planErr ?? "Некорректный план.",
+                                    "Передай goal и steps[{n,what,tool}]."));
+                                AppendToolResult(callId, fail.ToString());
+                                done.Add("ошибка: план");
+                                toolSw.Stop();
+                                turnLog.ToolCalls.Add(new ToolCallLog
+                                {
+                                    Round = round,
+                                    Name = toolName,
+                                    Args = argsJson,
+                                    NormalizedArgs = enrichedArgs,
+                                    Ok = false,
+                                    DurationMs = toolSw.ElapsedMilliseconds,
+                                    Error = planErr,
+                                    ResultBytes = fail.ToString().Length,
+                                });
+                                continue;
+                            }
+
+                            var planPayload = activePlan.ToSuccessPayload();
+                            AppendToolResult(callId, planPayload.ToString());
+                            RaisePlanChanged(activePlan);
+                            done.Add(planPayload["summary"]?.ToString() ?? "план");
+                            toolSw.Stop();
+                            turnLog.ToolCalls.Add(new ToolCallLog
+                            {
+                                Round = round,
+                                Name = toolName,
+                                Args = argsJson,
+                                NormalizedArgs = enrichedArgs,
+                                Ok = true,
+                                DurationMs = toolSw.ElapsedMilliseconds,
+                                ResultBytes = planPayload.ToString().Length,
+                            });
+                            continue;
+                        }
+
+                        // REV-120: block 3rd identical tool+args (loop guard).
+                        if (!loopGuard.TryAllow(toolName, enrichedArgs, out _))
+                        {
+                            var blocked = ToolCallLoopGuard.BlockPayload(toolName);
+                            AppendToolResult(callId, blocked.ToString());
+                            done.Add("ошибка: повтор " + FriendlyToolName(toolName));
+                            toolSw.Stop();
+                            turnLog.ToolCalls.Add(new ToolCallLog
+                            {
+                                Round = round,
+                                Name = toolName,
+                                Args = argsJson,
+                                NormalizedArgs = enrichedArgs,
+                                Ok = false,
+                                DurationMs = toolSw.ElapsedMilliseconds,
+                                Error = "loop_blocked",
+                                ResultBytes = blocked.ToString().Length,
+                            });
+                            continue;
+                        }
+
                         try
                         {
                             if (HasNormalizeError(enrichedArgs, out var normalizeMsg))
@@ -901,7 +979,7 @@ namespace revit_mcp_plugin.Core.Assistant
                             AppendToolResult(callId, CancelledToolPayload());
                             // Fill remaining sibling calls so history stays valid for the next turn.
                             FillRemainingToolResults(toolCalls, callTok);
-                            return CancelledResult(done);
+                            return CancelledResult(done, activePlan);
                         }
                         catch (Exception ex)
                         {
@@ -909,7 +987,7 @@ namespace revit_mcp_plugin.Core.Assistant
                             {
                                 AppendToolResult(callId, CancelledToolPayload());
                                 FillRemainingToolResults(toolCalls, callTok);
-                                return CancelledResult(done);
+                                return CancelledResult(done, activePlan);
                             }
 
                             rawResult = new JObject
@@ -930,6 +1008,9 @@ namespace revit_mcp_plugin.Core.Assistant
                         var (ok, summary, forModel) = ParseToolResponse(name, rawResult);
                         AppendToolResult(callId, forModel);
                         toolSw.Stop();
+
+                        if (activePlan != null && activePlan.TryMarkTool(toolName, ok))
+                            RaisePlanChanged(activePlan);
 
                         turnLog.ToolCalls.Add(new ToolCallLog
                         {
@@ -955,14 +1036,19 @@ namespace revit_mcp_plugin.Core.Assistant
                     }
 
                     if (cancellationToken.IsCancellationRequested)
-                        return CancelledResult(done);
+                        return CancelledResult(done, activePlan);
                 }
+
+                var maxRoundsReply = AgentPlan.BuildPartialReply(
+                    "Слишком много шагов в одном запросе. Уточните задачу или разбейте на части.",
+                    done,
+                    activePlan);
 
                 turnLog.Rounds = maxRounds;
                 turnLog.Outcome = "maxRounds";
                 turnLog.DoneSummary = done;
                 turnLog.TotalMs = turnSw.ElapsedMilliseconds;
-                turnLog.Reply = "Слишком много шагов.";
+                turnLog.Reply = maxRoundsReply;
                 turnLog.ToolProfiles = activeProfiles.ToList();
                 AssistantTurnLogger.Write(turnLog);
 
@@ -970,7 +1056,7 @@ namespace revit_mcp_plugin.Core.Assistant
                 return new AgentTurnResult
                 {
                     Failed = true,
-                    Reply = "Слишком много шагов в одном запросе. Уточните задачу или разбейте на части.",
+                    Reply = maxRoundsReply,
                     DoneSummary = done
                 };
             }
@@ -981,7 +1067,7 @@ namespace revit_mcp_plugin.Core.Assistant
                 turnLog.TotalMs = turnSw.ElapsedMilliseconds;
                 turnLog.ToolProfiles = activeProfiles.ToList();
                 AssistantTurnLogger.Write(turnLog);
-                return CancelledResult(done);
+                return CancelledResult(done, activePlan);
             }
             finally
             {
@@ -989,12 +1075,12 @@ namespace revit_mcp_plugin.Core.Assistant
             }
         }
 
-        private static AgentTurnResult CancelledResult(IList<string> done)
+        private static AgentTurnResult CancelledResult(IList<string> done, AgentPlan plan = null)
         {
             return new AgentTurnResult
             {
                 Cancelled = true,
-                Reply = "Остановлено.",
+                Reply = AgentPlan.BuildPartialReply("Остановлено.", done, plan),
                 DoneSummary = done ?? new List<string>()
             };
         }
@@ -1089,6 +1175,32 @@ namespace revit_mcp_plugin.Core.Assistant
         {
             try { StatusChanged?.Invoke(status); }
             catch { /* UI may be disposed */ }
+        }
+
+        private void RaisePlanChanged(AgentPlan plan)
+        {
+            if (plan == null) return;
+            try { PlanChanged?.Invoke(plan.Snapshot()); }
+            catch { /* UI may be disposed */ }
+        }
+
+        /// <summary>
+        /// Inject a system nudge so the model wraps up instead of hard-stopping (REV-120).
+        /// </summary>
+        private void AppendBudgetWarning(int roundsLeft)
+        {
+            var left = Math.Max(1, roundsLeft);
+            var text = left <= 1
+                ? "Остался 1 шаг бюджета. Завершай: краткий отчёт что сделано и что не успели."
+                : $"Осталось {left} шага бюджета. Завершай работу и отчитайся: что сделано, что нет.";
+            lock (_historyLock)
+            {
+                _history.Add(new JObject
+                {
+                    ["role"] = "system",
+                    ["content"] = text
+                });
+            }
         }
 
         private static string BuildConfirmSummary(string toolName, string argsJson)
@@ -1288,13 +1400,13 @@ namespace revit_mcp_plugin.Core.Assistant
                     if (types == null)
                         continue;
 
-                    foreach (var t in types.OfType<JObject>().OrderByDescending(o => preferWall && IsLikelyWallType(o)))
+                    foreach (var t in types.OfType<JObject>().OrderByDescending(WallTypePicker.Rank))
                     {
-                        if (preferWall && !IsLikelyWallType(t))
+                        if (preferWall && WallTypePicker.Rank(t) <= 0)
                             continue;
-                        var id = t["typeId"] ?? t["TypeId"] ?? t["FamilyTypeId"] ?? t["familyTypeId"] ?? t["id"] ?? t["Id"];
-                        if (id != null && long.TryParse(id.ToString(), out var n) && n > 0)
-                            return n;
+                        var id = WallTypePicker.TryGetTypeId(t);
+                        if (id.HasValue)
+                            return id.Value;
                     }
                 }
                 catch
@@ -1364,21 +1476,6 @@ namespace revit_mcp_plugin.Core.Assistant
             {
                 return false;
             }
-        }
-
-        private static bool IsLikelyWallType(JObject o)
-        {
-            if (o == null) return false;
-            var blob = string.Join(" ",
-                o["category"]?.ToString() ?? "",
-                o["Category"]?.ToString() ?? "",
-                o["familyName"]?.ToString() ?? "",
-                o["FamilyName"]?.ToString() ?? "",
-                o["name"]?.ToString() ?? "",
-                o["Name"]?.ToString() ?? "");
-            return blob.IndexOf("Wall", StringComparison.OrdinalIgnoreCase) >= 0
-                || blob.IndexOf("OST_Walls", StringComparison.OrdinalIgnoreCase) >= 0
-                || blob.IndexOf("Стен", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
     }
