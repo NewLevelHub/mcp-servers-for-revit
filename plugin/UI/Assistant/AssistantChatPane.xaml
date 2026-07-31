@@ -254,6 +254,8 @@
       <StackPanel Grid.Row="2" Margin="0,12,0,0">
         <TextBlock Text="Быстрые сценарии" FontSize="11" FontWeight="SemiBold"
                    Foreground="{StaticResource Muted}" Margin="2,0,0,8"/>
+        <TextBlock Text="Клик — вставить и править · Ctrl+клик — сразу" FontSize="10"
+                   Foreground="{StaticResource Muted}" Margin="2,0,0,6" Opacity="0.85"/>
         <WrapPanel x:Name="ChipsPanel"/>
       </StackPanel>
     </Grid>
