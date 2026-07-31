@@ -30,6 +30,8 @@
     <Compile Include="..\..\plugin\Core\Assistant\PromptSchemaAlignment.cs" Link="PromptSchemaAlignment.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\ToolCatalog.cs" Link="ToolCatalog.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\ToolResultShaper.cs" Link="ToolResultShaper.cs" />
+    <Compile Include="..\..\plugin\Core\Assistant\WallTypePicker.cs" Link="WallTypePicker.cs" />
+    <Compile Include="..\..\plugin\Core\Assistant\AgentPlan.cs" Link="AgentPlan.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\IntentRouter.cs" Link="IntentRouter.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\OpenAiCompatibleClient.cs" Link="OpenAiCompatibleClient.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\IAssistantToolExecutor.cs" Link="IAssistantToolExecutor.cs" />

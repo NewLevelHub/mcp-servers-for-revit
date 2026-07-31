@@ -210,6 +210,50 @@ public class ToolResultShaperTests
     }
 
     [Fact]
+    public void FamilyTypes_SkipsCurtainWall_ForSuggestedId()
+    {
+        var types = new JArray
+        {
+            new JObject
+            {
+                ["typeId"] = 1642,
+                ["name"] = "ADSK_Витраж_Без разрезки",
+                ["familyName"] = "Витраж",
+                ["category"] = "Стены"
+            },
+            new JObject
+            {
+                ["typeId"] = 577582,
+                ["name"] = "(витражи)1200х2900h_100х50",
+                ["familyName"] = "Витраж",
+                ["category"] = "Стены"
+            },
+            new JObject
+            {
+                ["typeId"] = 11327,
+                ["name"] = "ADSK_Перегородка_ГКЛ_100",
+                ["familyName"] = "Базовая стена",
+                ["category"] = "Стены"
+            },
+            new JObject
+            {
+                ["typeId"] = 11291,
+                ["name"] = "ADSK_Внутренняя_Кирпич_380",
+                ["familyName"] = "Базовая стена",
+                ["category"] = "Стены"
+            },
+        };
+
+        var shaped = ToolResultShaper.Shape("get_available_family_types", types);
+        var suggested = shaped["suggestedWallTypeId"]!.Value<int>();
+        Assert.True(suggested == 11327 || suggested == 11291,
+            $"expected partition/basic, got {suggested}");
+        Assert.NotEqual(1642, suggested);
+        Assert.NotEqual(577582, suggested);
+        Assert.Contains("не Витраж", shaped["nextStep"]!.ToString());
+    }
+
+    [Fact]
     public void ModelStatistics_KeepsKeyCategories()
     {
         var cats = new JArray

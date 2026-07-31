@@ -47,8 +47,28 @@ namespace RevitMCPCommandSet.Services
 
                 using (Transaction transaction = new Transaction(doc, "Create point-based elements"))
                 {
+                    var failOpts = transaction.GetFailureHandlingOptions();
+                    failOpts.SetFailuresPreprocessor(new SuppressOpeningWarningsPreprocessor());
+                    failOpts.SetClearAfterRollback(true);
+                    transaction.SetFailureHandlingOptions(failOpts);
+
                     transaction.Start();
                     IList<Level> levels = doc.GetAllLevels();
+
+                    // Pre-count openings per host wall so multiple doors on one wall are spaced (1/3, 2/3…).
+                    var openingsPerWall = new Dictionary<int, int>();
+                    var openingSlotOnWall = new Dictionary<int, int>(); // item index → slot 0..n-1
+                    for (int i = 0; i < requestedCount; i++)
+                    {
+                        var preview = CreatedInfo[i];
+                        if (preview?.HostWallId <= 0) continue;
+                        Element pe = doc.GetElement(new ElementId(preview.HostWallId));
+                        if (!(pe is Wall)) continue;
+                        if (!openingsPerWall.ContainsKey(preview.HostWallId))
+                            openingsPerWall[preview.HostWallId] = 0;
+                        openingSlotOnWall[i] = openingsPerWall[preview.HostWallId];
+                        openingsPerWall[preview.HostWallId]++;
+                    }
 
                     for (int index = 0; index < requestedCount; index++)
                     {
@@ -98,12 +118,45 @@ namespace RevitMCPCommandSet.Services
                             }
 
                             Element hostElem = doc.GetElement(new ElementId(data.HostWallId));
-                            if (!(hostElem is Wall))
+                            if (!(hostElem is Wall hostWall))
                             {
                                 errors.Add($"[{index}] hostWallId {data.HostWallId} is not a valid wall.");
                                 continue;
                             }
-                            explicitHost = hostElem;
+
+                            XYZ locPt = JZPoint.ToXYZ(data.LocationPoint);
+                            double doorWidthFt = data.Width > 0 ? data.Width / 304.8 : 900.0 / 304.8;
+                            explicitHost = ProjectUtils.ResolveHostWallForOpening(
+                                doc, hostWall, locPt, baseLevel, doorWidthFt, out var hostWarn);
+                            if (!string.IsNullOrEmpty(hostWarn))
+                                _warnings.Add($"[{index}] {hostWarn}");
+
+                            if (explicitHost == null)
+                            {
+                                errors.Add($"[{index}] Could not resolve a host wall near locationPoint.");
+                                continue;
+                            }
+
+                            int resolvedId = explicitHost.Id.GetIntValue();
+                            int totalOnWall = 1;
+                            int slot = 0;
+                            if (openingsPerWall.TryGetValue(data.HostWallId, out var planned))
+                                totalOnWall = Math.Max(1, planned);
+                            if (openingSlotOnWall.TryGetValue(index, out var plannedSlot))
+                                slot = plannedSlot;
+
+                            // Space evenly: 1 door → mid; 2 doors → 1/3 and 2/3 (never at corners).
+                            double spanFraction = totalOnWall <= 1
+                                ? 0.5
+                                : (slot + 1.0) / (totalOnWall + 1.0);
+
+                            locPt = ProjectUtils.GetSafeOpeningPointOnWall(
+                                (Wall)explicitHost, locPt, doorWidthFt, out var snapWarn, spanFraction);
+                            if (!string.IsNullOrEmpty(snapWarn))
+                                _warnings.Add($"[{index}] {snapWarn}");
+
+                            data.LocationPoint = new JZPoint(
+                                locPt.X * 304.8, locPt.Y * 304.8, locPt.Z * 304.8);
                         }
                         else if (data.HostWallId > 0)
                         {

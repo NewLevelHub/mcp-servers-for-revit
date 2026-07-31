@@ -446,7 +446,7 @@ namespace revit_mcp_plugin.Core.Assistant
 
             var ordered = types
                 .OfType<JObject>()
-                .OrderByDescending(IsLikelyWallType)
+                .OrderByDescending(WallTypePicker.Rank)
                 .ThenBy(o => FirstString(o, "name", "Name") ?? "")
                 .Take(FamilyTypeLimit)
                 .ToList();
@@ -463,29 +463,37 @@ namespace revit_mcp_plugin.Core.Assistant
                 });
             }
 
-            var firstWall = ordered.FirstOrDefault(IsLikelyWallType);
-            var suggested = firstWall?["typeId"] ?? firstWall?["TypeId"] ?? firstWall?["FamilyTypeId"]
-                ?? firstWall?["id"]
-                ?? slim.FirstOrDefault()?["typeId"];
+            var firstWall = ordered.FirstOrDefault(o => WallTypePicker.Rank(o) > 0);
+            var suggestedId = firstWall != null ? WallTypePicker.TryGetTypeId(firstWall) : null;
+            if (!suggestedId.HasValue)
+            {
+                foreach (var o in slim.OfType<JObject>())
+                {
+                    suggestedId = WallTypePicker.TryGetTypeId(o);
+                    if (suggestedId.HasValue) break;
+                }
+            }
 
-            return new JObject
+            var shaped = new JObject
             {
                 ["ok"] = true,
                 ["summary"] = $"Типов: {types.Count}, показано {slim.Count}",
                 ["count"] = types.Count,
                 ["shown"] = slim.Count,
-                ["suggestedWallTypeId"] = suggested,
                 ["items"] = slim,
                 ["types"] = slim,
                 ["truncated"] = new JObject
                 {
                     ["shown"] = slim.Count,
                     ["total"] = types.Count,
-                    ["hint"] = "Сузь categoryName / familyNameFilter."
+                    ["hint"] = "Сузь categoryName / familyNameFilter. Не бери Витраж/Curtain для обычных стен."
                 },
-                ["nextStep"] = "Для стен используй suggestedWallTypeId или typeId из types[] где category/family содержит Wall. " +
-                               "Передай typeId числом в create_line_based_element."
+                ["nextStep"] = "Для стен используй suggestedWallTypeId (Базовая стена / перегородка), " +
+                               "не Витраж. Передай typeId числом в create_line_based_element."
             };
+            if (suggestedId.HasValue)
+                shaped["suggestedWallTypeId"] = suggestedId.Value;
+            return shaped;
         }
 
         private static JObject ShapeGeneric(string toolName, JToken result)
@@ -746,21 +754,6 @@ namespace revit_mcp_plugin.Core.Assistant
                     return label + ": " + message;
             }
             return label;
-        }
-
-        private static bool IsLikelyWallType(JObject o)
-        {
-            if (o == null) return false;
-            var blob = string.Join(" ",
-                o["category"]?.ToString() ?? "",
-                o["Category"]?.ToString() ?? "",
-                o["familyName"]?.ToString() ?? "",
-                o["FamilyName"]?.ToString() ?? "",
-                o["name"]?.ToString() ?? "",
-                o["Name"]?.ToString() ?? "");
-            return blob.IndexOf("Wall", StringComparison.OrdinalIgnoreCase) >= 0
-                || blob.IndexOf("OST_Walls", StringComparison.OrdinalIgnoreCase) >= 0
-                || blob.IndexOf("Стен", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static bool IsKeyStatsCategory(string categoryName)

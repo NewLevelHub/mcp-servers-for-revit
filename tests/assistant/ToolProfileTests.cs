@@ -33,7 +33,7 @@ public class ToolProfileTests
     {
         var all = ToolCatalog.GetOpenAiTools();
         Assert.True(all.Count > ToolCatalog.MaxToolsPerRequest);
-        Assert.Equal(70, all.Count);
+        Assert.Equal(71, all.Count);
     }
 
     [Fact]
