@@ -4,5 +4,6 @@
   "userText": "Проставь размеры помещений внутри комнат",
   "expectTools": ["dimension_room_walls"],
   "forbidTools": ["dimension_grids", "run_norm_audit"],
+  "requireArgs": { "dimension_room_walls": ["placement"] },
   "maxRounds": 5
 }

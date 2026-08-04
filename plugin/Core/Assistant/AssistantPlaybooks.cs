@@ -89,9 +89,15 @@ namespace revit_mcp_plugin.Core.Assistant
             "create_grid autoFromWalls — только если стены уже есть; марка оси 5 мм; bubbleEnd=bottomLeft. " +
             "Дефолт tool ищет несущие ≥400 мм — для перегородок 100–140 мм ставь wallFilter=all и minWallThicknessMm=100. " +
             "Пустой результат ≠ «стен нет»: снизь порог, не предлагай строить стены заново.\n" +
-            "dimension_grids — от габарита здания, не от линии оси. dimension_room_walls placement=interior по умолчанию.\n" +
+            "dimension_grids — от габарита здания, не от линии оси.\n" +
+            "«Размеры помещений/комнат» → dimension_room_walls placement=interior (дефолт). " +
+            "exterior — только по явному запросу («снаружи», «по осям», «фасадные»). " +
+            "Плотное ядро (лифт, коридоры, санузлы): выборочно крупные комнаты или offsetMm↑ — не пачкой на все.\n" +
+            "Verify: после ≥3 dimension_room_walls → get_current_view_elements OST_Dimensions; " +
+            "при наложении — Delete лишних + переставить с большим offsetMm.\n" +
             "tag_rooms / tag_walls — тип марки из проекта (с площадью для комнат). color_splash — цветовая схема вида.\n" +
             "Пример: «Размеры внутри комнат» → export_room_data или get_current_view_info → dimension_room_walls placement=interior.\n" +
+            "Пример: «Размеры без налезания» → interior выборочно → get_current_view_elements OST_Dimensions → offsetMm↑ при overlap.\n" +
             "Пример: «Марки с площадью» → tag_rooms (не color_splash).";
 
         public const string Schedules =

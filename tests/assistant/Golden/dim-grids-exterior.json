@@ -1,0 +1,8 @@
+{
+  "id": "dim-grids-exterior",
+  "group": "annotate",
+  "userText": "Проставь внешние осевые размеры по габариту здания",
+  "expectTools": ["dimension_grids"],
+  "forbidTools": ["run_norm_audit"],
+  "maxRounds": 5
+}

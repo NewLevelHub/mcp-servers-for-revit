@@ -103,6 +103,7 @@ MCP **не создаёт** новый проект. Сообщи пользов
 | Ограждение | **`create_railing`** — `typeId` (RailingType), path (`pathPoints`+`levelId`) **или** host (`hostElementId` лестницы). Высота из типа ADSK `h NNNN` / нормы |
 | Проём в перекрытии / шахта | **`create_floor_opening`** — `mode=floor` (вырез в плите: `hostFloorId` или `levelId`) или `mode=shaft` (`baseLevelId`+`topLevelId`); контур `rect` или `boundaryPoints` (мм). Для лестницы: сначала проём/шахта, потом `create_stair` в тот же контур. Нет host/уровней → явный fail |
 | Осевые размеры (внешние цепочки) | **`dimension_grids`** — отступ от габарита всего здания (не от линии оси); межосевой + габаритный ярус; цифры снизу, буквы слева |
+| **Размеры помещений (комнаты)** | **`dimension_room_walls`** `placement: "interior"` по умолчанию. Фразы «размеры комнат / помещений» → interior. `exterior` — только по явному запросу («снаружи», «по осям», «фасадные»). Плотное ядро — выборочно / `offsetMm`↑, не пачкой. **После ≥3 комнат:** `get_current_view_elements` `annotationCategoryList: ["OST_Dimensions"]` → при overlap Delete + redo с большим offset |
 | Разделители помещений (гибрид) | `analyze_room_boundaries` → агент выбирает линии/имена → `create_room_separators` (разделители + помещения + марки). Не `send_code_to_revit`. |
 | Удаление / видимость | `delete_element`, `operate_element` |
 | Маркировка | `tag_all_rooms`, `tag_all_walls` |

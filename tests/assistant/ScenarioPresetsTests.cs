@@ -8,12 +8,13 @@ public class ScenarioPresetsTests
     private static readonly string[] ExpectedIds =
     {
         "axes_dims",
+        "floor_dims_no_overlap",
         "rooms_tags",
         "norm_audit",
     };
 
     [Fact]
-    public void Pilot_ContainsOnlyThreeChips()
+    public void Pilot_ContainsExpectedChips()
     {
         var ids = ScenarioPresets.Pilot.Select(p => p.Id).ToList();
         Assert.Equal(ExpectedIds, ids);

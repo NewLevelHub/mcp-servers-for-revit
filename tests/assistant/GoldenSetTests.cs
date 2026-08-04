@@ -245,6 +245,17 @@ internal static class ScriptedChains
                 ("export_room_data", null),
                 ("dimension_room_walls", new { roomId = 501, placement = "interior" }),
             ]),
+            "dim-grids-exterior" => ScriptedChatClient.FromToolChain([
+                ("get_current_view_info", null),
+                ("dimension_grids", null),
+            ]),
+            "dim-no-overlap" => ScriptedChatClient.FromToolChain([
+                ("export_room_data", null),
+                ("dimension_room_walls", new { roomId = 501, placement = "interior" }),
+                ("dimension_room_walls", new { roomId = 502, placement = "interior" }),
+                ("dimension_room_walls", new { roomId = 503, placement = "interior" }),
+                ("get_current_view_elements", new { annotationCategoryList = new[] { "OST_Dimensions" } }),
+            ]),
             "tag-not-paint" => ScriptedChatClient.FromToolChain([("tag_rooms", null)]),
             "tep-table" => ScriptedChatClient.FromToolChain([
                 ("render_tep_table", new { sheetName = "ТЭП", createSheetIfMissing = true }),

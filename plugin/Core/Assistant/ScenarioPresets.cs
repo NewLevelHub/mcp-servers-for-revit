@@ -49,7 +49,26 @@ namespace revit_mcp_plugin.Core.Assistant
                     "Кратко отчитай, что сделано.",
                 AgentInstruction =
                     "create_grid autoFromWalls если осей нет; dimension_grids для внешних цепочек. " +
-                    "dimension_room_walls placement=interior — выборочно, не на все комнаты подряд на плотном плане."
+                    "dimension_room_walls placement=interior — выборочно, не на все комнаты подряд на плотном плане. " +
+                    "После внутренних размеров: get_current_view_elements OST_Dimensions — при наложении offsetMm↑ или Delete + redo."
+            },
+            new ScenarioPreset
+            {
+                Id = "floor_dims_no_overlap",
+                Label = "Размеры этажа (без налезания)",
+                Icon = "↔",
+                Profiles = new[] { ToolCatalog.Profiles.Annotation },
+                Hint = "2–3 крупные комнаты внутри + внешние осевые; проверка, что цепочки не налезают.",
+                Prompt =
+                    "На активном плане этажа: проставь внутренние размеры (ширина × глубина) у 2–3 крупных помещений " +
+                    "и внешние осевые размеры от габарита здания. " +
+                    "Проверь, что размерные цепочки не налезают друг на друга; если налезают — увеличь отступ или убери лишние. " +
+                    "Кратко отчитай, что сделано.",
+                AgentInstruction =
+                    "dimension_room_walls placement=interior — выборочно крупные комнаты (не пачкой на плотное ядро). " +
+                    "После ≥3 комнат или по запросу «без налезания»: get_current_view_elements OST_Dimensions; " +
+                    "при overlap — operate_element Delete лишних + redo с большим offsetMm. " +
+                    "Затем dimension_grids от габарита здания."
             },
             new ScenarioPreset
             {
