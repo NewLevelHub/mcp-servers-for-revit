@@ -3,7 +3,7 @@
   "group": "annotate",
   "userText": "Проставь размеры помещений внутри комнат",
   "expectTools": ["dimension_room_walls"],
-  "forbidTools": ["dimension_grids", "run_norm_audit"],
+  "forbidTools": ["dimension_grids", "run_norm_audit", "create_dimensions"],
   "requireArgs": { "dimension_room_walls": ["placement"] },
   "maxRounds": 5
 }

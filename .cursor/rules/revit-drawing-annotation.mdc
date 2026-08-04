@@ -62,10 +62,15 @@ alwaysApply: true
 - **Плотное ядро** (лифт, коридоры, санузлы): не ставить «пачкой на все комнаты» —
   выборочно крупные помещения или сразу больший `offsetMm`.
 - **Verify (обязательно после ≥3 `dimension_room_walls`)**:
-  1. `get_current_view_elements` с `annotationCategoryList: ["OST_Dimensions"]`
-  2. Если цепочки налезают / слишком плотно — `operate_element` Delete лишних
-     и переставить с большим `offsetMm` (или оставить только крупные комнаты)
-  3. В ответе кратко: сколько цепочек, были ли overlap и что исправлено
+  1. Сверить ids из ответа tool: `get_elements_parameters` по созданным id
+     (подтвердить тип ADSK, значения мм, рабочий набор = активный вид).
+  2. `get_current_view_elements` `annotationCategoryList: ["OST_Dimensions"]`
+     — общий count; если новых id нет в списке, не молчать: Select ids /
+     повторный read. Не подменять verify одним `get_element_parameters` без ids.
+  3. Если цепочки налезают / слишком плотно — `operate_element` Delete лишних
+     и переставить с большим `offsetMm` (или оставить только крупные комнаты).
+  4. В ответе: сколько цепочек создано (ids), TotalCount на виде, были ли overlap
+     и что исправлено. Не писать «без налезания», если overlap не смотрели.
 
 ## Осевые размеры (внешние цепочки по осям) — эталон, 2026-07-17
 

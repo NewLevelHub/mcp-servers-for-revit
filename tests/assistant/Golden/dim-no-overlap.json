@@ -5,6 +5,6 @@
   "expectTools": ["dimension_room_walls", "get_current_view_elements"],
   "expectToolsOrdered": true,
   "requireArgs": { "dimension_room_walls": ["placement"] },
-  "forbidTools": ["run_norm_audit"],
+  "forbidTools": ["run_norm_audit", "dimension_grids"],
   "maxRounds": 8
 }

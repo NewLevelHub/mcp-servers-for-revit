@@ -87,6 +87,11 @@ public class DimensionRoomWallsEventHandler : IExternalEventHandler, IWaitableEx
                 transaction.Commit();
             }
 
+            // Make new view-owned dimensions visible to FilteredElementCollector(doc, viewId)
+            // immediately — otherwise get_current_view_elements OST_Dimensions can miss them
+            // until a later regen (breaks Cursor verify after ≥3 rooms).
+            doc.Regenerate();
+
             if (createdDimensionIds.Count == 0)
                 throw new InvalidOperationException("No room wall dimensions could be created.");
 
