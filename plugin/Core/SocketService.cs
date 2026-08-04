@@ -23,10 +23,14 @@ namespace revit_mcp_plugin.Core
         private Thread _listenerThread;
         private bool _isRunning;
         private int _port = 8080;
+        private int _activeClients;
+        private bool _hadClient;
         private UIApplication _uiApp;
         private ICommandRegistry _commandRegistry;
         private Logger _logger;
         private CommandExecutor _commandExecutor;
+
+        public const string PingMethod = "ping";
         public static SocketService Instance
         {
             get
@@ -131,6 +135,8 @@ namespace revit_mcp_plugin.Core
             try
             {
                 _isRunning = true;
+                _activeClients = 0;
+                _hadClient = false;
                 _listener = new TcpListener(IPAddress.Any, _port);
                 _listener.Start();
 
@@ -139,12 +145,12 @@ namespace revit_mcp_plugin.Core
                     IsBackground = true
                 };
                 _listenerThread.Start();
-                RibbonStatusManager.UpdateStatus(_isRunning);
+                RefreshRibbonStatus();
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 _isRunning = false;
-                RibbonStatusManager.UpdateStatus(_isRunning);
+                RibbonStatusManager.UpdateStatus(McpLinkStatus.Offline, ex.Message);
             }
         }
 
@@ -155,6 +161,8 @@ namespace revit_mcp_plugin.Core
             try
             {
                 _isRunning = false;
+                _activeClients = 0;
+                _hadClient = false;
 
                 _listener?.Stop();
                 _listener = null;
@@ -164,12 +172,33 @@ namespace revit_mcp_plugin.Core
                     _listenerThread.Join(1000);
                 }
 
-                RibbonStatusManager.UpdateStatus(_isRunning);
+                RibbonStatusManager.UpdateStatus(McpLinkStatus.Offline);
             }
             catch (Exception)
             {
                 // log error
             }
+        }
+
+        private void RefreshRibbonStatus(string lastError = null)
+        {
+            if (!_isRunning)
+            {
+                RibbonStatusManager.UpdateStatus(McpLinkStatus.Offline, lastError);
+                return;
+            }
+
+            if (_activeClients > 0)
+            {
+                RibbonStatusManager.UpdateStatus(McpLinkStatus.Connected);
+                return;
+            }
+
+            // After Cursor drops the socket, show Reconnecting while the listener stays up.
+            // Fresh Open Server (no client yet) stays Connected so the ribbon matches legacy UX.
+            RibbonStatusManager.UpdateStatus(
+                _hadClient ? McpLinkStatus.Reconnecting : McpLinkStatus.Connected,
+                lastError);
         }
 
         private void ListenForClients()
@@ -203,6 +232,11 @@ namespace revit_mcp_plugin.Core
             NetworkStream stream = tcpClient.GetStream();
             var readBuffer = new List<byte>();
             var chunk = new byte[8192];
+
+            Interlocked.Increment(ref _activeClients);
+            _hadClient = true;
+            RefreshRibbonStatus();
+            _logger.Info("MCP client connected (active={0})", _activeClients);
 
             try
             {
@@ -243,6 +277,11 @@ namespace revit_mcp_plugin.Core
             finally
             {
                 tcpClient.Close();
+                var remaining = Interlocked.Decrement(ref _activeClients);
+                if (remaining < 0)
+                    Interlocked.Exchange(ref _activeClients, 0);
+                RefreshRibbonStatus("Cursor disconnected");
+                _logger.Info("MCP client disconnected (active={0})", Math.Max(0, remaining));
             }
         }
 
@@ -301,6 +340,15 @@ namespace revit_mcp_plugin.Core
                 }
 
                 commandName = request.Method;
+
+                // Heartbeat: answer on the socket thread without ExternalEvent / command registry.
+                if (string.Equals(commandName, PingMethod, StringComparison.OrdinalIgnoreCase))
+                {
+                    string pingResponse = CreatePingResponse(request.Id);
+                    // Do not write ping to command-metrics (noise every ~10s).
+                    return pingResponse;
+                }
+
                 string responseJson = _commandExecutor.ExecuteCommand(request);
                 bool success = IsSuccessResponse(responseJson);
                 string errorDetails = success ? null : ExtractErrorDetails(responseJson);
@@ -437,6 +485,20 @@ namespace revit_mcp_plugin.Core
                 }
             };
 
+            return response.ToJson();
+        }
+
+        private static string CreatePingResponse(string id)
+        {
+            var response = new JsonRPCSuccessResponse
+            {
+                Id = id,
+                Result = new JObject
+                {
+                    ["ok"] = true,
+                    ["ts"] = DateTime.UtcNow.ToString("o")
+                }
+            };
             return response.ToJson();
         }
     }

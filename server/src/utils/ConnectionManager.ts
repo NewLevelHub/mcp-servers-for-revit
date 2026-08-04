@@ -7,7 +7,10 @@ import {
   modelStatisticsCache,
   shouldInvalidateCacheForCommand,
 } from "./ModelCache.js";
-import { RevitClientConnection } from "./SocketClient.js";
+import {
+  ReconnectEvent,
+  RevitClientConnection,
+} from "./SocketClient.js";
 
 // Mutex to serialize all Revit commands - prevents race conditions
 // when multiple requests are made in parallel
@@ -30,6 +33,8 @@ interface CommandMetrics {
   error?: string;
 }
 
+type ConnectionLogEvent = CommandMetrics | ReconnectEvent;
+
 function ensureLogDir(): void {
   if (!fs.existsSync(LOG_DIR)) {
     fs.mkdirSync(LOG_DIR, { recursive: true });
@@ -46,8 +51,8 @@ export function getCommandMetricsLogPath(): string {
   return getMetricsLogPath();
 }
 
-function logCommandMetrics(metrics: CommandMetrics): void {
-  const line = JSON.stringify(metrics);
+function appendConnectionLog(entry: ConnectionLogEvent): void {
+  const line = JSON.stringify(entry);
   // Keep stderr sync for live diagnostics; file I/O is async so it stays off the hot path.
   console.error(`[METRICS] ${line}`);
 
@@ -55,18 +60,31 @@ function logCommandMetrics(metrics: CommandMetrics): void {
     ensureLogDir();
     fs.appendFile(getMetricsLogPath(), line + "\n", "utf8", (error) => {
       if (error) {
-        console.error("Failed to write command metrics log:", error);
+        console.error("Failed to write connection metrics log:", error);
       }
     });
   } catch (error) {
-    console.error("Failed to write command metrics log:", error);
+    console.error("Failed to write connection metrics log:", error);
   }
+}
+
+function logCommandMetrics(metrics: CommandMetrics): void {
+  appendConnectionLog(metrics);
+}
+
+function logReconnectEvent(event: ReconnectEvent): void {
+  appendConnectionLog(event);
 }
 
 function wrapSendCommand(client: RevitClientConnection): void {
   const originalSendCommand = client.sendCommand.bind(client);
 
   client.sendCommand = async (command: string, params: any = {}) => {
+    // Heartbeat pings are internal — do not spam the command metrics log.
+    if (command === "ping") {
+      return originalSendCommand(command, params);
+    }
+
     const start = Date.now();
     let responseSize = 0;
 
@@ -121,6 +139,7 @@ function getSharedClient(): RevitClientConnection {
   if (!sharedClient) {
     sharedClient = new RevitClientConnection(REVIT_HOST, REVIT_PORT);
     sharedClient.onDisconnect(() => invalidateModelStatisticsCache());
+    sharedClient.onReconnect((event) => logReconnectEvent(event));
     wrapSendCommand(sharedClient);
   }
   return sharedClient;

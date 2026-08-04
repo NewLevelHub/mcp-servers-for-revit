@@ -41,7 +41,7 @@ namespace revit_mcp_plugin.Core
 
             TextBoxData statusIndicatorData = new TextBoxData("ID_MCP_STATUS_INDICATOR");
             statusIndicatorData.Name = RibbonStatusManager.StatusTextBoxName;
-            statusIndicatorData.ToolTip = "MCP server connection status";
+            statusIndicatorData.ToolTip = "MCP: Connected / Reconnecting / Offline";
             TextBox statusIndicator = mcpPanel.AddItem(statusIndicatorData) as TextBox;
             if (statusIndicator != null)
             {
