@@ -43,6 +43,8 @@
     <Compile Include="..\..\plugin\Core\Assistant\ConversationHistory.cs" Link="ConversationHistory.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\SessionCreationJournal.cs" Link="SessionCreationJournal.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\ModelRouter.cs" Link="ModelRouter.cs" />
+    <Compile Include="..\..\plugin\Core\Assistant\SseChatAssembler.cs" Link="SseChatAssembler.cs" />
+    <Compile Include="..\..\plugin\Core\Assistant\ToolStepEvent.cs" Link="ToolStepEvent.cs" />
     <Compile Include="..\..\plugin\Configuration\ServiceSettings.cs" Link="ServiceSettings.cs" />
   </ItemGroup>
   <ItemGroup>

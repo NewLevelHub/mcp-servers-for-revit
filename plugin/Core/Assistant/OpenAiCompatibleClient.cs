@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
@@ -9,7 +10,7 @@ using Newtonsoft.Json.Linq;
 
 namespace revit_mcp_plugin.Core.Assistant
 {
-    public sealed class OpenAiCompatibleClient : IChatCompletionsClient
+    public sealed class OpenAiCompatibleClient : IStreamingChatCompletionsClient
     {
         private static readonly HttpClient Http = new HttpClient
         {
@@ -44,37 +45,31 @@ namespace revit_mcp_plugin.Core.Assistant
         /// <summary>Model id sent on each chat.completions request (REV-124).</summary>
         public string Model => _model;
 
-        public async Task<JObject> ChatCompletionsAsync(
+        public Task<JObject> ChatCompletionsAsync(
             JArray messages,
             JArray tools,
             CancellationToken cancellationToken)
         {
-            var body = new JObject
-            {
-                ["model"] = _model,
-                ["messages"] = messages,
-                // Tool-calling: low temperature; overridable via ServiceSettings.AssistantTemperature (REV-121).
-                ["temperature"] = _temperature
-            };
-            if (tools != null && tools.Count > 0)
-            {
-                body["tools"] = tools;
-                body["tool_choice"] = "auto";
-                // One tool call per round so fail-fast on walls/doors works as the prompt promises (REV-121).
-                body["parallel_tool_calls"] = false;
-            }
+            return SendChatAsync(messages, tools, stream: false, onContentDelta: null, cancellationToken);
+        }
 
-            if (_maxTokens.HasValue)
-            {
-                // OpenAI chat.completions accepts max_tokens; some newer models prefer max_completion_tokens.
-                body["max_tokens"] = _maxTokens.Value;
-            }
+        public Task<JObject> ChatCompletionsStreamingAsync(
+            JArray messages,
+            JArray tools,
+            Action<string> onContentDelta,
+            CancellationToken cancellationToken)
+        {
+            return SendChatAsync(messages, tools, stream: true, onContentDelta, cancellationToken);
+        }
 
-            var request = new HttpRequestMessage(HttpMethod.Post, _baseUrl + "/chat/completions")
-            {
-                Content = new StringContent(body.ToString(Formatting.None), Encoding.UTF8, "application/json")
-            };
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+        private async Task<JObject> SendChatAsync(
+            JArray messages,
+            JArray tools,
+            bool stream,
+            Action<string> onContentDelta,
+            CancellationToken cancellationToken)
+        {
+            var body = BuildBody(messages, tools, stream);
 
             const int maxAttempts = 4;
             try
@@ -82,32 +77,34 @@ namespace revit_mcp_plugin.Core.Assistant
                 for (var attempt = 1; attempt <= maxAttempts; attempt++)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    using (var response = await Http.SendAsync(request, cancellationToken).ConfigureAwait(false))
+                    using (var request = BuildRequest(body))
+                    using (var response = await Http.SendAsync(
+                               request,
+                               stream
+                                   ? HttpCompletionOption.ResponseHeadersRead
+                                   : HttpCompletionOption.ResponseContentRead,
+                               cancellationToken).ConfigureAwait(false))
                     {
-                        var text = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
                         if (response.IsSuccessStatusCode)
                         {
-                            // Full API body is returned so callers can read usage.prompt_tokens /
-                            // usage.completion_tokens for dialog logs (REV-121).
+                            if (stream)
+                                return await ReadSseAsync(response, onContentDelta, cancellationToken)
+                                    .ConfigureAwait(false);
+
+                            var text = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
                             return JObject.Parse(text);
                         }
 
+                        var errBody = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
                         var status = (int)response.StatusCode;
                         if (status == 429 && attempt < maxAttempts)
                         {
                             var delayMs = ResolveRetryDelayMs(response, attempt);
                             await Task.Delay(delayMs, cancellationToken).ConfigureAwait(false);
-                            // HttpContent can only be read once — rebuild request for retry
-                            request.Dispose();
-                            request = new HttpRequestMessage(HttpMethod.Post, _baseUrl + "/chat/completions")
-                            {
-                                Content = new StringContent(body.ToString(Formatting.None), Encoding.UTF8, "application/json")
-                            };
-                            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
                             continue;
                         }
 
-                        throw new InvalidOperationException(HumanizeHttpError(status, text));
+                        throw new InvalidOperationException(HumanizeHttpError(status, errBody));
                     }
                 }
 
@@ -123,6 +120,83 @@ namespace revit_mcp_plugin.Core.Assistant
                 throw new InvalidOperationException(
                     "ИИ не ответил вовремя (таймаут). Упростите запрос или уберите тяжёлые вложения.");
             }
+        }
+
+        private JObject BuildBody(JArray messages, JArray tools, bool stream)
+        {
+            var body = new JObject
+            {
+                ["model"] = _model,
+                ["messages"] = messages,
+                // Tool-calling: low temperature; overridable via ServiceSettings.AssistantTemperature (REV-121).
+                ["temperature"] = _temperature
+            };
+            if (stream)
+                body["stream"] = true;
+
+            if (tools != null && tools.Count > 0)
+            {
+                body["tools"] = tools;
+                body["tool_choice"] = "auto";
+                // One tool call per round so fail-fast on walls/doors works as the prompt promises (REV-121).
+                body["parallel_tool_calls"] = false;
+            }
+
+            if (_maxTokens.HasValue)
+            {
+                // OpenAI chat.completions accepts max_tokens; some newer models prefer max_completion_tokens.
+                body["max_tokens"] = _maxTokens.Value;
+            }
+
+            return body;
+        }
+
+        private HttpRequestMessage BuildRequest(JObject body)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, _baseUrl + "/chat/completions")
+            {
+                Content = new StringContent(body.ToString(Formatting.None), Encoding.UTF8, "application/json")
+            };
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+            return request;
+        }
+
+        private static async Task<JObject> ReadSseAsync(
+            HttpResponseMessage response,
+            Action<string> onContentDelta,
+            CancellationToken cancellationToken)
+        {
+            var assembler = new SseChatAssembler();
+            using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
+            using (var reader = new StreamReader(stream, Encoding.UTF8))
+            {
+                while (!reader.EndOfStream)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var line = await reader.ReadLineAsync().ConfigureAwait(false);
+                    if (line == null)
+                        break;
+                    if (line.Length == 0)
+                        continue;
+                    if (!line.StartsWith("data:", StringComparison.Ordinal))
+                        continue;
+
+                    var payload = line.Substring(5).TrimStart();
+                    if (payload == "[DONE]")
+                        break;
+
+                    assembler.ApplyChunkJson(payload);
+                    // Only surface text deltas when we are not assembling tool_calls
+                    // (final answer round). Avoid flashing partial "thinking" into the chat.
+                    if (!assembler.HasToolCalls && onContentDelta != null)
+                    {
+                        try { onContentDelta(assembler.ContentSoFar); }
+                        catch { /* UI may be disposed */ }
+                    }
+                }
+            }
+
+            return assembler.ToCompletion();
         }
 
         /// <summary>Extract token usage from a chat.completions response body.</summary>
