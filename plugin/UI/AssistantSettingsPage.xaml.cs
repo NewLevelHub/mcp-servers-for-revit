@@ -29,6 +29,7 @@ namespace revit_mcp_plugin.UI
             ModelBox.Text = string.IsNullOrWhiteSpace(s.AssistantModel)
                 ? "gpt-4o-mini"
                 : s.AssistantModel;
+            SmartModelBox.Text = s.AssistantModelSmart ?? "";
             TemperatureBox.Text = s.AssistantTemperature.ToString("0.##", CultureInfo.InvariantCulture);
             MaxTokensBox.Text = s.AssistantMaxTokens.HasValue && s.AssistantMaxTokens.Value > 0
                 ? s.AssistantMaxTokens.Value.ToString(CultureInfo.InvariantCulture)
@@ -47,6 +48,7 @@ namespace revit_mcp_plugin.UI
             s.AssistantApiKey = ApiKeyBox.Password ?? "";
             s.AssistantApiBaseUrl = (BaseUrlBox.Text ?? "").Trim();
             s.AssistantModel = (ModelBox.Text ?? "").Trim();
+            s.AssistantModelSmart = (SmartModelBox.Text ?? "").Trim();
             s.AssistantTemperature = ParseTemperature(TemperatureBox.Text);
             s.AssistantMaxTokens = ParseMaxTokens(MaxTokensBox.Text);
             s.AssistantRequireConfirmations = RequireConfirmCheckBox.IsChecked == true;

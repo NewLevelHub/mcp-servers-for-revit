@@ -43,6 +43,7 @@ namespace revit_mcp_plugin.UI.Assistant
             _agent.HistoryTrimmed += OnHistoryTrimmed;
             _agent.HistoryBudgetChanged += OnHistoryBudgetChanged;
             _agent.PlanChanged += OnPlanChanged;
+            _agent.ModelEscalated += OnModelEscalated;
             BuildChips();
             ShowWelcomeMessage();
             SetStatus("Готов", StatusTone.Ok);
@@ -733,7 +734,7 @@ namespace revit_mcp_plugin.UI.Assistant
                     reply = sb.ToString();
                 }
 
-                AddBotMessage(reply, turnId);
+                AddBotMessage(reply, turnId, FormatModelMeta(result));
             }
             catch (OperationCanceledException)
             {
@@ -751,6 +752,35 @@ namespace revit_mcp_plugin.UI.Assistant
                 _activeAskBubble = null;
                 RefreshContextAndBanner();
             }
+        }
+
+        private void OnModelEscalated(string notice)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.BeginInvoke(new Action(() => OnModelEscalated(notice)));
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(notice))
+                return;
+            AddBotMessage(notice.Trim());
+            SetStatus("Сильная модель…", StatusTone.Busy);
+        }
+
+        private static string FormatModelMeta(AgentTurnResult result)
+        {
+            if (result == null || string.IsNullOrWhiteSpace(result.Model))
+                return null;
+
+            var total = result.PromptTokens + result.CompletionTokens;
+            var tokens = total > 0
+                ? $"{result.PromptTokens}+{result.CompletionTokens} tok"
+                : null;
+            var escalate = result.EscalatedToSmart ? " · escalate" : "";
+            return tokens != null
+                ? $"{result.Model} · {tokens}{escalate}"
+                : $"{result.Model}{escalate}";
         }
 
         private Task<bool> OnConfirmationRequested(PendingToolConfirmation pending)
@@ -891,9 +921,9 @@ namespace revit_mcp_plugin.UI.Assistant
             ScrollToEnd();
         }
 
-        private void AddBotMessage(string text, string turnId = null)
+        private void AddBotMessage(string text, string turnId = null, string metaFooter = null)
         {
-            var bubble = new ChatBubble(text, fromUser: false, turnId: turnId);
+            var bubble = new ChatBubble(text, fromUser: false, turnId: turnId, metaFooter: metaFooter);
             bubble.FeedbackSubmitted += OnBubbleFeedback;
             MessagesPanel.Children.Add(bubble);
             ScrollToEnd();

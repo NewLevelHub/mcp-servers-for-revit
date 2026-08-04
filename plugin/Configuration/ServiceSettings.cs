@@ -37,9 +37,18 @@ namespace revit_mcp_plugin.Configuration
         [JsonProperty("assistantApiBaseUrl")]
         public string AssistantApiBaseUrl { get; set; } = "https://api.openai.com/v1";
 
-        /// <summary>Model id for the in-Revit assistant.</summary>
+        /// <summary>
+        /// Fast / default model (REV-124). Used for data/core reads and when smart is empty.
+        /// </summary>
         [JsonProperty("assistantModel")]
         public string AssistantModel { get; set; } = "gpt-4o-mini";
+
+        /// <summary>
+        /// Stronger model for modeling / annotation / norms / schedules / sheets (REV-124).
+        /// Empty = always use <see cref="AssistantModel"/> (backward compatible).
+        /// </summary>
+        [JsonProperty("assistantModelSmart")]
+        public string AssistantModelSmart { get; set; } = "";
 
         /// <summary>
         /// Sampling temperature for chat.completions (REV-121). Default 0 for reliable tool-calling.

@@ -27,9 +27,11 @@ try {
     }
 
     Write-Host "Running assistant golden set (dry-run, no Revit)..."
-    dotnet test .\RevitMCPPlugin.Assistant.Tests.csproj -c Release --filter "FullyQualifiedName~GoldenSet"
+    # Golden cases + ModelRouter unit tests (REV-124).
+    dotnet test .\RevitMCPPlugin.Assistant.Tests.csproj -c Release --filter "FullyQualifiedName~GoldenSet|FullyQualifiedName~ModelRouter"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     Write-Host "OK - see Golden/baseline.json targets; live reports under Golden/reports/ when -Live."
+    Write-Host "REV-124: for smart vs fast live compare, re-run -Live with ASSISTANT_MODEL=gpt-4o (or ASSISTANT_MODEL_SMART)."
 }
 finally {
     Pop-Location

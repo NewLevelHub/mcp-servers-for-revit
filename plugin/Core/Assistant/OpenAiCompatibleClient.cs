@@ -41,6 +41,9 @@ namespace revit_mcp_plugin.Core.Assistant
             _maxTokens = maxTokens.HasValue && maxTokens.Value > 0 ? maxTokens : null;
         }
 
+        /// <summary>Model id sent on each chat.completions request (REV-124).</summary>
+        public string Model => _model;
+
         public async Task<JObject> ChatCompletionsAsync(
             JArray messages,
             JArray tools,

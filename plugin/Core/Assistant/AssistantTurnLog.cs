@@ -25,6 +25,8 @@ namespace revit_mcp_plugin.Core.Assistant
         public string PresetId;
         public List<string> ToolProfiles = new List<string>();
         public List<string> ProfileEscalations = new List<string>();
+        /// <summary>REV-124: reasons for fast→smart switches within the turn.</summary>
+        public List<string> ModelEscalations = new List<string>();
         public List<AttachmentMeta> Attachments = new List<AttachmentMeta>();
         public int Rounds;
         public List<ToolCallLog> ToolCalls = new List<ToolCallLog>();
@@ -95,6 +97,8 @@ namespace revit_mcp_plugin.Core.Assistant
                     jo["toolProfiles"] = new JArray(entry.ToolProfiles.ToArray());
                 if (entry.ProfileEscalations != null && entry.ProfileEscalations.Count > 0)
                     jo["profileEscalations"] = new JArray(entry.ProfileEscalations.ToArray());
+                if (entry.ModelEscalations != null && entry.ModelEscalations.Count > 0)
+                    jo["modelEscalations"] = new JArray(entry.ModelEscalations.ToArray());
 
                 if (entry.Attachments != null && entry.Attachments.Count > 0)
                 {
