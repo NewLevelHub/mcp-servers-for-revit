@@ -36,7 +36,8 @@ namespace revit_mcp_plugin.Core.Assistant
         public static string BuildSystemPrompt(IReadOnlyList<string> profiles, string userText = null) =>
             AssistantSystemPrompt.Build(profiles, userText);
 
-        private readonly List<JObject> _history = new List<JObject>();
+        private readonly ConversationHistory _history = new ConversationHistory();
+        private readonly SessionCreationJournal _journal = new SessionCreationJournal();
         private readonly object _historyLock = new object();
         private readonly IAssistantToolExecutor _toolExecutor;
         private string _sessionId = Guid.NewGuid().ToString("N").Substring(0, 12);
@@ -56,13 +57,12 @@ namespace revit_mcp_plugin.Core.Assistant
         }
 
         /// <summary>
-        /// Keep this many previous user turns (+ the current one is never trimmed).
-        /// One scenario creates many assistant/tool messages — counting raw messages was too aggressive.
+        /// Default previous user turns (+ the current one is never trimmed). Overridable via settings.
         /// </summary>
-        public const int MaxPreviousUserTurns = 4;
+        public const int MaxPreviousUserTurns = ConversationHistory.DefaultMaxPreviousUserTurns;
 
         /// <summary>Rough character budget for all non-system content sent to the model.</summary>
-        public const int MaxHistoryChars = 120000;
+        public const int MaxHistoryChars = ConversationHistory.DefaultMaxHistoryChars;
 
         /// <summary>Cap each tool result stored in history (full payloads blow the budget in one round).</summary>
         public const int MaxToolResultChars = 4000;
@@ -76,27 +76,26 @@ namespace revit_mcp_plugin.Core.Assistant
         public event Func<PendingAskUser, Task<AskUserAnswer>> AskUserRequested;
         /// <summary>Raised when older messages were dropped to keep context within limits.</summary>
         public event Action HistoryTrimmed;
+        /// <summary>REV-126: history fill changed (turns / chars) — update context meter.</summary>
+        public event Action<HistoryBudget> HistoryBudgetChanged;
         /// <summary>REV-120: plan checklist declared or a step status changed.</summary>
         public event Action<AgentPlanSnapshot> PlanChanged;
 
-        public int HistoryMessageCount
-        {
-            get
-            {
-                lock (_historyLock)
-                {
-                    return _history.Count;
-                }
-            }
-        }
+        public int HistoryMessageCount => _history.Count;
+
+        public HistoryBudget GetHistoryBudget() => _history.GetBudget();
+
+        public SessionCreationJournal CreationJournal => _journal;
 
         public void ClearHistory()
         {
             lock (_historyLock)
             {
                 _history.Clear();
+                _journal.Clear();
             }
             _sessionId = Guid.NewGuid().ToString("N").Substring(0, 12);
+            RaiseBudgetChanged();
         }
 
         private static void ParseViewContext(string ctx, TurnLogEntry log)
@@ -104,16 +103,19 @@ namespace revit_mcp_plugin.Core.Assistant
             if (string.IsNullOrWhiteSpace(ctx)) return;
             try
             {
-                // Format: "Документ: X · Вид: Y (ViewType) · Уровень: Z"
-                foreach (var part in ctx.Split(new[] { " · " }, StringSplitOptions.RemoveEmptyEntries))
+                // Format: "Документ: X · Вид: Y (ViewType) · Уровень: Z" (+ optional Выделено / Единицы)
+                foreach (var part in ctx.Split(new[] { " · ", "\n" }, StringSplitOptions.RemoveEmptyEntries))
                 {
                     var colon = part.IndexOf(':');
                     if (colon < 0) continue;
                     var key = part.Substring(0, colon).Trim();
                     var val = part.Substring(colon + 1).Trim();
-                    if (key.StartsWith("Документ")) log.DocTitle = val;
-                    else if (key.StartsWith("Вид")) log.ViewName = val;
-                    else if (key.StartsWith("Уровень")) log.LevelName = val;
+                    if (key.StartsWith("Документ") || key.Contains("Документ"))
+                        log.DocTitle = val;
+                    else if (key.StartsWith("Вид") || key.Contains("Вид"))
+                        log.ViewName = val;
+                    else if (key.StartsWith("Уровень") || key.Contains("Уровень"))
+                        log.LevelName = val;
                 }
             }
             catch { /* best-effort */ }
@@ -127,245 +129,36 @@ namespace revit_mcp_plugin.Core.Assistant
         {
             lock (_historyLock)
             {
-                return TrimHistoryUnlocked();
+                var dropped = _history.TrimIfNeeded();
+                if (dropped)
+                    RaiseBudgetChangedUnlocked();
+                return dropped;
             }
         }
 
-        private bool TrimHistoryUnlocked()
+        private void ApplyHistoryLimitsFromSettings(ServiceSettings settings)
         {
-            if (_history.Count == 0)
-                return false;
-
-            EnsureSystemFirstUnlocked();
-            var droppedUserTurns = false;
-
-            while (NeedsTrimUnlocked())
-            {
-                // Prefer stripping base64 from older turns before dropping whole turns.
-                // Compaction alone does NOT mean the chat is "full" for the user.
-                if (CompactMultimodalUnlocked(keepLastUserIntact: true))
-                    continue;
-
-                // Drop the oldest complete turn (user … next user), never the latest user turn.
-                var userIndexes = new List<int>();
-                for (var i = 0; i < _history.Count; i++)
-                {
-                    if (IsRole(_history[i], "user"))
-                        userIndexes.Add(i);
-                }
-
-                // Need at least one older turn besides the current (last) user message.
-                if (userIndexes.Count <= 1)
-                {
-                    // Only current turn left — shrink oversized tool payloads instead of breaking structure.
-                    if (!CompactOldestToolPayloadUnlocked())
-                        break;
-                    continue;
-                }
-
-                var dropFrom = userIndexes[0];
-                var dropToExclusive = userIndexes[1];
-                var removeCount = dropToExclusive - dropFrom;
-                if (removeCount <= 0)
-                    break;
-
-                _history.RemoveRange(dropFrom, removeCount);
-                droppedUserTurns = true;
-            }
-
-            SanitizeToolPairsUnlocked();
-            EnsureSystemFirstUnlocked();
-            return droppedUserTurns;
+            var turns = settings?.AssistantMaxPreviousUserTurns ?? MaxPreviousUserTurns;
+            if (turns < 4) turns = 4;
+            if (turns > 20) turns = 20;
+            _history.MaxPreviousUserTurns = turns;
+            _history.MaxHistoryChars = MaxHistoryChars;
         }
 
-        private bool NeedsTrimUnlocked()
+        private void RaiseBudgetChanged()
         {
-            var userTurns = 0;
-            var chars = 0;
-            foreach (var m in _history)
-            {
-                if (IsRole(m, "user"))
-                    userTurns++;
-                chars += EstimateChars(m);
-            }
-
-            // userTurns includes the current request; allow that + MaxPreviousUserTurns older ones.
-            return userTurns > MaxPreviousUserTurns + 1 || chars > MaxHistoryChars;
+            HistoryBudget budget;
+            lock (_historyLock)
+                budget = _history.GetBudget();
+            try { HistoryBudgetChanged?.Invoke(budget); }
+            catch { /* UI may be disposed */ }
         }
 
-        private void EnsureSystemFirstUnlocked()
+        private void RaiseBudgetChangedUnlocked()
         {
-            var system = _history.Find(m => IsRole(m, "system"));
-            if (system == null)
-                return;
-
-            _history.RemoveAll(m => IsRole(m, "system"));
-            _history.Insert(0, system);
-        }
-
-        /// <summary>
-        /// OpenAI requires every tool message to follow an assistant message with matching tool_calls.
-        /// Drop orphans left by older buggy trims or partial failures.
-        /// </summary>
-        private void SanitizeToolPairsUnlocked()
-        {
-            var i = 0;
-            while (i < _history.Count)
-            {
-                var msg = _history[i];
-                if (!IsRole(msg, "tool"))
-                {
-                    i++;
-                    continue;
-                }
-
-                var prev = i - 1;
-                while (prev >= 0 && IsRole(_history[prev], "tool"))
-                    prev--;
-
-                var ok = false;
-                if (prev >= 0 && IsRole(_history[prev], "assistant"))
-                {
-                    var calls = _history[prev]["tool_calls"] as JArray;
-                    var callId = msg["tool_call_id"]?.ToString();
-                    if (calls != null && !string.IsNullOrEmpty(callId))
-                    {
-                        foreach (var c in calls)
-                        {
-                            if (string.Equals(c?["id"]?.ToString(), callId, StringComparison.Ordinal))
-                            {
-                                ok = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                if (!ok)
-                {
-                    _history.RemoveAt(i);
-                    continue;
-                }
-
-                i++;
-            }
-
-            // Incomplete crash/cancel recovery: assistant tool_calls missing any tool result.
-            // OpenAI rejects the next turn if even one call id has no matching tool message.
-            for (var idx = _history.Count - 1; idx >= 0; idx--)
-            {
-                var assistantMsg = _history[idx];
-                if (!IsRole(assistantMsg, "assistant"))
-                    continue;
-                var calls = assistantMsg["tool_calls"] as JArray;
-                if (calls == null || calls.Count == 0)
-                    continue;
-
-                var needed = new HashSet<string>(StringComparer.Ordinal);
-                foreach (var c in calls)
-                {
-                    var id = c?["id"]?.ToString();
-                    if (!string.IsNullOrEmpty(id))
-                        needed.Add(id);
-                }
-
-                if (needed.Count == 0)
-                {
-                    _history.RemoveAt(idx);
-                    continue;
-                }
-
-                var end = idx + 1;
-                while (end < _history.Count && IsRole(_history[end], "tool"))
-                {
-                    var callId = _history[end]["tool_call_id"]?.ToString();
-                    if (!string.IsNullOrEmpty(callId))
-                        needed.Remove(callId);
-                    end++;
-                }
-
-                if (needed.Count > 0)
-                {
-                    // Drop the incomplete assistant + its partial tool results.
-                    _history.RemoveRange(idx, end - idx);
-                }
-            }
-        }
-
-        private bool CompactOldestToolPayloadUnlocked()
-        {
-            for (var i = 0; i < _history.Count; i++)
-            {
-                if (!IsRole(_history[i], "tool"))
-                    continue;
-                var content = _history[i]["content"]?.ToString() ?? "";
-                if (content.Length <= 400)
-                    continue;
-                _history[i]["content"] = "{\"ok\":true,\"truncated\":true}";
-                return true;
-            }
-            return false;
-        }
-
-        private static bool IsRole(JObject message, string role)
-        {
-            return string.Equals(message?["role"]?.ToString(), role, StringComparison.OrdinalIgnoreCase);
-        }
-
-        private void EnsureSystemPromptUnlocked(string content)
-        {
-            if (_history.Count == 0)
-            {
-                _history.Add(new JObject
-                {
-                    ["role"] = "system",
-                    ["content"] = content ?? AssistantSystemPrompt.Core,
-                });
-                return;
-            }
-
-            if (IsRole(_history[0], "system"))
-                _history[0]["content"] = content ?? AssistantSystemPrompt.Core;
-            else
-            {
-                _history.Insert(0, new JObject
-                {
-                    ["role"] = "system",
-                    ["content"] = content ?? AssistantSystemPrompt.Core,
-                });
-            }
-        }
-
-        private static int EstimateChars(JObject message)
-        {
-            if (message == null) return 0;
-            var n = 0;
-            var content = message["content"];
-            if (content is JArray parts)
-            {
-                // Do NOT count raw base64 — one photo/PDF would fake "context full"
-                // and drop earlier chat turns. Attachments cost a fixed budget here.
-                foreach (var part in parts)
-                {
-                    var type = part?["type"]?.ToString() ?? "";
-                    if (string.Equals(type, "text", StringComparison.OrdinalIgnoreCase))
-                        n += part["text"]?.ToString()?.Length ?? 0;
-                    else if (string.Equals(type, "image_url", StringComparison.OrdinalIgnoreCase))
-                        n += 3000;
-                    else if (string.Equals(type, "file", StringComparison.OrdinalIgnoreCase))
-                        n += 8000;
-                    else
-                        n += 500;
-                }
-            }
-            else if (content != null)
-            {
-                n += content.ToString().Length;
-            }
-
-            var toolCalls = message["tool_calls"]?.ToString();
-            if (toolCalls != null) n += Math.Min(toolCalls.Length, 4000);
-            return n;
+            var budget = _history.GetBudget();
+            try { HistoryBudgetChanged?.Invoke(budget); }
+            catch { /* UI may be disposed */ }
         }
 
         /// <summary>
@@ -522,58 +315,31 @@ namespace revit_mcp_plugin.Core.Assistant
             return parts;
         }
 
-        /// <summary>
-        /// Drop base64 payloads from user turns so history stays within token/char budgets.
-        /// When <paramref name="keepLastUserIntact"/> is true, the latest user message is kept
-        /// (needed while the current API round still needs the images/PDF).
-        /// </summary>
-        private bool CompactMultimodalUnlocked(bool keepLastUserIntact)
+        /// <summary>Build user preamble with [КОНТЕКСТ] / [ЖУРНАЛ] / [Запрос] (REV-126).</summary>
+        internal string BuildUserPreamble(string userMessage, string viewContext)
         {
-            var lastUser = -1;
-            if (keepLastUserIntact)
+            var sb = new StringBuilder();
+            if (!string.IsNullOrWhiteSpace(viewContext))
             {
-                for (var i = _history.Count - 1; i >= 0; i--)
-                {
-                    if (IsRole(_history[i], "user"))
-                    {
-                        lastUser = i;
-                        break;
-                    }
-                }
+                var ctx = viewContext.Trim();
+                if (!ctx.StartsWith("[КОНТЕКСТ]", StringComparison.OrdinalIgnoreCase)
+                    && !ctx.StartsWith("[Контекст", StringComparison.OrdinalIgnoreCase))
+                    sb.AppendLine("[КОНТЕКСТ] " + ctx);
+                else
+                    sb.AppendLine(ctx);
+                sb.AppendLine();
             }
 
-            for (var i = 0; i < _history.Count; i++)
+            var journal = _journal.FormatForPrompt();
+            if (!string.IsNullOrWhiteSpace(journal))
             {
-                if (i == lastUser) continue;
-                if (!IsRole(_history[i], "user")) continue;
-                if (!(_history[i]["content"] is JArray parts)) continue;
-
-                var labels = new List<string>();
-                string textPart = null;
-                foreach (var part in parts)
-                {
-                    var type = part?["type"]?.ToString();
-                    if (string.Equals(type, "text", StringComparison.OrdinalIgnoreCase))
-                        textPart = part["text"]?.ToString() ?? "";
-                    else if (string.Equals(type, "image_url", StringComparison.OrdinalIgnoreCase))
-                        labels.Add("изображение");
-                    else if (string.Equals(type, "file", StringComparison.OrdinalIgnoreCase))
-                        labels.Add(part["file"]?["filename"]?.ToString() ?? "файл");
-                }
-
-                if (labels.Count == 0)
-                    continue;
-
-                var stub = textPart ?? "";
-                if (!string.IsNullOrWhiteSpace(stub))
-                    stub += "\n\n";
-                stub += "[Вложения предыдущего сообщения, данные убраны из памяти: " +
-                        string.Join(", ", labels) + "]";
-                _history[i]["content"] = stub;
-                return true;
+                sb.AppendLine(journal);
+                sb.AppendLine();
             }
 
-            return false;
+            sb.AppendLine("[Запрос]");
+            sb.Append(userMessage ?? "");
+            return sb.ToString().TrimEnd();
         }
 
         public async Task<AgentTurnResult> RunAsync(
@@ -622,6 +388,8 @@ namespace revit_mcp_plugin.Core.Assistant
                 };
             }
 
+            ApplyHistoryLimitsFromSettings(settings);
+
             var client = new OpenAiCompatibleClient(
                 settings.AssistantApiKey,
                 settings.AssistantApiBaseUrl,
@@ -643,14 +411,12 @@ namespace revit_mcp_plugin.Core.Assistant
 
             lock (_historyLock)
             {
-                EnsureSystemPromptUnlocked(systemPrompt);
+                _history.EnsureSystemPrompt(systemPrompt);
 
-                var text = userMessage ?? "";
-                if (!string.IsNullOrWhiteSpace(viewContext))
-                    text = "[Контекст вида]\n" + viewContext + "\n\n[Запрос]\n" + text;
+                var text = BuildUserPreamble(userMessage, viewContext);
 
                 // Strip base64 from ALL prior user turns before a new (possibly heavy) message.
-                while (CompactMultimodalUnlocked(keepLastUserIntact: false)) { /* keep going */ }
+                _history.CompactAllMultimodal(keepLastUserIntact: false);
 
                 _history.Add(new JObject
                 {
@@ -658,11 +424,13 @@ namespace revit_mcp_plugin.Core.Assistant
                     ["content"] = BuildUserContent(text, attachments)
                 });
 
-                if (TrimHistoryUnlocked())
+                if (_history.TrimIfNeeded())
                 {
                     try { HistoryTrimmed?.Invoke(); }
                     catch { /* UI may be disposed */ }
                 }
+
+                RaiseBudgetChangedUnlocked();
             }
 
             var maxRounds = RoundBudget.Resolve(activeProfiles, userMessage);
@@ -716,12 +484,13 @@ namespace revit_mcp_plugin.Core.Assistant
                     JArray messages;
                     lock (_historyLock)
                     {
-                        if (TrimHistoryUnlocked())
+                        if (_history.TrimIfNeeded())
                         {
                             try { HistoryTrimmed?.Invoke(); }
                             catch { /* ignore */ }
+                            RaiseBudgetChangedUnlocked();
                         }
-                        messages = new JArray(_history.ToArray());
+                        messages = _history.CloneForApi();
                     }
 
                     JObject completion;
@@ -1142,6 +911,8 @@ namespace revit_mcp_plugin.Core.Assistant
 
                         var (ok, summary, forModel) = ParseToolResponse(name, rawResult);
                         AppendToolResult(callId, forModel);
+                        if (ok)
+                            _journal.TryRecord(toolName, rawResult);
                         toolSw.Stop();
 
                         if (activePlan != null && activePlan.TryMarkTool(toolName, ok))
@@ -1287,8 +1058,9 @@ namespace revit_mcp_plugin.Core.Assistant
         {
             lock (_historyLock)
             {
-                while (CompactMultimodalUnlocked(keepLastUserIntact: false)) { /* strip all attachments now that the turn is done */ }
-                SanitizeToolPairsUnlocked();
+                _history.CompactAllMultimodal(keepLastUserIntact: false);
+                _history.SanitizeToolPairs();
+                RaiseBudgetChangedUnlocked();
             }
         }
 

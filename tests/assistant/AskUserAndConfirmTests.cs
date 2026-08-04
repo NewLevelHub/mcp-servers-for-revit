@@ -127,6 +127,23 @@ public class AskUserAndConfirmTests
     }
 
     [Fact]
+    public void Typology_cafe_requires_guest_wc_hall_and_facade_tambour()
+    {
+        var cafe = TypologyPrograms.MatchFromAnswer("Кафе");
+        Assert.NotNull(cafe);
+        Assert.Equal("cafe_40", cafe!.Id);
+
+        var hint = TypologyPrograms.BuildHintForAnswer("Кафе");
+        Assert.Contains("холл санузлов", hint, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ЗАПРЕЩЕНО", hint, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("тамбур", hint, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("фасад", hint, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("служебный", hint, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("М через зал", cafe.LayoutLogic, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("не из зала", hint, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Ask_user_is_in_core_tools_and_schema()
     {
         Assert.Contains(ToolCatalog.CoreTools, t => t.Equals("ask_user", StringComparison.OrdinalIgnoreCase));

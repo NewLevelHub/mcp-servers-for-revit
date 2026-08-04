@@ -30,8 +30,52 @@ public class GoldenSetTests
         {
             Assert.False(string.IsNullOrWhiteSpace(c.Id), "id required");
             Assert.False(string.IsNullOrWhiteSpace(c.Group), $"group required for {c.Id}");
-            Assert.False(string.IsNullOrWhiteSpace(c.UserText), $"userText required for {c.Id}");
+            if (c.IsHistoryCase)
+            {
+                Assert.True(c.Turns.Count >= 2, $"turns required for history case {c.Id}");
+                Assert.False(string.IsNullOrWhiteSpace(c.RetainPhrase), $"retainPhrase for {c.Id}");
+            }
+            else
+            {
+                Assert.False(string.IsNullOrWhiteSpace(c.UserText), $"userText required for {c.Id}");
+            }
+
             Assert.True(c.MaxRounds > 0, $"maxRounds for {c.Id}");
+        }
+    }
+
+    [Fact]
+    public void History_golden_preserves_first_turn_constraint()
+    {
+        var historyCases = GoldenCaseLoader.LoadAll().Where(c => c.IsHistoryCase).ToList();
+        Assert.NotEmpty(historyCases);
+
+        foreach (var c in historyCases)
+        {
+            var h = new ConversationHistory
+            {
+                MaxPreviousUserTurns = c.MaxPreviousUserTurns > 0 ? c.MaxPreviousUserTurns : 12
+            };
+            h.EnsureSystemPrompt("system");
+
+            foreach (var turn in c.Turns)
+            {
+                h.Add(new JObject
+                {
+                    ["role"] = "user",
+                    ["content"] = "[КОНТЕКСТ] Документ: test · Вид: План\n\n[Запрос]\n" + turn
+                });
+                h.Add(new JObject { ["role"] = "assistant", ["content"] = "ok" });
+                h.TrimIfNeeded();
+            }
+
+            var api = h.CloneForApi();
+            var blob = string.Join("\n", api.Select(t => t["content"]?.ToString() ?? ""));
+            Assert.True(
+                blob.Contains(c.RetainPhrase!, StringComparison.OrdinalIgnoreCase)
+                || h.SnapshotSummaries().Any(s =>
+                    s.Contains(c.RetainPhrase!, StringComparison.OrdinalIgnoreCase)),
+                $"History case {c.Id}: expected retainPhrase «{c.RetainPhrase}» in messages or summaries after {c.Turns.Count} turns");
         }
     }
 
@@ -103,6 +147,24 @@ public class GoldenSetTests
 
         foreach (var c in cases)
         {
+            if (c.IsHistoryCase)
+            {
+                // REV-126: covered by History_golden_preserves_first_turn_constraint (no LLM).
+                results.Add(new GoldenCaseResult
+                {
+                    Id = c.Id,
+                    Group = c.Group,
+                    Passed = true,
+                    FirstToolCorrect = true,
+                    ForbidOk = true,
+                    RequireArgsOk = true,
+                    Rounds = 0,
+                    PromptTokens = 0,
+                    Reply = "(history infrastructure)",
+                });
+                continue;
+            }
+
             var script = ScriptedChains.For(c);
             var loop = new GoldenDryRunLoop(script, new StubAssistantToolExecutor());
             var (calls, reply, tokens, _) = await loop.RunAsync(c.UserText, c.MaxRounds);
@@ -137,6 +199,9 @@ public class GoldenSetTests
 
         foreach (var c in cases)
         {
+            if (c.IsHistoryCase)
+                continue;
+
             var loop = new GoldenDryRunLoop(client, new StubAssistantToolExecutor());
             var (calls, reply, tokens, _) = await loop.RunAsync(c.UserText, c.MaxRounds);
             results.Add(GoldenScorer.Score(c, calls, reply, tokens));

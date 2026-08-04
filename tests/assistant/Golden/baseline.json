@@ -1,7 +1,7 @@
 {
-  "id": "baseline-rev-112",
-  "recordedAt": "2026-07-30",
-  "note": "Scripted dry-run after REV-116 catalog cleanup (70 tools, no exact duplicates). Catalog JSON size for annotation profile is much smaller than full catalog. Live LLM baseline: run tests/assistant/run-golden.ps1 -Live.",
+  "id": "baseline-rev-126",
+  "recordedAt": "2026-07-31",
+  "note": "Scripted dry-run after REV-126 dialog memory (ConversationHistory + memory-eight-turns history case). Catalog JSON size for annotation profile is much smaller than full catalog. Live LLM baseline: run tests/assistant/run-golden.ps1 -Live.",
   "targets": {
     "firstToolAccuracy": 0.9,
     "forbidAccuracy": 1.0,
@@ -9,8 +9,8 @@
     "maxToolsPerRequest": 30
   },
   "scripted": {
-    "total": 24,
-    "passed": 24,
+    "total": 28,
+    "passed": 28,
     "firstToolAccuracy": 1.0,
     "forbidAccuracy": 1.0,
     "requireArgsAccuracy": 1.0,

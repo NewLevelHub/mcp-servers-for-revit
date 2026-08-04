@@ -66,5 +66,12 @@ namespace revit_mcp_plugin.Configuration
         /// </summary>
         [JsonProperty("assistantConfirmDeleteThreshold")]
         public int AssistantConfirmDeleteThreshold { get; set; } = 20;
+
+        /// <summary>
+        /// How many previous user turns to keep in chat memory besides the current one (REV-126).
+        /// Clamped to 4…20; default 12.
+        /// </summary>
+        [JsonProperty("assistantMaxPreviousUserTurns")]
+        public int AssistantMaxPreviousUserTurns { get; set; } = 12;
     }
 }

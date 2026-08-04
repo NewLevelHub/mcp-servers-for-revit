@@ -41,6 +41,7 @@ namespace revit_mcp_plugin.UI.Assistant
             _agent.ConfirmationRequested += OnConfirmationRequested;
             _agent.AskUserRequested += OnAskUserRequested;
             _agent.HistoryTrimmed += OnHistoryTrimmed;
+            _agent.HistoryBudgetChanged += OnHistoryBudgetChanged;
             _agent.PlanChanged += OnPlanChanged;
             BuildChips();
             ShowWelcomeMessage();
@@ -72,7 +73,8 @@ namespace revit_mcp_plugin.UI.Assistant
                 return;
             }
 
-            ContextText.Text = BuildViewContextLine();
+            ContextText.Text = SnapshotSessionContext().FormatForHeader();
+            UpdateContextMeter(_agent.GetHistoryBudget());
             var running = SocketService.Instance.IsRunning;
             ServerBanner.Visibility = running ? System.Windows.Visibility.Collapsed : System.Windows.Visibility.Visible;
 
@@ -178,7 +180,7 @@ namespace revit_mcp_plugin.UI.Assistant
             ShowWelcomeMessage();
             if (showNotice)
             {
-                AddBotMessage("Новый чат. Предыдущая история очищена (на диск не сохранялась).");
+                AddBotMessage("Новый диалог. История и журнал созданных элементов очищены.");
             }
             RefreshContextAndBanner();
         }
@@ -190,9 +192,29 @@ namespace revit_mcp_plugin.UI.Assistant
             {
                 if (_busy) return;
                 AddBotMessage(
-                    "Часть ранних сообщений убрана из памяти (длинный диалог). " +
+                    "Часть ранних сообщений сжата в сводку (длинный диалог). " +
                     "Последний запрос сохранён. Чтобы начать с нуля — «+ Новый».");
             }));
+        }
+
+        private void OnHistoryBudgetChanged(HistoryBudget budget)
+        {
+            Dispatcher.BeginInvoke(new Action(() => UpdateContextMeter(budget)));
+        }
+
+        private void UpdateContextMeter(HistoryBudget budget)
+        {
+            if (budget == null)
+                budget = _agent.GetHistoryBudget();
+            ContextMeterText.Text = budget.MeterLabel;
+            var pct = budget.FillPercent;
+            var color = pct >= 85
+                ? System.Windows.Media.Color.FromRgb(0xE8, 0xA0, 0x5A)
+                : System.Windows.Media.Color.FromRgb(0x7A, 0x9B, 0xB8);
+            ContextMeterText.Foreground = new SolidColorBrush(color);
+            ContextMeterText.ToolTip =
+                $"Память диалога: {budget.UserTurns} из {budget.MaxUserTurnsInclusive} реплик · " +
+                $"~{budget.EstimatedChars:N0} / {budget.MaxHistoryChars:N0} символов ({pct}%)";
         }
 
         private void BuildChips()
@@ -690,7 +712,7 @@ namespace revit_mcp_plugin.UI.Assistant
             try
             {
                 var result = await _agent.RunAsync(
-                        toAgent, BuildViewContextLine(), attachments, _runCts.Token, turnId, toolProfiles)
+                        toAgent, SnapshotSessionContext().FormatForPrompt(), attachments, _runCts.Token, turnId, toolProfiles)
                     .ConfigureAwait(true);
 
                 if (result.Cancelled)
@@ -891,33 +913,9 @@ namespace revit_mcp_plugin.UI.Assistant
             }), DispatcherPriority.Background);
         }
 
-        private string BuildViewContextLine()
+        private AssistantSessionContext SnapshotSessionContext()
         {
-            try
-            {
-                var uidoc = _uiApp?.ActiveUIDocument;
-                var doc = uidoc?.Document;
-                var view = uidoc?.ActiveView;
-                if (doc == null || view == null)
-                    return "Документ: — · Вид: —";
-
-                var levelName = "—";
-                try
-                {
-                    if (view is ViewPlan plan && plan.GenLevel != null)
-                        levelName = plan.GenLevel.Name;
-                }
-                catch
-                {
-                    // ignore
-                }
-
-                return $"Документ: {doc.Title} · Вид: {view.Name} ({view.ViewType}) · Уровень: {levelName}";
-            }
-            catch
-            {
-                return "Документ: — · Вид: —";
-            }
+            return AssistantSessionContext.Snapshot(_uiApp);
         }
 
     }

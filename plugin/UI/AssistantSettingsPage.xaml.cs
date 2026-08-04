@@ -37,6 +37,8 @@ namespace revit_mcp_plugin.UI
             ConfirmDeleteThresholdBox.Text = (s.AssistantConfirmDeleteThreshold > 0
                 ? s.AssistantConfirmDeleteThreshold
                 : 20).ToString(CultureInfo.InvariantCulture);
+            MaxPreviousUserTurnsBox.Text = ClampTurns(s.AssistantMaxPreviousUserTurns)
+                .ToString(CultureInfo.InvariantCulture);
         }
 
         private void SaveButton_Click(object sender, RoutedEventArgs e)
@@ -49,6 +51,7 @@ namespace revit_mcp_plugin.UI
             s.AssistantMaxTokens = ParseMaxTokens(MaxTokensBox.Text);
             s.AssistantRequireConfirmations = RequireConfirmCheckBox.IsChecked == true;
             s.AssistantConfirmDeleteThreshold = ParseThreshold(ConfirmDeleteThresholdBox.Text);
+            s.AssistantMaxPreviousUserTurns = ParseMaxTurns(MaxPreviousUserTurnsBox.Text);
             PluginSettingsStore.SaveSettings(s);
             SaveStatusText.Text = "Сохранено";
         }
@@ -78,6 +81,20 @@ namespace revit_mcp_plugin.UI
             if (!int.TryParse((text ?? "").Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) || n < 1)
                 return 20;
             if (n > 100000) return 100000;
+            return n;
+        }
+
+        private static int ParseMaxTurns(string text)
+        {
+            if (!int.TryParse((text ?? "").Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var n))
+                return 12;
+            return ClampTurns(n);
+        }
+
+        private static int ClampTurns(int n)
+        {
+            if (n < 4) return 4;
+            if (n > 20) return 20;
             return n;
         }
     }
