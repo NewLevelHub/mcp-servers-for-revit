@@ -135,7 +135,20 @@ namespace revit_mcp_plugin.Core.Assistant
                 if (turn?["toolCalls"] is JArray tc)
                 {
                     foreach (var t in tc)
-                        entry.ToolChain.Add(t["name"]?.ToString() ?? "?");
+                    {
+                        var name = t["name"]?.ToString() ?? "?";
+                        var summary = t["summary"]?.ToString();
+                        var ms = t["durationMs"]?.Value<long>() ?? 0;
+                        if (!string.IsNullOrWhiteSpace(summary))
+                        {
+                            var sec = ms > 0 ? $" ({ms / 1000.0:F1} с)" : "";
+                            entry.ToolChain.Add($"{name} → {Truncate(summary, 60)}{sec}");
+                        }
+                        else
+                        {
+                            entry.ToolChain.Add(name);
+                        }
+                    }
                 }
 
                 result.Add(entry);

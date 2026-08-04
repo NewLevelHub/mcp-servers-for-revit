@@ -32,6 +32,14 @@ namespace revit_mcp_plugin.UI.Assistant
         private AskUserBubble _activeAskBubble;
         private bool _busy;
         private PlanChecklistBubble _activePlanBubble;
+        private ToolJournalBubble _activeJournalBubble;
+        private ChatBubble _streamingBubble;
+        private string _streamBuffer = "";
+        private DateTime _lastStreamUiUtc = DateTime.MinValue;
+        private string _currentTurnId;
+        private string _currentUserText;
+        private readonly Dictionary<string, string> _userTextByTurnId =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         public AssistantChatPane()
         {
@@ -44,6 +52,8 @@ namespace revit_mcp_plugin.UI.Assistant
             _agent.HistoryBudgetChanged += OnHistoryBudgetChanged;
             _agent.PlanChanged += OnPlanChanged;
             _agent.ModelEscalated += OnModelEscalated;
+            _agent.ToolStepChanged += OnToolStepChanged;
+            _agent.ReplyDelta += OnReplyDelta;
             BuildChips();
             ShowWelcomeMessage();
             SetStatus("Готов", StatusTone.Ok);
@@ -703,6 +713,9 @@ namespace revit_mcp_plugin.UI.Assistant
             _busy = true;
             SetBusyUi(true);
             _activePlanBubble = null;
+            _activeJournalBubble = null;
+            _streamingBubble = null;
+            _streamBuffer = "";
             _activeAskBubble = null;
             AddUserMessage(displayText, attachments);
             RefreshContextAndBanner();
@@ -710,15 +723,24 @@ namespace revit_mcp_plugin.UI.Assistant
             var toAgent = string.IsNullOrWhiteSpace(agentText) ? displayText : agentText;
             _runCts = new CancellationTokenSource();
             var turnId = Guid.NewGuid().ToString("N").Substring(0, 12);
+            _currentTurnId = turnId;
+            _currentUserText = displayText;
+            _userTextByTurnId[turnId] = displayText;
             try
             {
                 var result = await _agent.RunAsync(
                         toAgent, SnapshotSessionContext().FormatForPrompt(), attachments, _runCts.Token, turnId, toolProfiles)
                     .ConfigureAwait(true);
 
+                ClearStreamingBubble();
+
                 if (result.Cancelled)
                 {
-                    AddBotMessage(string.IsNullOrWhiteSpace(result.Reply) ? "Остановлено." : result.Reply);
+                    AddBotMessage(
+                        string.IsNullOrWhiteSpace(result.Reply) ? "Остановлено." : result.Reply,
+                        turnId,
+                        FormatModelMeta(result),
+                        displayText);
                     return;
                 }
 
@@ -734,19 +756,24 @@ namespace revit_mcp_plugin.UI.Assistant
                     reply = sb.ToString();
                 }
 
-                AddBotMessage(reply, turnId, FormatModelMeta(result));
+                AddBotMessage(reply, turnId, FormatModelMeta(result), displayText);
             }
             catch (OperationCanceledException)
             {
-                AddBotMessage("Остановлено.");
+                ClearStreamingBubble();
+                AddBotMessage("Остановлено.", turnId, null, displayText);
             }
             catch (Exception ex)
             {
-                AddBotMessage("Ошибка: " + ex.Message);
+                ClearStreamingBubble();
+                AddBotMessage("Ошибка: " + ex.Message, turnId, null, displayText);
             }
             finally
             {
                 _busy = false;
+                _currentTurnId = null;
+                _currentUserText = null;
+                _streamingBubble = null;
                 SetBusyUi(false);
                 ConfirmBar.Visibility = System.Windows.Visibility.Collapsed;
                 _activeAskBubble = null;
@@ -901,6 +928,88 @@ namespace revit_mcp_plugin.UI.Assistant
             }));
         }
 
+        private void OnToolStepChanged(ToolStepEvent ev)
+        {
+            if (ev == null) return;
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                // Tool steps mean the text stream (if any) was thinking — discard it.
+                ClearStreamingBubble();
+
+                if (_activeJournalBubble == null)
+                {
+                    _activeJournalBubble = new ToolJournalBubble();
+                    _activeJournalBubble.ElementIdClicked += SelectElementsInRevit;
+                    MessagesPanel.Children.Add(_activeJournalBubble);
+                }
+                _activeJournalBubble.Apply(ev);
+                ScrollToEnd();
+            }));
+        }
+
+        private void OnReplyDelta(string cumulative)
+        {
+            _streamBuffer = cumulative ?? "";
+            var now = DateTime.UtcNow;
+            if ((now - _lastStreamUiUtc).TotalMilliseconds < 100 && _streamingBubble != null)
+                return;
+            _lastStreamUiUtc = now;
+
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (string.IsNullOrEmpty(_streamBuffer))
+                    return;
+
+                if (_streamingBubble == null)
+                {
+                    _streamingBubble = new ChatBubble(
+                        _streamBuffer,
+                        fromUser: false,
+                        turnId: _currentTurnId,
+                        userRequestText: _currentUserText);
+                    MessagesPanel.Children.Add(_streamingBubble);
+                }
+                else
+                {
+                    _streamingBubble.SetStreamingText(_streamBuffer);
+                }
+                ScrollToEnd();
+            }));
+        }
+
+        private void ClearStreamingBubble()
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.BeginInvoke(new Action(ClearStreamingBubble));
+                return;
+            }
+
+            if (_streamingBubble != null)
+            {
+                MessagesPanel.Children.Remove(_streamingBubble);
+                _streamingBubble = null;
+            }
+            _streamBuffer = "";
+        }
+
+        private void SelectElementsInRevit(int elementId)
+        {
+            try
+            {
+                var uidoc = _uiApp?.ActiveUIDocument;
+                if (uidoc == null) return;
+                var id = new ElementId(elementId);
+                if (uidoc.Document.GetElement(id) == null) return;
+                uidoc.Selection.SetElementIds(new List<ElementId> { id });
+                uidoc.ShowElements(id);
+            }
+            catch
+            {
+                // selection may fail outside a view
+            }
+        }
+
         private void SetBusyUi(bool busy)
         {
             SendButton.IsEnabled = !busy;
@@ -921,10 +1030,21 @@ namespace revit_mcp_plugin.UI.Assistant
             ScrollToEnd();
         }
 
-        private void AddBotMessage(string text, string turnId = null, string metaFooter = null)
+        private void AddBotMessage(string text, string turnId = null, string metaFooter = null, string userRequestText = null)
         {
-            var bubble = new ChatBubble(text, fromUser: false, turnId: turnId, metaFooter: metaFooter);
+            var userText = userRequestText;
+            if (userText == null && turnId != null)
+                _userTextByTurnId.TryGetValue(turnId, out userText);
+
+            var bubble = new ChatBubble(
+                text,
+                fromUser: false,
+                turnId: turnId,
+                metaFooter: metaFooter,
+                userRequestText: userText);
             bubble.FeedbackSubmitted += OnBubbleFeedback;
+            bubble.RetryRequested += OnBubbleRetry;
+            bubble.EditRequested += OnBubbleEdit;
             MessagesPanel.Children.Add(bubble);
             ScrollToEnd();
         }
@@ -933,6 +1053,22 @@ namespace revit_mcp_plugin.UI.Assistant
         {
             Core.Assistant.AssistantTurnLogger.WriteRatingPatch(e.TurnId, e.Rating, e.Reason, e.Comment);
             RefreshFeedbackBadge();
+        }
+
+        private void OnBubbleRetry(object sender, RetryEventArgs e)
+        {
+            if (e == null || string.IsNullOrWhiteSpace(e.UserText) || _busy)
+                return;
+            _ = StartRunAsync(e.UserText, null);
+        }
+
+        private void OnBubbleEdit(object sender, RetryEventArgs e)
+        {
+            if (e == null || string.IsNullOrWhiteSpace(e.UserText))
+                return;
+            InputBox.Text = e.UserText;
+            InputBox.CaretIndex = InputBox.Text.Length;
+            InputBox.Focus();
         }
 
         private void ScrollToEnd()

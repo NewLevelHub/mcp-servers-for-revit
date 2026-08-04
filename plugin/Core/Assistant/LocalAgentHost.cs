@@ -88,6 +88,10 @@ namespace revit_mcp_plugin.Core.Assistant
         public event Action<HistoryBudget> HistoryBudgetChanged;
         /// <summary>REV-120: plan checklist declared or a step status changed.</summary>
         public event Action<AgentPlanSnapshot> PlanChanged;
+        /// <summary>REV-127: live tool journal row (running / ok / error / cancelled).</summary>
+        public event Action<ToolStepEvent> ToolStepChanged;
+        /// <summary>REV-127: cumulative assistant text while streaming the final reply.</summary>
+        public event Action<string> ReplyDelta;
 
         public int HistoryMessageCount => _history.Count;
 
@@ -451,6 +455,7 @@ namespace revit_mcp_plugin.Core.Assistant
             var budgetWarningSent = false;
             var askUserUsed = false;
             var consecutiveToolFailures = 0;
+            var stepJournal = new List<ToolStepEvent>();
             var turnLog = new TurnLogEntry
             {
                 TurnId = turnId ?? Guid.NewGuid().ToString("N").Substring(0, 12),
@@ -508,17 +513,26 @@ namespace revit_mcp_plugin.Core.Assistant
                     JObject completion;
                     try
                     {
-                        completion = await client.ChatCompletionsAsync(messages, tools, cancellationToken)
+                        // REV-127: SSE stream; ReplyDelta only for text-only rounds (no tool_calls).
+                        completion = await client.ChatCompletionsStreamingAsync(
+                                messages,
+                                tools,
+                                text => RaiseReplyDelta(text),
+                                cancellationToken)
                             .ConfigureAwait(false);
                     }
                     catch (OperationCanceledException)
                     {
-                        return CancelledResult(done, activePlan, turnLog);
+                        CancelRunningToolStep(stepJournal);
+                        return CancelledResult(done, activePlan, turnLog, stepJournal);
                     }
                     catch (Exception ex)
                     {
                         if (IsCancel(ex, cancellationToken))
-                            return CancelledResult(done, activePlan, turnLog);
+                        {
+                            CancelRunningToolStep(stepJournal);
+                            return CancelledResult(done, activePlan, turnLog, stepJournal);
+                        }
 
                         turnLog.Rounds = round + 1;
                         turnLog.Outcome = "failed";
@@ -686,6 +700,7 @@ namespace revit_mcp_plugin.Core.Assistant
                         var enrichedArgs = NormCheckDefaults.EnrichArgs(toolName, argsJson, userMessage);
                         enrichedArgs = CreateElementArgsNormalizer.Normalize(toolName, enrichedArgs);
                         var toolSw = System.Diagnostics.Stopwatch.StartNew();
+                        var activeStep = BeginToolStep(stepJournal, round, toolName, enrichedArgs);
 
                         // REV-121: never silently inject typeId — teach the model with candidates.
                         var typeIdCheck = MissingTypeIdGuard.Check(toolResultCache, toolName, enrichedArgs);
@@ -695,6 +710,7 @@ namespace revit_mcp_plugin.Core.Assistant
                             AppendToolResult(callId, failJson);
                             done.Add("ошибка: " + typeIdCheck.Error);
                             toolSw.Stop();
+                            FinishToolStep(stepJournal, activeStep, false, typeIdCheck.Error, failJson, toolSw.ElapsedMilliseconds);
                             turnLog.ToolCalls.Add(new ToolCallLog
                             {
                                 Round = round,
@@ -704,6 +720,7 @@ namespace revit_mcp_plugin.Core.Assistant
                                 Ok = false,
                                 DurationMs = toolSw.ElapsedMilliseconds,
                                 Error = typeIdCheck.Error,
+                                Summary = typeIdCheck.Error,
                                 ResultBytes = failJson.Length,
                                 MissingTypeId = true,
                             });
@@ -721,6 +738,7 @@ namespace revit_mcp_plugin.Core.Assistant
                                 AppendToolResult(callId, fail.ToString());
                                 done.Add("ошибка: план");
                                 toolSw.Stop();
+                                FinishToolStep(stepJournal, activeStep, false, planErr, fail.ToString(), toolSw.ElapsedMilliseconds);
                                 turnLog.ToolCalls.Add(new ToolCallLog
                                 {
                                     Round = round,
@@ -730,6 +748,7 @@ namespace revit_mcp_plugin.Core.Assistant
                                     Ok = false,
                                     DurationMs = toolSw.ElapsedMilliseconds,
                                     Error = planErr,
+                                    Summary = planErr,
                                     ResultBytes = fail.ToString().Length,
                                 });
                                 continue;
@@ -738,8 +757,10 @@ namespace revit_mcp_plugin.Core.Assistant
                             var planPayload = activePlan.ToSuccessPayload();
                             AppendToolResult(callId, planPayload.ToString());
                             RaisePlanChanged(activePlan);
-                            done.Add(planPayload["summary"]?.ToString() ?? "план");
+                            var planSummary = planPayload["summary"]?.ToString() ?? "план";
+                            done.Add(planSummary);
                             toolSw.Stop();
+                            FinishToolStep(stepJournal, activeStep, true, planSummary, planPayload.ToString(), toolSw.ElapsedMilliseconds);
                             turnLog.ToolCalls.Add(new ToolCallLog
                             {
                                 Round = round,
@@ -748,6 +769,7 @@ namespace revit_mcp_plugin.Core.Assistant
                                 NormalizedArgs = enrichedArgs,
                                 Ok = true,
                                 DurationMs = toolSw.ElapsedMilliseconds,
+                                Summary = planSummary,
                                 ResultBytes = planPayload.ToString().Length,
                             });
                             continue;
@@ -764,6 +786,7 @@ namespace revit_mcp_plugin.Core.Assistant
                                 AppendToolResult(callId, dup.ToString());
                                 done.Add("ошибка: повторный вопрос");
                                 toolSw.Stop();
+                                FinishToolStep(stepJournal, activeStep, false, "ask_user уже вызывали", dup.ToString(), toolSw.ElapsedMilliseconds);
                                 turnLog.ToolCalls.Add(new ToolCallLog
                                 {
                                     Round = round,
@@ -773,6 +796,7 @@ namespace revit_mcp_plugin.Core.Assistant
                                     Ok = false,
                                     DurationMs = toolSw.ElapsedMilliseconds,
                                     Error = "ask_user_already_used",
+                                    Summary = "ask_user уже вызывали",
                                     ResultBytes = dup.ToString().Length,
                                 });
                                 continue;
@@ -786,6 +810,7 @@ namespace revit_mcp_plugin.Core.Assistant
                                 AppendToolResult(callId, failAsk.ToString());
                                 done.Add("ошибка: вопрос");
                                 toolSw.Stop();
+                                FinishToolStep(stepJournal, activeStep, false, askErr, failAsk.ToString(), toolSw.ElapsedMilliseconds);
                                 turnLog.ToolCalls.Add(new ToolCallLog
                                 {
                                     Round = round,
@@ -795,6 +820,7 @@ namespace revit_mcp_plugin.Core.Assistant
                                     Ok = false,
                                     DurationMs = toolSw.ElapsedMilliseconds,
                                     Error = askErr,
+                                    Summary = askErr,
                                     ResultBytes = failAsk.ToString().Length,
                                 });
                                 continue;
@@ -813,6 +839,7 @@ namespace revit_mcp_plugin.Core.Assistant
                                 AppendToolResult(callId, cancelled.ToString());
                                 done.Add("отменено: вопрос");
                                 toolSw.Stop();
+                                FinishToolStep(stepJournal, activeStep, false, "отменено", cancelled.ToString(), toolSw.ElapsedMilliseconds);
                                 turnLog.ToolCalls.Add(new ToolCallLog
                                 {
                                     Round = round,
@@ -822,6 +849,7 @@ namespace revit_mcp_plugin.Core.Assistant
                                     Ok = false,
                                     DurationMs = toolSw.ElapsedMilliseconds,
                                     Error = "ask_user_cancelled",
+                                    Summary = "отменено",
                                     ResultBytes = cancelled.ToString().Length,
                                 });
                                 continue;
@@ -843,8 +871,10 @@ namespace revit_mcp_plugin.Core.Assistant
                                     typologyHint + "\n" +
                                     "Собери declare_plan и геометрию по этой программе. Не своди к двум комнатам.");
                             }
-                            done.Add(askPayload["summary"]?.ToString() ?? "вопрос");
+                            var askSummary = askPayload["summary"]?.ToString() ?? "вопрос";
+                            done.Add(askSummary);
                             toolSw.Stop();
+                            FinishToolStep(stepJournal, activeStep, true, askSummary, askPayload.ToString(), toolSw.ElapsedMilliseconds);
                             turnLog.ToolCalls.Add(new ToolCallLog
                             {
                                 Round = round,
@@ -853,6 +883,7 @@ namespace revit_mcp_plugin.Core.Assistant
                                 NormalizedArgs = enrichedArgs,
                                 Ok = true,
                                 DurationMs = toolSw.ElapsedMilliseconds,
+                                Summary = askSummary,
                                 ResultBytes = askPayload.ToString().Length,
                             });
                             continue;
@@ -876,6 +907,7 @@ namespace revit_mcp_plugin.Core.Assistant
                                 AppendToolResult(callId, upgraded.ToString());
                                 done.Add("модель→smart (цикл)");
                                 toolSw.Stop();
+                                FinishToolStep(stepJournal, activeStep, false, "цикл → smart", upgraded.ToString(), toolSw.ElapsedMilliseconds);
                                 turnLog.ToolCalls.Add(new ToolCallLog
                                 {
                                     Round = round,
@@ -885,6 +917,7 @@ namespace revit_mcp_plugin.Core.Assistant
                                     Ok = false,
                                     DurationMs = toolSw.ElapsedMilliseconds,
                                     Error = "loop_escalated",
+                                    Summary = "цикл → smart",
                                     ResultBytes = upgraded.ToString().Length,
                                 });
                                 consecutiveToolFailures = 0;
@@ -895,6 +928,7 @@ namespace revit_mcp_plugin.Core.Assistant
                             AppendToolResult(callId, blocked.ToString());
                             done.Add("ошибка: повтор " + FriendlyToolName(toolName));
                             toolSw.Stop();
+                            FinishToolStep(stepJournal, activeStep, false, "повтор заблокирован", blocked.ToString(), toolSw.ElapsedMilliseconds);
                             turnLog.ToolCalls.Add(new ToolCallLog
                             {
                                 Round = round,
@@ -904,6 +938,7 @@ namespace revit_mcp_plugin.Core.Assistant
                                 Ok = false,
                                 DurationMs = toolSw.ElapsedMilliseconds,
                                 Error = "loop_blocked",
+                                Summary = "повтор заблокирован",
                                 ResultBytes = blocked.ToString().Length,
                             });
                             consecutiveToolFailures++;
@@ -939,7 +974,8 @@ namespace revit_mcp_plugin.Core.Assistant
                             AppendToolResult(callId, CancelledToolPayload());
                             // Fill remaining sibling calls so history stays valid for the next turn.
                             FillRemainingToolResults(toolCalls, callTok);
-                            return CancelledResult(done, activePlan, turnLog);
+                            CancelRunningToolStep(stepJournal);
+                            return CancelledResult(done, activePlan, turnLog, stepJournal);
                         }
                         catch (Exception ex)
                         {
@@ -947,7 +983,8 @@ namespace revit_mcp_plugin.Core.Assistant
                             {
                                 AppendToolResult(callId, CancelledToolPayload());
                                 FillRemainingToolResults(toolCalls, callTok);
-                                return CancelledResult(done, activePlan, turnLog);
+                                CancelRunningToolStep(stepJournal);
+                                return CancelledResult(done, activePlan, turnLog, stepJournal);
                             }
 
                             rawResult = new JObject
@@ -974,6 +1011,7 @@ namespace revit_mcp_plugin.Core.Assistant
                         if (activePlan != null && activePlan.TryMarkTool(toolName, ok))
                             RaisePlanChanged(activePlan);
 
+                        FinishToolStep(stepJournal, activeStep, ok, summary, rawResult, toolSw.ElapsedMilliseconds);
                         turnLog.ToolCalls.Add(new ToolCallLog
                         {
                             Round = round,
@@ -983,6 +1021,7 @@ namespace revit_mcp_plugin.Core.Assistant
                             Ok = ok,
                             DurationMs = toolSw.ElapsedMilliseconds,
                             Error = ok ? null : summary,
+                            Summary = summary,
                             ResultBytes = rawResult?.Length ?? 0,
                         });
 
@@ -1008,7 +1047,10 @@ namespace revit_mcp_plugin.Core.Assistant
                     }
 
                     if (cancellationToken.IsCancellationRequested)
-                        return CancelledResult(done, activePlan, turnLog);
+                    {
+                        CancelRunningToolStep(stepJournal);
+                        return CancelledResult(done, activePlan, turnLog, stepJournal);
+                    }
                 }
 
                 var maxRoundsReply = AgentPlan.BuildPartialReply(
@@ -1029,12 +1071,13 @@ namespace revit_mcp_plugin.Core.Assistant
             }
             catch (OperationCanceledException)
             {
+                CancelRunningToolStep(stepJournal);
                 turnLog.Outcome = "cancelled";
                 turnLog.DoneSummary = done;
                 turnLog.TotalMs = turnSw.ElapsedMilliseconds;
                 turnLog.ToolProfiles = activeProfiles.ToList();
                 AssistantTurnLogger.Write(turnLog);
-                return CancelledResult(done, activePlan, turnLog);
+                return CancelledResult(done, activePlan, turnLog, stepJournal);
             }
             finally
             {
@@ -1101,7 +1144,11 @@ namespace revit_mcp_plugin.Core.Assistant
             };
         }
 
-        private static AgentTurnResult CancelledResult(IList<string> done, AgentPlan plan = null, TurnLogEntry turnLog = null)
+        private static AgentTurnResult CancelledResult(
+            IList<string> done,
+            AgentPlan plan = null,
+            TurnLogEntry turnLog = null,
+            List<ToolStepEvent> stepJournal = null)
         {
             return FinishTurn(
                 turnLog,
@@ -1203,11 +1250,79 @@ namespace revit_mcp_plugin.Core.Assistant
             catch { /* UI may be disposed */ }
         }
 
+        private void RaiseReplyDelta(string cumulativeText)
+        {
+            try { ReplyDelta?.Invoke(cumulativeText ?? ""); }
+            catch { /* UI may be disposed */ }
+        }
+
         private void RaisePlanChanged(AgentPlan plan)
         {
             if (plan == null) return;
             try { PlanChanged?.Invoke(plan.Snapshot()); }
             catch { /* UI may be disposed */ }
+        }
+
+        private void RaiseToolStep(List<ToolStepEvent> journal, ToolStepEvent step)
+        {
+            if (journal == null || step == null) return;
+            step.AllSteps = ToolStepEvent.Snapshot(journal);
+            try { ToolStepChanged?.Invoke(step); }
+            catch { /* UI may be disposed */ }
+        }
+
+        private ToolStepEvent BeginToolStep(
+            List<ToolStepEvent> journal,
+            int round,
+            string name,
+            string argsJson)
+        {
+            if (journal == null) return null;
+            var step = new ToolStepEvent
+            {
+                Index = journal.Count + 1,
+                Round = round,
+                Name = name ?? "",
+                Status = ToolStepEvent.StatusRunning,
+                Summary = "…",
+                ArgsJson = TruncateForJournal(argsJson, 2000),
+            };
+            journal.Add(step);
+            RaiseToolStep(journal, step);
+            return step;
+        }
+
+        private void FinishToolStep(
+            List<ToolStepEvent> journal,
+            ToolStepEvent step,
+            bool ok,
+            string summary,
+            string resultJson,
+            long durationMs)
+        {
+            if (step == null) return;
+            step.Status = ok ? ToolStepEvent.StatusOk : ToolStepEvent.StatusError;
+            step.Summary = string.IsNullOrWhiteSpace(summary) ? (ok ? "ok" : "ошибка") : summary;
+            step.ResultJson = TruncateForJournal(resultJson, 2000);
+            step.DurationMs = durationMs;
+            RaiseToolStep(journal, step);
+        }
+
+        private void CancelRunningToolStep(List<ToolStepEvent> journal)
+        {
+            if (journal == null || journal.Count == 0) return;
+            var last = journal[journal.Count - 1];
+            if (last == null || !string.Equals(last.Status, ToolStepEvent.StatusRunning, StringComparison.Ordinal))
+                return;
+            last.Status = ToolStepEvent.StatusCancelled;
+            last.Summary = "остановлено";
+            RaiseToolStep(journal, last);
+        }
+
+        private static string TruncateForJournal(string s, int max)
+        {
+            if (string.IsNullOrEmpty(s) || s.Length <= max) return s;
+            return s.Substring(0, max) + "…";
         }
 
         /// <summary>

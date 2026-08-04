@@ -13,7 +13,7 @@ namespace revit_mcp_plugin.UI.Assistant
 {
     /// <summary>
     /// Bubble for a single chat message.
-    /// For bot messages exposes a feedback bar (👍 👎 📋) and a dislike-reason form.
+    /// For bot messages exposes a feedback bar (👍 👎 📋 ↻ ✎) and a dislike-reason form.
     /// Subscribe to <see cref="FeedbackSubmitted"/> to receive ratings.
     /// </summary>
     public sealed class ChatBubble : Grid
@@ -21,7 +21,12 @@ namespace revit_mcp_plugin.UI.Assistant
         /// <summary>Raised when the user clicks 👍 or 👎 (and optionally selects a reason tag).</summary>
         public event EventHandler<FeedbackEventArgs> FeedbackSubmitted;
 
-        // Dislike reason chips shown when 👎 is pressed
+        /// <summary>REV-127: re-send the original user request.</summary>
+        public event EventHandler<RetryEventArgs> RetryRequested;
+
+        /// <summary>REV-127: load the original user request into the input box.</summary>
+        public event EventHandler<RetryEventArgs> EditRequested;
+
         private static readonly string[] DislikeReasons =
         {
             "не понял запрос",
@@ -34,28 +39,35 @@ namespace revit_mcp_plugin.UI.Assistant
         };
 
         private readonly string _turnId;
+        private readonly string _userRequestText;
+        private string _messageText;
+        private readonly bool _fromUser;
 
-        // Action-row buttons (kept as fields to toggle visual state)
         private Button _likeBtn;
         private Button _dislikeBtn;
-        private int _rating; // 0=none, 1=like, -1=dislike
+        private int _rating;
 
-        // Dislike form
         private Border _dislikeForm;
         private string _selectedReason;
         private readonly List<Button> _reasonChips = new List<Button>();
         private TextBox _commentBox;
         private readonly string _metaFooter;
+        private StackPanel _messageStack;
+        private FrameworkElement _textHost;
 
         public ChatBubble(
             string text,
             bool fromUser,
             IList<ChatAttachment> attachments = null,
             string turnId = null,
-            string metaFooter = null)
+            string metaFooter = null,
+            string userRequestText = null)
         {
             _turnId = turnId ?? Guid.NewGuid().ToString("N").Substring(0, 8);
             _metaFooter = metaFooter;
+            _userRequestText = userRequestText;
+            _messageText = text ?? "";
+            _fromUser = fromUser;
 
             Margin = new Thickness(0, 0, 0, 10);
             ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -64,15 +76,9 @@ namespace revit_mcp_plugin.UI.Assistant
 
             var avatar = CreateAvatar(fromUser);
 
-            FrameworkElement bubbleContent;
-            if (fromUser)
-            {
-                bubbleContent = CreateBubble(text, fromUser, attachments);
-            }
-            else
-            {
-                bubbleContent = CreateBotBubbleWithActions(text, attachments);
-            }
+            FrameworkElement bubbleContent = fromUser
+                ? CreateBubble(text, fromUser, attachments)
+                : CreateBotBubbleWithActions(text, attachments);
 
             if (fromUser)
             {
@@ -93,32 +99,65 @@ namespace revit_mcp_plugin.UI.Assistant
             Children.Add(bubbleContent);
         }
 
-        // ── Bot bubble: message + action row + dislike form ─────────────────────
+        /// <summary>REV-127: update streamed text in place (throttled by caller).</summary>
+        public void SetStreamingText(string text)
+        {
+            _messageText = text ?? "";
+            if (_messageStack == null) return;
+
+            if (_textHost != null)
+                _messageStack.Children.Remove(_textHost);
+
+            if (!string.IsNullOrWhiteSpace(_messageText))
+            {
+                _textHost = _fromUser
+                    ? CreateSelectableMessageText(_messageText, fromUser: true)
+                    : AssistantMarkdown.CreateViewer(_messageText, fromUser: false);
+                _messageStack.Children.Add(_textHost);
+            }
+            else
+            {
+                _textHost = null;
+            }
+        }
+
         private FrameworkElement CreateBotBubbleWithActions(string text, IList<ChatAttachment> attachments)
         {
             var outer = new StackPanel();
+            outer.Children.Add(CreateBubble(text, fromUser: false, attachments));
 
-            // The message bubble itself
-            var messageBorder = CreateBubble(text, fromUser: false, attachments);
-            outer.Children.Add(messageBorder);
-
-            // Action row: 👍 👎 📋
             var actionRow = new WrapPanel { Margin = new Thickness(2, 4, 0, 0) };
 
             _likeBtn = MakeActionButton("👍", "Хороший ответ");
             _dislikeBtn = MakeActionButton("👎", "Плохой ответ");
             var copyBtn = MakeActionButton("📋", "Копировать");
+            var retryBtn = MakeActionButton("↻", "Повторить");
+            var editBtn = MakeActionButton("✎", "Изменить запрос");
 
             _likeBtn.Click += (s, e) => OnLikeClick();
             _dislikeBtn.Click += (s, e) => OnDislikeClick();
-            copyBtn.Click += (s, e) => OnCopyClick(text);
+            copyBtn.Click += (s, e) => OnCopyClick(_messageText);
+            retryBtn.Click += (s, e) =>
+            {
+                if (!string.IsNullOrWhiteSpace(_userRequestText))
+                    RetryRequested?.Invoke(this, new RetryEventArgs(_turnId, _userRequestText));
+            };
+            editBtn.Click += (s, e) =>
+            {
+                if (!string.IsNullOrWhiteSpace(_userRequestText))
+                    EditRequested?.Invoke(this, new RetryEventArgs(_turnId, _userRequestText));
+            };
 
             actionRow.Children.Add(_likeBtn);
             actionRow.Children.Add(_dislikeBtn);
             actionRow.Children.Add(copyBtn);
+            if (!string.IsNullOrWhiteSpace(_userRequestText))
+            {
+                actionRow.Children.Add(retryBtn);
+                actionRow.Children.Add(editBtn);
+            }
             outer.Children.Add(actionRow);
 
-            // REV-124: model + tokens under the action row.
             if (!string.IsNullOrWhiteSpace(_metaFooter))
             {
                 outer.Children.Add(new TextBlock
@@ -131,10 +170,8 @@ namespace revit_mcp_plugin.UI.Assistant
                 });
             }
 
-            // Dislike form (hidden until 👎 pressed)
             _dislikeForm = BuildDislikeForm();
             outer.Children.Add(_dislikeForm);
-
             return outer;
         }
 
@@ -172,14 +209,7 @@ namespace revit_mcp_plugin.UI.Assistant
             content.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
             content.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
             factory.AppendChild(content);
-
-            var tpl = new ControlTemplate(typeof(Button)) { VisualTree = factory };
-
-            var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
-            hover.Setters.Add(new Setter(Border.BackgroundProperty,
-                new SolidColorBrush(Color.FromRgb(0xE3, 0xEE, 0xF7)), "bd"));
-            // triggers need named elements — skip hover styling here for simplicity, handled via style below
-            return tpl;
+            return new ControlTemplate(typeof(Button)) { VisualTree = factory };
         }
 
         private Border BuildDislikeForm()
@@ -197,16 +227,14 @@ namespace revit_mcp_plugin.UI.Assistant
             };
 
             var stack = new StackPanel();
-
-            var label = new TextBlock
+            stack.Children.Add(new TextBlock
             {
                 Text = "Что пошло не так? (выберите тег)",
                 FontSize = 11,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = new SolidColorBrush(Color.FromRgb(0x1A, 0x27, 0x44)),
                 Margin = new Thickness(0, 0, 0, 6),
-            };
-            stack.Children.Add(label);
+            });
 
             var wrap = new WrapPanel();
             foreach (var reason in DislikeReasons)
@@ -251,16 +279,10 @@ namespace revit_mcp_plugin.UI.Assistant
             };
             AutomationProperties.SetName(sendBtn, "Отправить дизлайк");
             sendBtn.Template = BuildSimpleRoundedButtonTemplate(10);
-            sendBtn.Click += (s, e) => SubmitDislike(sendBtn);
+            sendBtn.Click += (s, e) => SubmitDislike();
 
-            // Enable send only when a reason is selected
             foreach (var chip in _reasonChips)
-            {
-                chip.Click += (s, e) =>
-                {
-                    sendBtn.IsEnabled = _selectedReason != null;
-                };
-            }
+                chip.Click += (s, e) => { sendBtn.IsEnabled = _selectedReason != null; };
 
             stack.Children.Add(sendBtn);
             form.Child = stack;
@@ -291,16 +313,13 @@ namespace revit_mcp_plugin.UI.Assistant
         {
             if (_selectedReason == reason)
             {
-                // toggle off
                 _selectedReason = null;
                 ApplyChipStyle(clicked, selected: false);
             }
             else
             {
-                // deselect previous
                 foreach (var c in _reasonChips)
                     ApplyChipStyle(c, selected: false);
-
                 _selectedReason = reason;
                 ApplyChipStyle(clicked, selected: true);
             }
@@ -338,12 +357,10 @@ namespace revit_mcp_plugin.UI.Assistant
             return new ControlTemplate(typeof(Button)) { VisualTree = factory };
         }
 
-        // ── Rating actions ───────────────────────────────────────────────────────
         private void OnLikeClick()
         {
             if (_rating == 1)
             {
-                // toggle off
                 _rating = 0;
                 ApplyRatingButtonStyle(_likeBtn, active: false);
             }
@@ -361,7 +378,6 @@ namespace revit_mcp_plugin.UI.Assistant
         {
             if (_rating == -1)
             {
-                // toggle off — hide form and reset
                 _rating = 0;
                 ApplyRatingButtonStyle(_dislikeBtn, active: false);
                 HideDislikeForm();
@@ -385,10 +401,7 @@ namespace revit_mcp_plugin.UI.Assistant
             catch { /* clipboard may be locked */ }
         }
 
-        private void ShowDislikeForm()
-        {
-            _dislikeForm.Visibility = Visibility.Visible;
-        }
+        private void ShowDislikeForm() => _dislikeForm.Visibility = Visibility.Visible;
 
         private void HideDislikeForm()
         {
@@ -400,14 +413,11 @@ namespace revit_mcp_plugin.UI.Assistant
                 _commentBox.Text = string.Empty;
         }
 
-        private void SubmitDislike(Button sendBtn)
+        private void SubmitDislike()
         {
             if (_selectedReason == null) return;
-
             var comment = _commentBox?.Text?.Trim();
             FeedbackSubmitted?.Invoke(this, new FeedbackEventArgs(_turnId, -1, _selectedReason, string.IsNullOrEmpty(comment) ? null : comment));
-
-            // Collapse form, keep 👎 active
             HideDislikeForm();
             ApplyRatingButtonStyle(_dislikeBtn, active: true);
         }
@@ -425,7 +435,6 @@ namespace revit_mcp_plugin.UI.Assistant
                 tb.Foreground = active ? Brushes.White : Brushes.Black;
         }
 
-        // ── Avatar / bubble (unchanged helpers) ─────────────────────────────────
         private static FrameworkElement CreateAvatar(bool fromUser)
         {
             var circle = new Border
@@ -438,7 +447,6 @@ namespace revit_mcp_plugin.UI.Assistant
                     ? Color.FromRgb(0x2F, 0x5D, 0x8A)
                     : Color.FromRgb(0x1A, 0x27, 0x44))
             };
-
             circle.Child = new TextBlock
             {
                 Text = fromUser ? "Вы" : "AI",
@@ -448,17 +456,16 @@ namespace revit_mcp_plugin.UI.Assistant
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             };
-
             return circle;
         }
 
-        private static Border CreateBubble(string text, bool fromUser, IList<ChatAttachment> attachments)
+        private Border CreateBubble(string text, bool fromUser, IList<ChatAttachment> attachments)
         {
             var radius = fromUser
                 ? new CornerRadius(14, 14, 4, 14)
                 : new CornerRadius(14, 14, 14, 4);
 
-            var stack = new StackPanel();
+            _messageStack = new StackPanel();
             if (attachments != null && attachments.Count > 0)
             {
                 var wrap = new WrapPanel { Margin = new Thickness(0, 0, 0, string.IsNullOrWhiteSpace(text) ? 0 : 8) };
@@ -467,12 +474,15 @@ namespace revit_mcp_plugin.UI.Assistant
                     if (a == null) continue;
                     wrap.Children.Add(CreateAttachmentPreview(a, fromUser));
                 }
-                stack.Children.Add(wrap);
+                _messageStack.Children.Add(wrap);
             }
 
             if (!string.IsNullOrWhiteSpace(text))
             {
-                stack.Children.Add(CreateSelectableMessageText(text, fromUser));
+                _textHost = fromUser
+                    ? CreateSelectableMessageText(text, fromUser)
+                    : AssistantMarkdown.CreateViewer(text, fromUser);
+                _messageStack.Children.Add(_textHost);
             }
 
             return new Border
@@ -487,7 +497,7 @@ namespace revit_mcp_plugin.UI.Assistant
                     ? null
                     : new SolidColorBrush(Color.FromRgb(0xD5, 0xDE, 0xE8)),
                 BorderThickness = fromUser ? new Thickness(0) : new Thickness(1),
-                Child = stack
+                Child = _messageStack
             };
         }
 
@@ -578,7 +588,7 @@ namespace revit_mcp_plugin.UI.Assistant
                 }
                 catch
                 {
-                    // fall through to chip
+                    // fall through
                 }
             }
 
@@ -606,19 +616,11 @@ namespace revit_mcp_plugin.UI.Assistant
         }
     }
 
-    /// <summary>Event data for a like/dislike rating submitted by the user.</summary>
     public sealed class FeedbackEventArgs : EventArgs
     {
-        /// <summary>Identifier of the assistant turn being rated.</summary>
         public string TurnId { get; }
-
-        /// <summary>+1 = like, -1 = dislike.</summary>
         public int Rating { get; }
-
-        /// <summary>One of the fixed dislike-reason tags; null for likes.</summary>
         public string Reason { get; }
-
-        /// <summary>Free-text comment; null when not provided.</summary>
         public string Comment { get; }
 
         public FeedbackEventArgs(string turnId, int rating, string reason, string comment)
@@ -627,6 +629,19 @@ namespace revit_mcp_plugin.UI.Assistant
             Rating = rating;
             Reason = reason;
             Comment = comment;
+        }
+    }
+
+    /// <summary>REV-127: retry / edit the original user prompt.</summary>
+    public sealed class RetryEventArgs : EventArgs
+    {
+        public string TurnId { get; }
+        public string UserText { get; }
+
+        public RetryEventArgs(string turnId, string userText)
+        {
+            TurnId = turnId;
+            UserText = userText;
         }
     }
 }
