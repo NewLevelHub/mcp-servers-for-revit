@@ -1,0 +1,10 @@
+{
+  "id": "dim-no-overlap",
+  "group": "annotate",
+  "userText": "Проставь размеры помещений без налезания и проверь результат",
+  "expectTools": ["dimension_room_walls", "get_current_view_elements"],
+  "expectToolsOrdered": true,
+  "requireArgs": { "dimension_room_walls": ["placement"] },
+  "forbidTools": ["run_norm_audit", "dimension_grids"],
+  "maxRounds": 8
+}

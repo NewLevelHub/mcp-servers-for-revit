@@ -853,6 +853,7 @@ namespace revit_mcp_plugin.Core.Assistant
                     Empty()),
                 T("get_current_view_elements", "Elements on the active view. Coordinates in mm.", P(
                     ("modelCategoryList", A("string"), "e.g. OST_Walls"),
+                    ("annotationCategoryList", A("string"), "e.g. OST_Dimensions"),
                     ("limit", N(), "Max elements"))),
                 T("say_hello",
                     "Test MCP/plugin connection. Returns a greeting — use when checking the link is alive.",
@@ -882,7 +883,9 @@ namespace revit_mcp_plugin.Core.Assistant
                     P(R("data"),
                       ("data", AItems(roomItem), "rooms to place"))),
                 T("dimension_room_walls",
-                    "Interior width×depth. roomId = Revit ElementId from create_room response (e.g. 1820053), NEVER room number 1/2/3.",
+                    "Interior width×depth (default placement=interior; exterior only if user asks). " +
+                    "roomId = Revit ElementId from create_room response (e.g. 1820053), NEVER room number 1/2/3. " +
+                    "Dense plans: selective rooms or higher offsetMm. After ≥3 rooms verify via get_current_view_elements OST_Dimensions.",
                     P(R("roomId"),
                     ("roomId", N(), "ElementId from create_room"),
                     ("placement", E("interior", "exterior"), "interior = inside room (default)"),
