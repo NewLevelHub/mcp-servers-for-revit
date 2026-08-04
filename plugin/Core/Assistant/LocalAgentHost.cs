@@ -23,6 +23,12 @@ namespace revit_mcp_plugin.Core.Assistant
         public bool Cancelled { get; set; }
         public bool Failed { get; set; }
         public IList<string> DoneSummary { get; set; } = new List<string>();
+        /// <summary>Final model id used for the turn (REV-124).</summary>
+        public string Model { get; set; }
+        public int PromptTokens { get; set; }
+        public int CompletionTokens { get; set; }
+        /// <summary>True when the turn upgraded from fast to smart mid-flight.</summary>
+        public bool EscalatedToSmart { get; set; }
     }
 
     /// <summary>
@@ -76,6 +82,8 @@ namespace revit_mcp_plugin.Core.Assistant
         public event Func<PendingAskUser, Task<AskUserAnswer>> AskUserRequested;
         /// <summary>Raised when older messages were dropped to keep context within limits.</summary>
         public event Action HistoryTrimmed;
+        /// <summary>REV-124: raised when the turn upgrades fast → smart (UI shows notice).</summary>
+        public event Action<string> ModelEscalated;
         /// <summary>REV-126: history fill changed (turns / chars) — update context meter.</summary>
         public event Action<HistoryBudget> HistoryBudgetChanged;
         /// <summary>REV-120: plan checklist declared or a step status changed.</summary>
@@ -390,20 +398,23 @@ namespace revit_mcp_plugin.Core.Assistant
 
             ApplyHistoryLimitsFromSettings(settings);
 
-            var client = new OpenAiCompatibleClient(
-                settings.AssistantApiKey,
-                settings.AssistantApiBaseUrl,
-                settings.AssistantModel,
-                settings.AssistantTemperature,
-                settings.AssistantMaxTokens);
+            // IntentRouter always uses the cheap/fast model (REV-124).
+            var fastModel = ModelRouter.NormalizeFast(settings.AssistantModel);
+            var smartModel = ModelRouter.NormalizeSmart(settings.AssistantModelSmart);
+            var routerClient = CreateChatClient(settings, fastModel);
 
             var activeProfiles = ToolCatalog.NormalizeProfiles(toolProfiles);
             if (activeProfiles.Count == 0)
             {
-                activeProfiles = await IntentRouter.ResolveAsync(userMessage, client, cancellationToken)
+                activeProfiles = await IntentRouter.ResolveAsync(userMessage, routerClient, cancellationToken)
                     .ConfigureAwait(false);
                 activeProfiles = ToolCatalog.NormalizeProfiles(activeProfiles);
             }
+
+            var modelId = ModelRouter.Resolve(fastModel, smartModel, activeProfiles, out var usingSmart);
+            var client = usingSmart && modelId == smartModel
+                ? CreateChatClient(settings, modelId)
+                : (modelId == fastModel ? routerClient : CreateChatClient(settings, modelId));
 
             var tools = ToolCatalog.GetOpenAiTools(activeProfiles);
             var done = new List<string>();
@@ -439,12 +450,13 @@ namespace revit_mcp_plugin.Core.Assistant
             AgentPlan activePlan = null;
             var budgetWarningSent = false;
             var askUserUsed = false;
+            var consecutiveToolFailures = 0;
             var turnLog = new TurnLogEntry
             {
                 TurnId = turnId ?? Guid.NewGuid().ToString("N").Substring(0, 12),
                 SessionId = _sessionId,
                 Ts = DateTime.UtcNow,
-                Model = settings.AssistantModel ?? "gpt-4o-mini",
+                Model = modelId,
                 UserText = userMessage,
                 ToolProfiles = activeProfiles.ToList(),
             };
@@ -501,19 +513,20 @@ namespace revit_mcp_plugin.Core.Assistant
                     }
                     catch (OperationCanceledException)
                     {
-                        return CancelledResult(done, activePlan);
+                        return CancelledResult(done, activePlan, turnLog);
                     }
                     catch (Exception ex)
                     {
                         if (IsCancel(ex, cancellationToken))
-                            return CancelledResult(done, activePlan);
+                            return CancelledResult(done, activePlan, turnLog);
 
-                        return new AgentTurnResult
-                        {
-                            Failed = true,
-                            Reply = ex.Message,
-                            DoneSummary = done
-                        };
+                        turnLog.Rounds = round + 1;
+                        turnLog.Outcome = "failed";
+                        turnLog.TotalMs = turnSw.ElapsedMilliseconds;
+                        turnLog.Reply = ex.Message;
+                        turnLog.ToolProfiles = activeProfiles.ToList();
+                        AssistantTurnLogger.Write(turnLog);
+                        return FinishTurn(turnLog, ex.Message, done, failed: true);
                     }
 
                     // Capture token usage from API response (REV-121: usage available to caller/logs).
@@ -532,12 +545,7 @@ namespace revit_mcp_plugin.Core.Assistant
                         turnLog.Reply = "Пустой ответ от ИИ.";
                         turnLog.ToolProfiles = activeProfiles.ToList();
                         AssistantTurnLogger.Write(turnLog);
-                        return new AgentTurnResult
-                        {
-                            Failed = true,
-                            Reply = "Пустой ответ от ИИ. Попробуйте ещё раз.",
-                            DoneSummary = done
-                        };
+                        return FinishTurn(turnLog, "Пустой ответ от ИИ. Попробуйте ещё раз.", done, failed: true);
                     }
 
                     lock (_historyLock)
@@ -561,11 +569,7 @@ namespace revit_mcp_plugin.Core.Assistant
                         AssistantTurnLogger.Write(turnLog);
 
                         RaiseStatus("Готов");
-                        return new AgentTurnResult
-                        {
-                            Reply = replyText,
-                            DoneSummary = done
-                        };
+                        return FinishTurn(turnLog, replyText, done);
                     }
 
                     foreach (JToken callTok in toolCalls)
@@ -596,6 +600,13 @@ namespace revit_mcp_plugin.Core.Assistant
                                     turnLog.ProfileEscalations.Add(p);
                                 AppendToolResult(callId, BuildProfileEscalationPayload(name, missing, activeProfiles));
                                 done.Add("профиль +" + string.Join("+", missing) + " для " + name);
+                                // REV-124: adding a smart profile while still on fast → upgrade model.
+                                if (ModelRouter.RequiresSmart(missing)
+                                    && TryEscalateModel(settings, smartModel, "profile:" + string.Join("+", missing),
+                                        ref client, ref usingSmart, turnLog))
+                                {
+                                    done.Add("модель→smart");
+                                }
                                 continue;
                             }
 
@@ -611,6 +622,12 @@ namespace revit_mcp_plugin.Core.Assistant
                                     ToolCatalog.ResolveProfilesForTool(name),
                                     activeProfiles));
                                 done.Add("профиль↑ для " + name);
+                                if (ModelRouter.RequiresSmart(activeProfiles)
+                                    && TryEscalateModel(settings, smartModel, "profile_reorder:" + name,
+                                        ref client, ref usingSmart, turnLog))
+                                {
+                                    done.Add("модель→smart");
+                                }
                                 continue;
                             }
 
@@ -622,6 +639,14 @@ namespace revit_mcp_plugin.Core.Assistant
                                 ["message"] = ToolCatalog.DescribeUnavailableTool(rawName),
                             }.ToString());
                             done.Add("ошибка: неизвестный tool " + rawName);
+                            consecutiveToolFailures++;
+                            if (consecutiveToolFailures >= 3
+                                && TryEscalateModel(settings, smartModel, "errors:3",
+                                    ref client, ref usingSmart, turnLog))
+                            {
+                                consecutiveToolFailures = 0;
+                                done.Add("модель→smart");
+                            }
                             continue;
                         }
 
@@ -834,8 +859,38 @@ namespace revit_mcp_plugin.Core.Assistant
                         }
 
                         // REV-120: block 3rd identical tool+args (loop guard).
+                        // REV-124: on stall while still on fast — escalate to smart once.
                         if (!loopGuard.TryAllow(toolName, enrichedArgs, out _))
                         {
+                            if (TryEscalateModel(settings, smartModel, "loop:" + toolName,
+                                ref client, ref usingSmart, turnLog))
+                            {
+                                var upgraded = new JObject
+                                {
+                                    ["ok"] = false,
+                                    ["error"] = "loop_escalated",
+                                    ["hint"] = ModelRouter.EscalationNotice +
+                                               " Измени подход или аргументы — повтор с теми же аргументами запрещён.",
+                                    ["tool"] = toolName ?? "",
+                                };
+                                AppendToolResult(callId, upgraded.ToString());
+                                done.Add("модель→smart (цикл)");
+                                toolSw.Stop();
+                                turnLog.ToolCalls.Add(new ToolCallLog
+                                {
+                                    Round = round,
+                                    Name = toolName,
+                                    Args = argsJson,
+                                    NormalizedArgs = enrichedArgs,
+                                    Ok = false,
+                                    DurationMs = toolSw.ElapsedMilliseconds,
+                                    Error = "loop_escalated",
+                                    ResultBytes = upgraded.ToString().Length,
+                                });
+                                consecutiveToolFailures = 0;
+                                continue;
+                            }
+
                             var blocked = ToolCallLoopGuard.BlockPayload(toolName);
                             AppendToolResult(callId, blocked.ToString());
                             done.Add("ошибка: повтор " + FriendlyToolName(toolName));
@@ -851,6 +906,7 @@ namespace revit_mcp_plugin.Core.Assistant
                                 Error = "loop_blocked",
                                 ResultBytes = blocked.ToString().Length,
                             });
+                            consecutiveToolFailures++;
                             continue;
                         }
 
@@ -883,7 +939,7 @@ namespace revit_mcp_plugin.Core.Assistant
                             AppendToolResult(callId, CancelledToolPayload());
                             // Fill remaining sibling calls so history stays valid for the next turn.
                             FillRemainingToolResults(toolCalls, callTok);
-                            return CancelledResult(done, activePlan);
+                            return CancelledResult(done, activePlan, turnLog);
                         }
                         catch (Exception ex)
                         {
@@ -891,7 +947,7 @@ namespace revit_mcp_plugin.Core.Assistant
                             {
                                 AppendToolResult(callId, CancelledToolPayload());
                                 FillRemainingToolResults(toolCalls, callTok);
-                                return CancelledResult(done, activePlan);
+                                return CancelledResult(done, activePlan, turnLog);
                             }
 
                             rawResult = new JObject
@@ -932,16 +988,27 @@ namespace revit_mcp_plugin.Core.Assistant
 
                         if (ok)
                         {
+                            consecutiveToolFailures = 0;
                             done.Add(string.IsNullOrWhiteSpace(highlightExtra)
                                 ? summary
                                 : summary + " · " + highlightExtra);
                         }
                         else
+                        {
                             done.Add("ошибка: " + summary);
+                            consecutiveToolFailures++;
+                            if (consecutiveToolFailures >= 3
+                                && TryEscalateModel(settings, smartModel, "errors:3",
+                                    ref client, ref usingSmart, turnLog))
+                            {
+                                consecutiveToolFailures = 0;
+                                done.Add("модель→smart");
+                            }
+                        }
                     }
 
                     if (cancellationToken.IsCancellationRequested)
-                        return CancelledResult(done, activePlan);
+                        return CancelledResult(done, activePlan, turnLog);
                 }
 
                 var maxRoundsReply = AgentPlan.BuildPartialReply(
@@ -958,12 +1025,7 @@ namespace revit_mcp_plugin.Core.Assistant
                 AssistantTurnLogger.Write(turnLog);
 
                 RaiseStatus("Готов");
-                return new AgentTurnResult
-                {
-                    Failed = true,
-                    Reply = maxRoundsReply,
-                    DoneSummary = done
-                };
+                return FinishTurn(turnLog, maxRoundsReply, done, failed: true);
             }
             catch (OperationCanceledException)
             {
@@ -972,7 +1034,7 @@ namespace revit_mcp_plugin.Core.Assistant
                 turnLog.TotalMs = turnSw.ElapsedMilliseconds;
                 turnLog.ToolProfiles = activeProfiles.ToList();
                 AssistantTurnLogger.Write(turnLog);
-                return CancelledResult(done, activePlan);
+                return CancelledResult(done, activePlan, turnLog);
             }
             finally
             {
@@ -980,14 +1042,72 @@ namespace revit_mcp_plugin.Core.Assistant
             }
         }
 
-        private static AgentTurnResult CancelledResult(IList<string> done, AgentPlan plan = null)
+        private static OpenAiCompatibleClient CreateChatClient(ServiceSettings settings, string model)
+        {
+            return new OpenAiCompatibleClient(
+                settings.AssistantApiKey,
+                settings.AssistantApiBaseUrl,
+                model,
+                settings.AssistantTemperature,
+                settings.AssistantMaxTokens);
+        }
+
+        /// <summary>REV-124: one-shot fast→smart upgrade; injects notice into history + UI event.</summary>
+        private bool TryEscalateModel(
+            ServiceSettings settings,
+            string smartModel,
+            string reason,
+            ref OpenAiCompatibleClient client,
+            ref bool usingSmart,
+            TurnLogEntry turnLog)
+        {
+            if (!ModelRouter.CanEscalate(smartModel, usingSmart))
+                return false;
+
+            usingSmart = true;
+            client = CreateChatClient(settings, smartModel);
+            if (turnLog != null)
+            {
+                turnLog.Model = smartModel;
+                turnLog.ModelEscalations.Add(reason ?? "escalate");
+            }
+
+            AppendSystemMessage(ModelRouter.EscalationNotice);
+            RaiseStatus("Сильная модель…");
+            try { ModelEscalated?.Invoke(ModelRouter.EscalationNotice); }
+            catch { /* UI may be disposed */ }
+            return true;
+        }
+
+        private static AgentTurnResult FinishTurn(
+            TurnLogEntry turnLog,
+            string reply,
+            IList<string> done,
+            bool failed = false,
+            bool cancelled = false)
         {
             return new AgentTurnResult
             {
-                Cancelled = true,
-                Reply = AgentPlan.BuildPartialReply("Остановлено.", done, plan),
-                DoneSummary = done ?? new List<string>()
+                Reply = reply,
+                Failed = failed,
+                Cancelled = cancelled,
+                DoneSummary = done ?? new List<string>(),
+                Model = turnLog != null ? turnLog.Model : null,
+                PromptTokens = turnLog != null ? turnLog.PromptTokens : 0,
+                CompletionTokens = turnLog != null ? turnLog.CompletionTokens : 0,
+                EscalatedToSmart = turnLog != null
+                    && turnLog.ModelEscalations != null
+                    && turnLog.ModelEscalations.Count > 0
             };
+        }
+
+        private static AgentTurnResult CancelledResult(IList<string> done, AgentPlan plan = null, TurnLogEntry turnLog = null)
+        {
+            return FinishTurn(
+                turnLog,
+                AgentPlan.BuildPartialReply("Остановлено.", done, plan),
+                done ?? new List<string>(),
+                cancelled: true);
         }
 
         private static bool IsCancel(Exception ex, CancellationToken token)

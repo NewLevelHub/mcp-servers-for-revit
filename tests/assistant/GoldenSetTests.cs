@@ -192,7 +192,10 @@ public class GoldenSetTests
         }
 
         var baseUrl = Environment.GetEnvironmentVariable("ASSISTANT_API_BASE_URL") ?? "https://api.openai.com/v1";
-        var model = Environment.GetEnvironmentVariable("ASSISTANT_MODEL") ?? "gpt-4o-mini";
+        // REV-124: ASSISTANT_MODEL_SMART overrides for a strong-model pass; else ASSISTANT_MODEL / mini.
+        var model = Environment.GetEnvironmentVariable("ASSISTANT_MODEL_SMART");
+        if (string.IsNullOrWhiteSpace(model))
+            model = Environment.GetEnvironmentVariable("ASSISTANT_MODEL") ?? "gpt-4o-mini";
         var client = new OpenAiCompatibleClient(key, baseUrl, model);
         var cases = GoldenCaseLoader.LoadAll();
         var results = new List<GoldenCaseResult>();
@@ -207,12 +210,13 @@ public class GoldenSetTests
             results.Add(GoldenScorer.Score(c, calls, reply, tokens));
         }
 
-        var report = GoldenScorer.Aggregate(results, "live-dry-run");
+        var report = GoldenScorer.Aggregate(results, "live-dry-run:" + model);
         var outDir = Path.Combine(GoldenCaseLoader.GoldenDir, "reports");
         Directory.CreateDirectory(outDir);
         var stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
-        File.WriteAllText(Path.Combine(outDir, $"live-{stamp}.md"), report.ToMarkdown());
-        File.WriteAllText(Path.Combine(outDir, $"live-{stamp}.json"),
+        var safeModel = string.Join("-", (model ?? "model").Split(Path.GetInvalidFileNameChars()));
+        File.WriteAllText(Path.Combine(outDir, $"live-{safeModel}-{stamp}.md"), report.ToMarkdown());
+        File.WriteAllText(Path.Combine(outDir, $"live-{safeModel}-{stamp}.json"),
             Newtonsoft.Json.JsonConvert.SerializeObject(report, Newtonsoft.Json.Formatting.Indented));
 
         Assert.True(report.ForbidAccuracy >= 1.0, report.ToMarkdown());

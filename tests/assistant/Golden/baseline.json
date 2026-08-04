@@ -1,7 +1,7 @@
 {
-  "id": "baseline-rev-126",
-  "recordedAt": "2026-07-31",
-  "note": "Scripted dry-run after REV-126 dialog memory (ConversationHistory + memory-eight-turns history case). Catalog JSON size for annotation profile is much smaller than full catalog. Live LLM baseline: run tests/assistant/run-golden.ps1 -Live.",
+  "id": "baseline-rev-124",
+  "recordedAt": "2026-08-04",
+  "note": "Scripted dry-run after REV-124 model routing (ModelRouter: data/core→fast, modeling|annotation|norms|schedules|sheets→smart when AssistantModelSmart set). Empty smart = always AssistantModel (compat). Live: ASSISTANT_MODEL / optional second pass with ASSISTANT_MODEL_SMART — compare reports under Golden/reports/.",
   "targets": {
     "firstToolAccuracy": 0.9,
     "forbidAccuracy": 1.0,

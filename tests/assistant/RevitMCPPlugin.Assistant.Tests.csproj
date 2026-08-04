@@ -42,6 +42,8 @@
     <Compile Include="..\..\plugin\Core\Assistant\IChatCompletionsClient.cs" Link="IChatCompletionsClient.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\ConversationHistory.cs" Link="ConversationHistory.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\SessionCreationJournal.cs" Link="SessionCreationJournal.cs" />
+    <Compile Include="..\..\plugin\Core\Assistant\ModelRouter.cs" Link="ModelRouter.cs" />
+    <Compile Include="..\..\plugin\Configuration\ServiceSettings.cs" Link="ServiceSettings.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Golden\*.json" CopyToOutputDirectory="PreserveNewest" Link="golden\%(Filename)%(Extension)" />

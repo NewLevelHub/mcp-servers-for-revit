@@ -45,10 +45,17 @@ namespace revit_mcp_plugin.UI.Assistant
         private string _selectedReason;
         private readonly List<Button> _reasonChips = new List<Button>();
         private TextBox _commentBox;
+        private readonly string _metaFooter;
 
-        public ChatBubble(string text, bool fromUser, IList<ChatAttachment> attachments = null, string turnId = null)
+        public ChatBubble(
+            string text,
+            bool fromUser,
+            IList<ChatAttachment> attachments = null,
+            string turnId = null,
+            string metaFooter = null)
         {
             _turnId = turnId ?? Guid.NewGuid().ToString("N").Substring(0, 8);
+            _metaFooter = metaFooter;
 
             Margin = new Thickness(0, 0, 0, 10);
             ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -110,6 +117,19 @@ namespace revit_mcp_plugin.UI.Assistant
             actionRow.Children.Add(_dislikeBtn);
             actionRow.Children.Add(copyBtn);
             outer.Children.Add(actionRow);
+
+            // REV-124: model + tokens under the action row.
+            if (!string.IsNullOrWhiteSpace(_metaFooter))
+            {
+                outer.Children.Add(new TextBlock
+                {
+                    Text = _metaFooter,
+                    FontSize = 10.5,
+                    Foreground = new SolidColorBrush(Color.FromRgb(0x8A, 0x96, 0xA8)),
+                    Margin = new Thickness(2, 2, 0, 0),
+                    TextWrapping = TextWrapping.Wrap,
+                });
+            }
 
             // Dislike form (hidden until 👎 pressed)
             _dislikeForm = BuildDislikeForm();
