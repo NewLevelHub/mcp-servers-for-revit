@@ -24,6 +24,15 @@
       <Setter Property="Background" Value="#F7FAFC"/>
       <Setter Property="FontSize" Value="13"/>
     </Style>
+    <Style TargetType="ComboBox" x:Key="FieldCombo">
+      <Setter Property="Height" Value="34"/>
+      <Setter Property="Padding" Value="8,4"/>
+      <Setter Property="BorderBrush" Value="#D5DEE8"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Background" Value="#F7FAFC"/>
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="IsEditable" Value="False"/>
+    </Style>
   </Page.Resources>
 
   <ScrollViewer VerticalScrollBarVisibility="Auto">
@@ -55,34 +64,9 @@
           <TextBox x:Name="BaseUrlBox" Style="{StaticResource FieldBox}"
                    Text="https://api.openai.com/v1"/>
 
-          <TextBlock Text="Быстрая модель (чтение, одношаговые)" FontSize="12" Foreground="#5B6B7C"
+          <TextBlock Text="Модель" FontSize="12" Foreground="#5B6B7C"
                      Margin="0,12,0,4"/>
-          <TextBox x:Name="ModelBox" Style="{StaticResource FieldBox}" Text="gpt-4o-mini"/>
-
-          <TextBlock Text="Сильная модель (пусто = всегда быстрая)" FontSize="12" Foreground="#5B6B7C"
-                     Margin="0,12,0,4"/>
-          <TextBox x:Name="SmartModelBox" Style="{StaticResource FieldBox}"
-                   Text="" ToolTip="Например gpt-4o. Пусто — роутинг выключен."/>
-
-          <TextBlock Text="Temperature (0 — стабильный tool-calling)" FontSize="12" Foreground="#5B6B7C"
-                     Margin="0,12,0,4"/>
-          <TextBox x:Name="TemperatureBox" Style="{StaticResource FieldBox}" Text="0"/>
-
-          <TextBlock Text="Max tokens (пусто — лимит провайдера)" FontSize="12" Foreground="#5B6B7C"
-                     Margin="0,12,0,4"/>
-          <TextBox x:Name="MaxTokensBox" Style="{StaticResource FieldBox}" Text="4096"/>
-
-          <CheckBox x:Name="RequireConfirmCheckBox"
-                    Content="Подтверждать опасные действия (удаление / C#)"
-                    IsChecked="True" Margin="0,16,0,0" FontSize="12.5" Foreground="#1A2744"/>
-
-          <TextBlock Text="Порог удаления (спрашивать при ≥ N элементов)" FontSize="12" Foreground="#5B6B7C"
-                     Margin="0,12,0,4"/>
-          <TextBox x:Name="ConfirmDeleteThresholdBox" Style="{StaticResource FieldBox}" Text="20"/>
-
-          <TextBlock Text="Память диалога (предыдущих реплик, 4–20)" FontSize="12" Foreground="#5B6B7C"
-                     Margin="0,12,0,4"/>
-          <TextBox x:Name="MaxPreviousUserTurnsBox" Style="{StaticResource FieldBox}" Text="12"/>
+          <ComboBox x:Name="ModelCombo" Style="{StaticResource FieldCombo}"/>
         </StackPanel>
       </Border>
 

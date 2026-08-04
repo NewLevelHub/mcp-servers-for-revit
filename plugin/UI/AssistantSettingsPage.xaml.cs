@@ -1,4 +1,4 @@
-using System.Globalization;
+using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
 using revit_mcp_plugin.Configuration;
@@ -7,6 +7,16 @@ namespace revit_mcp_plugin.UI
 {
     public partial class AssistantSettingsPage : Page
     {
+        private static readonly string[] DefaultModelOptions =
+        {
+            "gpt-4o-mini",
+            "gpt-4o",
+            "gpt-4-turbo",
+            "gpt-3.5-turbo",
+            "o3-mini",
+            "o1-mini",
+        };
+
         public AssistantSettingsPage()
         {
             InitializeComponent();
@@ -26,20 +36,19 @@ namespace revit_mcp_plugin.UI
             BaseUrlBox.Text = string.IsNullOrWhiteSpace(s.AssistantApiBaseUrl)
                 ? "https://api.openai.com/v1"
                 : s.AssistantApiBaseUrl;
-            ModelBox.Text = string.IsNullOrWhiteSpace(s.AssistantModel)
+
+            var model = string.IsNullOrWhiteSpace(s.AssistantModel)
                 ? "gpt-4o-mini"
-                : s.AssistantModel;
-            SmartModelBox.Text = s.AssistantModelSmart ?? "";
-            TemperatureBox.Text = s.AssistantTemperature.ToString("0.##", CultureInfo.InvariantCulture);
-            MaxTokensBox.Text = s.AssistantMaxTokens.HasValue && s.AssistantMaxTokens.Value > 0
-                ? s.AssistantMaxTokens.Value.ToString(CultureInfo.InvariantCulture)
-                : "";
-            RequireConfirmCheckBox.IsChecked = s.AssistantRequireConfirmations;
-            ConfirmDeleteThresholdBox.Text = (s.AssistantConfirmDeleteThreshold > 0
-                ? s.AssistantConfirmDeleteThreshold
-                : 20).ToString(CultureInfo.InvariantCulture);
-            MaxPreviousUserTurnsBox.Text = ClampTurns(s.AssistantMaxPreviousUserTurns)
-                .ToString(CultureInfo.InvariantCulture);
+                : s.AssistantModel.Trim();
+            if (!string.IsNullOrWhiteSpace(s.AssistantModelSmart))
+                model = s.AssistantModelSmart.Trim();
+
+            var items = new List<string>(DefaultModelOptions);
+            if (!items.Contains(model))
+                items.Insert(0, model);
+
+            ModelCombo.ItemsSource = items;
+            ModelCombo.SelectedItem = model;
         }
 
         private void SaveButton_Click(object sender, RoutedEventArgs e)
@@ -47,57 +56,10 @@ namespace revit_mcp_plugin.UI
             var s = PluginSettingsStore.LoadSettings();
             s.AssistantApiKey = ApiKeyBox.Password ?? "";
             s.AssistantApiBaseUrl = (BaseUrlBox.Text ?? "").Trim();
-            s.AssistantModel = (ModelBox.Text ?? "").Trim();
-            s.AssistantModelSmart = (SmartModelBox.Text ?? "").Trim();
-            s.AssistantTemperature = ParseTemperature(TemperatureBox.Text);
-            s.AssistantMaxTokens = ParseMaxTokens(MaxTokensBox.Text);
-            s.AssistantRequireConfirmations = RequireConfirmCheckBox.IsChecked == true;
-            s.AssistantConfirmDeleteThreshold = ParseThreshold(ConfirmDeleteThresholdBox.Text);
-            s.AssistantMaxPreviousUserTurns = ParseMaxTurns(MaxPreviousUserTurnsBox.Text);
+            s.AssistantModel = (ModelCombo.SelectedItem as string ?? "gpt-4o-mini").Trim();
+            s.AssistantModelSmart = "";
             PluginSettingsStore.SaveSettings(s);
             SaveStatusText.Text = "Сохранено";
-        }
-
-        private static double ParseTemperature(string text)
-        {
-            if (string.IsNullOrWhiteSpace(text))
-                return 0;
-            if (!double.TryParse(text.Trim().Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out var t))
-                return 0;
-            if (t < 0) return 0;
-            if (t > 2) return 2;
-            return t;
-        }
-
-        private static int? ParseMaxTokens(string text)
-        {
-            if (string.IsNullOrWhiteSpace(text))
-                return null;
-            if (!int.TryParse(text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) || n <= 0)
-                return null;
-            return n;
-        }
-
-        private static int ParseThreshold(string text)
-        {
-            if (!int.TryParse((text ?? "").Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) || n < 1)
-                return 20;
-            if (n > 100000) return 100000;
-            return n;
-        }
-
-        private static int ParseMaxTurns(string text)
-        {
-            if (!int.TryParse((text ?? "").Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var n))
-                return 12;
-            return ClampTurns(n);
-        }
-
-        private static int ClampTurns(int n)
-        {
-            if (n < 4) return 4;
-            if (n > 20) return 20;
-            return n;
         }
     }
 }
