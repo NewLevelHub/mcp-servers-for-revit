@@ -40,6 +40,22 @@ public sealed class GoldenCase
     [JsonProperty("firstToolMustBe")]
     public string? FirstToolMustBe { get; set; }
 
+    /// <summary>REV-126: history infrastructure case (not LLM dry-run).</summary>
+    [JsonProperty("kind")]
+    public string Kind { get; set; } = "";
+
+    [JsonProperty("turns")]
+    public List<string> Turns { get; set; } = new();
+
+    [JsonProperty("retainPhrase")]
+    public string? RetainPhrase { get; set; }
+
+    [JsonProperty("maxPreviousUserTurns")]
+    public int MaxPreviousUserTurns { get; set; } = 12;
+
+    public bool IsHistoryCase =>
+        string.Equals(Kind, "history", StringComparison.OrdinalIgnoreCase);
+
     public static IReadOnlyList<string> RequiredGroups { get; } =
     [
         "read",

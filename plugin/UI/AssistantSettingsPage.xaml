@@ -73,6 +73,10 @@
           <TextBlock Text="Порог удаления (спрашивать при ≥ N элементов)" FontSize="12" Foreground="#5B6B7C"
                      Margin="0,12,0,4"/>
           <TextBox x:Name="ConfirmDeleteThresholdBox" Style="{StaticResource FieldBox}" Text="20"/>
+
+          <TextBlock Text="Память диалога (предыдущих реплик, 4–20)" FontSize="12" Foreground="#5B6B7C"
+                     Margin="0,12,0,4"/>
+          <TextBox x:Name="MaxPreviousUserTurnsBox" Style="{StaticResource FieldBox}" Text="12"/>
         </StackPanel>
       </Border>
 

@@ -140,6 +140,8 @@
           <TextBlock Text="AI-ассистент" FontSize="15" FontWeight="SemiBold" Foreground="White"/>
           <TextBlock x:Name="ContextText" Text="Вид: —" FontSize="10.5" Foreground="#A8C0D8"
                      TextWrapping="Wrap" Margin="0,2,0,0"/>
+          <TextBlock x:Name="ContextMeterText" Text="Контекст: 0/13" FontSize="10" Foreground="#7A9BB8"
+                     Margin="0,2,0,0"/>
         </StackPanel>
 
         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
@@ -163,7 +165,7 @@
             </Button.Template>
           </Button>
           <Button x:Name="NewChatButton" Content="+ Новый"
-                  ToolTip="Очистить историю и начать новый чат"
+                  ToolTip="Новый диалог — очистить историю и журнал созданных элементов"
                   Margin="0,0,8,0" Padding="10,5" FontSize="11" FontWeight="SemiBold"
                   Cursor="Hand" Click="NewChatButton_Click"
                   Background="#2F5D8A" Foreground="White" BorderThickness="0">

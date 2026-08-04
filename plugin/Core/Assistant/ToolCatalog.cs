@@ -794,8 +794,9 @@ namespace revit_mcp_plugin.Core.Assistant
                 ("baseOffset", N(), "mm, usually 0"));
             var pointItem = P(R("typeId", "hostWallId", "locationPoint"),
                 ("typeId", N(), "from get_available_family_types"),
-                ("hostWallId", N(), "host wall ElementId"),
-                ("locationPoint", xyz, "insertion point, mm"),
+                ("hostWallId", N(), "host wall ElementId — shared partition of the two rooms being connected"),
+                ("locationPoint", xyz, "on host wall centerline (±50–150 mm into the room the door should face)"),
+                ("facingFlipped", B(), "optional; flip door facing if auto side from locationPoint is wrong"),
                 ("baseLevel", N(), "mm"),
                 ("baseOffset", N(), "mm"),
                 ("height", N(), "mm"),
@@ -895,9 +896,11 @@ namespace revit_mcp_plugin.Core.Assistant
                       ("value", O(), "true"))),
                 T("create_point_based_element",
                     "Create doors, windows, furniture at a point (mm). REQUIRED: typeId + hostWallId + locationPoint. " +
-                    "For doors/windows: locationPoint MUST lie on the SAME host wall centerline " +
-                    "(use midpoint of that wall Start/End from get_current_view_elements OST_Walls). " +
-                    "Wrong hostWallId for the point → door sits perpendicular / outside. Do not pass rotation for doors.",
+                    "hostWallId = partition BETWEEN the two rooms linked by adjacency (guest WC → hall wall, not kitchen). " +
+                    "locationPoint on that wall centerline, ≥600 mm from corners; offset 50–150 mm into the room " +
+                    "the leaf should face (kitchen service → into kitchen; WC → into cabin). " +
+                    "Optional facingFlipped if auto orientation is wrong. Do not pass rotation for doors. " +
+                    "Wrong hostWallId → door sits perpendicular / outside.",
                     P(R("data"),
                       ("data", AItems(pointItem), "doors/windows/furniture"))),
                 T("create_surface_based_element",

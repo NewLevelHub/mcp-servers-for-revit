@@ -40,6 +40,8 @@
     <Compile Include="..\..\plugin\Core\Assistant\OpenAiCompatibleClient.cs" Link="OpenAiCompatibleClient.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\IAssistantToolExecutor.cs" Link="IAssistantToolExecutor.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\IChatCompletionsClient.cs" Link="IChatCompletionsClient.cs" />
+    <Compile Include="..\..\plugin\Core\Assistant\ConversationHistory.cs" Link="ConversationHistory.cs" />
+    <Compile Include="..\..\plugin\Core\Assistant\SessionCreationJournal.cs" Link="SessionCreationJournal.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Golden\*.json" CopyToOutputDirectory="PreserveNewest" Link="golden\%(Filename)%(Extension)" />
