@@ -54,6 +54,7 @@ namespace revit_mcp_plugin.Core.Assistant
             {
                 [Profiles.Modeling] = new[]
                 {
+                    "get_cad_link_geometry",
                     "create_line_based_element",
                     "create_point_based_element",
                     "create_surface_based_element",
@@ -763,6 +764,7 @@ namespace revit_mcp_plugin.Core.Assistant
                 ["fit_schedule_to_sheet"] = "подгонка спеки на лист",
                 ["get_door_egress_info"] = "эвак. данные дверей",
                 ["get_opening_geometry_info"] = "геометрия проёмов",
+                ["get_cad_link_geometry"] = "геометрия DWG/CAD",
                 ["get_vertical_circulation_info"] = "лестницы / пандусы",
                 ["create_detail_lines"] = "линии деталировки",
                 ["create_detail_view"] = "вид детали",
@@ -1181,6 +1183,14 @@ namespace revit_mcp_plugin.Core.Assistant
                     ("levelName", S(), null))),
                 T("get_opening_geometry_info", "Window sill height, opening height (mm).", P(
                     ("levelName", S(), null))),
+                T("get_cad_link_geometry",
+                    "Read DWG/CAD ImportInstance lines in mm (startMm/endMm/layer). Before tracing walls from CAD.",
+                    P(
+                        ("cadLinkName", S(), null),
+                        ("layerFilter", S(), "layer name or substring"),
+                        ("viewId", N(), null),
+                        ("minLengthMm", N(), null),
+                        ("limit", N(), null))),
                 T("get_vertical_circulation_info", "Stair/ramp/railing geometry for norms (mm).", P(
                     ("levelName", S(), null))),
                 T("create_detail_lines", "Detail polylines on plan/detail view (mm).", P(

@@ -71,7 +71,8 @@ namespace revit_mcp_plugin.Core.Assistant
 
             if (ContainsAny(text,
                     "стен", "двер", "окон", "комнат", "помещен", "лестниц", "огражден",
-                    "создай пол", "перекрыт", "шахт", "create_line", "create_room", "create_point"))
+                    "создай пол", "перекрыт", "шахт", "create_line", "create_room", "create_point",
+                    "dwg", "cad", "подложк", "перечерт", "обведи", "по подлож"))
                 hits.Add(ToolCatalog.Profiles.Modeling);
 
             if (ContainsAny(text,

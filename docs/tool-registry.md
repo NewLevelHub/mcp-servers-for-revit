@@ -49,7 +49,7 @@ request instead of the full ~70.
 | Layer | Contents |
 |-------|----------|
 | **core** (always) | `get_current_view_info`, `get_current_view_elements`, `get_selected_elements`, `get_available_family_types`, `get_element_parameters`, `set_element_parameter`, `export_room_data`, `operate_element`, `delete_element`, `query_norm_rules` |
-| **modeling** | `create_line/point/surface_based_element`, `create_room`, `create_level`, `create_stair`, `create_railing`, `create_floor_opening`, `create_structural_framing_system` |
+| **modeling** | `get_cad_link_geometry` (DWG lines mm), `create_line/point/surface_based_element`, `create_room`, `create_level`, `create_stair`, `create_railing`, `create_floor_opening`, `create_structural_framing_system` |
 | **annotation** | grids, dimensions, `tag_rooms` / `tag_walls`, text notes, detail lines/views, `color_splash` |
 | **schedules** | door/window/floor schedules, floor explication, TEP (`render_tep_table` / `export_tep_data`), schedule configure/validate |
 | **sheets** | `create_sheet`, `place_view_on_sheet`, `auto_layout_sheet`, `fit_schedule_to_sheet` |
