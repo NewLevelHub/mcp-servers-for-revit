@@ -42,6 +42,7 @@ const SERVER_ONLY_TOOLS = new Set([
   "check_window_openings",
   "fill_title_block",
   "number_rooms",
+  "trace_walls_from_cad",
   "color_elements",
   "tag_all_rooms",
   "tag_all_walls",

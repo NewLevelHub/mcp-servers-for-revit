@@ -55,6 +55,7 @@ namespace revit_mcp_plugin.Core.Assistant
                 [Profiles.Modeling] = new[]
                 {
                     "get_cad_link_geometry",
+                    "trace_walls_from_cad",
                     "create_line_based_element",
                     "create_point_based_element",
                     "create_surface_based_element",
@@ -765,6 +766,7 @@ namespace revit_mcp_plugin.Core.Assistant
                 ["get_door_egress_info"] = "эвак. данные дверей",
                 ["get_opening_geometry_info"] = "геометрия проёмов",
                 ["get_cad_link_geometry"] = "геометрия DWG/CAD",
+                ["trace_walls_from_cad"] = "стены по DWG/CAD",
                 ["get_vertical_circulation_info"] = "лестницы / пандусы",
                 ["create_detail_lines"] = "линии деталировки",
                 ["create_detail_view"] = "вид детали",
@@ -1191,6 +1193,17 @@ namespace revit_mcp_plugin.Core.Assistant
                         ("viewId", N(), null),
                         ("minLengthMm", N(), null),
                         ("limit", N(), null))),
+                T("trace_walls_from_cad",
+                    "Trace walls from DWG: read CAD segments, merge double lines to centerlines, create walls. wallTypeId required.",
+                    P(
+                        R("wallTypeId"),
+                        ("wallTypeId", N(), "Wall type id from get_available_family_types"),
+                        ("cadLinkName", S(), null),
+                        ("layerFilter", S(), "e.g. wall"),
+                        ("bboxMm", O(), "clip region mm"),
+                        ("toleranceMm", N(), "default 50"),
+                        ("dryRun", B(), "preview axes only"),
+                        ("heightMm", N(), "default 3000"))),
                 T("get_vertical_circulation_info", "Stair/ramp/railing geometry for norms (mm).", P(
                     ("levelName", S(), null))),
                 T("create_detail_lines", "Detail polylines on plan/detail view (mm).", P(

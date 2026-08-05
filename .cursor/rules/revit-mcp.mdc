@@ -94,6 +94,7 @@ MCP **не создаёт** новый проект. Сообщи пользов
 | Проверка связи | `say_hello` |
 | Вид / элементы | `get_current_view_info`, `get_current_view_elements`, `ai_element_filter` |
 | CAD / DWG подложка (линии в мм) | **`get_cad_link_geometry`** — сегменты ImportInstance для перечерчивания стен |
+| **Стены по DWG (пайплайн)** | **`trace_walls_from_cad`** — CAD → центрлинии → `create_line_based_element` + verify (REV-140). `wallTypeId` обязателен |
 | Выделение | `get_selected_elements` |
 | Типы семейств | `get_available_family_types` |
 | Стены, балки | `create_line_based_element` (**`typeId` обязателен**, иначе fail) |
