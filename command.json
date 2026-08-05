@@ -190,7 +190,7 @@
     },
     {
       "commandName": "dimension_grids",
-      "description": "Осевые размеры снаружи габарита здания (межосевые + габаритные)",
+      "description": "Наружные размеры от габарита здания: проёмы/простенки + межосевые + габаритные",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {

@@ -758,16 +758,52 @@ namespace RevitMCPCommandSet.Utils
         }
 
         /// <summary>
-        /// Place a door/window on the host wall at a fixed span fraction (ignores model XY along wall).
-        /// Near-corner points from the model cause «Конфликт с примыкающей стеной».
+        /// Normalized 0..1 parameter of <paramref name="point"/> along the wall centerline.
         /// </summary>
-        /// <param name="spanFraction">0..1 along wall; use 0.5 for one door, 1/3 and 2/3 for two.</param>
+        public static bool TryGetNormalizedParameterOnWall(
+            Wall wall,
+            XYZ point,
+            out double normalizedParam,
+            out double planarDistance)
+        {
+            normalizedParam = 0.5;
+            planarDistance = double.MaxValue;
+            if (wall == null || point == null)
+                return false;
+
+            LocationCurve locCurve = wall.Location as LocationCurve;
+            Curve curve = locCurve?.Curve;
+            if (curve == null)
+                return false;
+
+            XYZ p0 = curve.GetEndPoint(0);
+            IntersectionResult ir = curve.Project(new XYZ(point.X, point.Y, p0.Z));
+            if (ir == null)
+                return false;
+
+            planarDistance = new XYZ(point.X - ir.XYZPoint.X, point.Y - ir.XYZPoint.Y, 0).GetLength();
+            double n = curve.ComputeNormalizedParameter(ir.Parameter);
+            if (double.IsNaN(n) || double.IsInfinity(n))
+                return false;
+            normalizedParam = n;
+            return true;
+        }
+
+        /// <summary>
+        /// Place a door/window on the host wall.
+        /// Prefers projecting <paramref name="requested"/> onto the wall (so explicit XY is honored).
+        /// Falls back to <paramref name="spanFraction"/> only when the request cannot be projected
+        /// or <paramref name="preferRequestedPoint"/> is false (batch auto-spacing).
+        /// Clamps away from wall ends and nudges clear of T-junctions (no wall-through-door).
+        /// </summary>
         public static XYZ GetSafeOpeningPointOnWall(
             Wall wall,
             XYZ requested,
             double openingWidthFt,
             out string warning,
-            double spanFraction = 0.5)
+            double spanFraction = 0.5,
+            Document doc = null,
+            bool preferRequestedPoint = true)
         {
             warning = null;
             if (wall == null)
@@ -784,27 +820,161 @@ namespace RevitMCPCommandSet.Utils
             double z = requested?.Z ?? p0.Z;
 
             double n = spanFraction;
+            bool usedRequested = false;
+            if (preferRequestedPoint
+                && requested != null
+                && TryGetNormalizedParameterOnWall(wall, requested, out double paramN, out _))
+            {
+                n = paramN;
+                usedRequested = true;
+            }
+            else if (preferRequestedPoint && requested != null)
+            {
+                warning =
+                    $"locationPoint not on host wall {wall.Id.GetIntValue()}; used spanFraction={spanFraction:F2}.";
+            }
+
             if (n < 0.05) n = 0.05;
             if (n > 0.95) n = 0.95;
 
-            // Keep clear of ends even when fraction is extreme.
+            double insetN = 0.05;
             if (length > 1e-6)
             {
-                double clearanceFt = Math.Max(openingWidthFt * 0.5 + 900.0 / 304.8, 1200.0 / 304.8);
-                double insetN = Math.Min(0.40, clearanceFt / length);
+                // Shoulder ≥100 mm from etalon; keep ≥600 mm from raw ends when wall is long.
+                double clearanceFt = Math.Max(openingWidthFt * 0.5 + 100.0 / 304.8, 600.0 / 304.8);
+                insetN = Math.Min(0.40, clearanceFt / length);
                 if (n < insetN) n = insetN;
                 if (n > 1.0 - insetN) n = 1.0 - insetN;
             }
 
+            if (doc != null && length > 1e-6)
+                n = NudgeOpeningClearOfJunctions(doc, wall, curve, n, openingWidthFt, insetN, ref warning);
+
             if (length < openingWidthFt + 2400.0 / 304.8)
             {
-                warning =
+                string shortWarn =
                     $"host wall {wall.Id.GetIntValue()} is short ({length * 304.8:F0} mm) for a door; " +
                     "prefer a longer exterior wall.";
+                warning = string.IsNullOrEmpty(warning) ? shortWarn : warning + " " + shortWarn;
+            }
+
+            if (!usedRequested && string.IsNullOrEmpty(warning) && !preferRequestedPoint)
+            {
+                // Silent auto-spacing path — no extra warning.
             }
 
             XYZ safe = curve.Evaluate(n, true);
             return new XYZ(safe.X, safe.Y, z);
+        }
+
+        /// <summary>
+        /// If a crossing wall lands inside the door/window clear width, shift parameter along the host
+        /// so the opening has ≥100 mm shoulder from the junction (RD: never bisect a door with a wall).
+        /// </summary>
+        static double NudgeOpeningClearOfJunctions(
+            Document doc,
+            Wall host,
+            Curve hostCurve,
+            double n,
+            double openingWidthFt,
+            double insetN,
+            ref string warning)
+        {
+            double length = hostCurve.Length;
+            if (length < 1e-6)
+                return n;
+
+            double halfOpen = openingWidthFt * 0.5;
+            double shoulderFt = 100.0 / 304.8;
+            double clearHalf = halfOpen + shoulderFt;
+            double joinTol = (host.Width) * 0.5 + 50.0 / 304.8;
+
+            var junctions = new List<double>();
+            foreach (Wall other in new FilteredElementCollector(doc)
+                         .OfClass(typeof(Wall))
+                         .WhereElementIsNotElementType()
+                         .Cast<Wall>())
+            {
+                if (other == null || other.Id == host.Id)
+                    continue;
+                LocationCurve otherLoc = other.Location as LocationCurve;
+                Curve otherCurve = otherLoc?.Curve;
+                if (otherCurve == null)
+                    continue;
+
+                IntersectionResultArray results;
+                SetComparisonResult hit = hostCurve.Intersect(otherCurve, out results);
+                if (hit == SetComparisonResult.Overlap && results != null && results.Size > 0)
+                {
+                    for (int i = 0; i < results.Size; i++)
+                    {
+                        XYZ ipt = results.get_Item(i).XYZPoint;
+                        if (ipt != null
+                            && TryGetNormalizedParameterOnWall(host, ipt, out double jn, out _))
+                            junctions.Add(jn);
+                    }
+                }
+
+                // T-junction: other wall end near host centerline.
+                for (int end = 0; end <= 1; end++)
+                {
+                    XYZ endPt = otherCurve.GetEndPoint(end);
+                    if (!TryGetNormalizedParameterOnWall(host, endPt, out double jn, out double dist))
+                        continue;
+                    if (dist <= joinTol + other.Width * 0.5)
+                        junctions.Add(jn);
+                }
+            }
+
+            if (junctions.Count == 0)
+                return n;
+
+            double openStart = n - clearHalf / length;
+            double openEnd = n + clearHalf / length;
+            bool conflict = junctions.Any(j => j >= openStart && j <= openEnd);
+            if (!conflict)
+                return n;
+
+            var candidates = new List<double>();
+            foreach (double j in junctions)
+            {
+                candidates.Add(j - clearHalf / length);
+                candidates.Add(j + clearHalf / length);
+            }
+            candidates.Add(0.25);
+            candidates.Add(0.75);
+
+            double best = n;
+            double bestDist = double.MaxValue;
+            foreach (double c in candidates)
+            {
+                double cn = Math.Max(insetN, Math.Min(1.0 - insetN, c));
+                double cs = cn - clearHalf / length;
+                double ce = cn + clearHalf / length;
+                if (junctions.Any(j => j >= cs && j <= ce))
+                    continue;
+
+                double d = Math.Abs(cn - n);
+                if (d < bestDist)
+                {
+                    bestDist = d;
+                    best = cn;
+                }
+            }
+
+            if (Math.Abs(best - n) > 1e-6)
+            {
+                string nudgeWarn =
+                    $"locationPoint was at/near a wall junction; nudged opening along host to avoid wall-through-door " +
+                    $"(param {n:F3} → {best:F3}).";
+                warning = string.IsNullOrEmpty(warning) ? nudgeWarn : warning + " " + nudgeWarn;
+                return best;
+            }
+
+            string failWarn =
+                $"opening at param {n:F3} may be cut by a crossing wall; move locationPoint or the partition.";
+            warning = string.IsNullOrEmpty(warning) ? failWarn : warning + " " + failWarn;
+            return n;
         }
 
         /// <summary>

@@ -922,9 +922,10 @@ namespace revit_mcp_plugin.Core.Assistant
                     ("gridTypeName", S(), null), ("bubbleEnd", bubbleEnd, null),
                     ("xExtentMin", N(), "mm"), ("xExtentMax", N(), "mm"),
                     ("yExtentMin", N(), "mm"), ("yExtentMax", N(), "mm"))),
-                T("dimension_grids", "Exterior axial dimensions from building envelope.", P(
-                    ("firstOffsetMm", N(), "mm from building envelope"),
+                T("dimension_grids", "Exterior dimensions from building envelope: openings/piers + inter-axis + overall.", P(
+                    ("firstOffsetMm", N(), "mm inter-axis from envelope"),
                     ("tierGapMm", N(), "mm between dimension tiers"),
+                    ("includeOpeningTier", B(), "innermost openings/piers tier, default true"),
                     ("numericSide", S(), null), ("letterSide", S(), null), ("dimensionType", S(), null))),
                 T("tag_rooms",
                     "Place room tags (марки помещений) on the active view; prefer type with area. " +

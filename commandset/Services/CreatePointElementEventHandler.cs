@@ -137,7 +137,6 @@ namespace RevitMCPCommandSet.Services
                                 continue;
                             }
 
-                            int resolvedId = explicitHost.Id.GetIntValue();
                             int totalOnWall = 1;
                             int slot = 0;
                             if (openingsPerWall.TryGetValue(data.HostWallId, out var planned))
@@ -145,13 +144,22 @@ namespace RevitMCPCommandSet.Services
                             if (openingSlotOnWall.TryGetValue(index, out var plannedSlot))
                                 slot = plannedSlot;
 
-                            // Space evenly: 1 door → mid; 2 doors → 1/3 and 2/3 (never at corners).
+                            // Honor explicit locationPoint. Only auto-space (1/3, 2/3…) when
+                            // several openings share one host in the same request — never force
+                            // mid-wall for a single door (that put doors on partition T-junctions).
                             double spanFraction = totalOnWall <= 1
                                 ? 0.5
                                 : (slot + 1.0) / (totalOnWall + 1.0);
+                            bool preferRequested = totalOnWall <= 1;
 
                             locPt = ProjectUtils.GetSafeOpeningPointOnWall(
-                                (Wall)explicitHost, locPt, doorWidthFt, out var snapWarn, spanFraction);
+                                (Wall)explicitHost,
+                                locPt,
+                                doorWidthFt,
+                                out var snapWarn,
+                                spanFraction,
+                                doc,
+                                preferRequested);
                             if (!string.IsNullOrEmpty(snapWarn))
                                 _warnings.Add($"[{index}] {snapWarn}");
 
