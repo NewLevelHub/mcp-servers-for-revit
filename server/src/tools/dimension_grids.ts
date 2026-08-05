@@ -5,7 +5,7 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerDimensionGridsTool(server: McpServer) {
   server.tool(
     "dimension_grids",
-    "Create exterior axial dimension chains on the active floor plan. Offsets are measured from the FULL building envelope (all walls including loggias/balconies/entrances), NOT from grid axis coordinates. Creates inter-axis + overall tiers: numbers at bottom, letters at left. Preferred after create_grid / when grids already exist. Type ADSK_Основной_2.5 мм by default.",
+    "Create exterior dimension chains on the active floor plan. Offsets are measured from the FULL building envelope (all walls including loggias/balconies/entrances), NOT from grid axis coordinates. Three tiers by default: openings/piers (innermost) → inter-axis → overall. Numbers at bottom, letters at left. Preferred after create_grid / when grids already exist. Type ADSK_Основной_2.5 мм by default.",
     {
       gridIds: z
         .array(z.number().int().positive())
@@ -18,19 +18,26 @@ export function registerDimensionGridsTool(server: McpServer) {
         .optional()
         .default(1200)
         .describe(
-          "Offset of the first (inter-axis) chain beyond the building envelope (mm). Default 1200 — clears walls/loggias."
+          "Offset of the inter-axis chain beyond the building envelope (mm). Default 1200 — clears walls/loggias. Opening tier (when enabled) sits at max(300, firstOffsetMm - tierGapMm)."
         ),
       tierGapMm: z
         .number()
         .positive()
         .optional()
         .default(800)
-        .describe("Gap between inter-axis and overall dimension tiers (mm). Default 800."),
+        .describe("Gap between dimension tiers (mm). Default 800."),
       includeOverall: z
         .boolean()
         .optional()
         .default(true)
         .describe("Also create overall (extreme-grid) chains on the outer tier."),
+      includeOpeningTier: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe(
+          "Innermost exterior tier: continuous openings and wall piers along the facade (doors/windows + wall ends). Default true."
+        ),
       numericSide: z
         .enum(["bottom", "top"])
         .optional()
@@ -81,6 +88,7 @@ export function registerDimensionGridsTool(server: McpServer) {
         firstOffsetMm: args.firstOffsetMm,
         tierGapMm: args.tierGapMm,
         includeOverall: args.includeOverall,
+        includeOpeningTier: args.includeOpeningTier,
         numericSide: args.numericSide,
         letterSide: args.letterSide,
         dimensionType: args.dimensionType,

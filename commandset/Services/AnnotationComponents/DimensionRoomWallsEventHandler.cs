@@ -62,10 +62,11 @@ public class DimensionRoomWallsEventHandler : IExternalEventHandler, IWaitableEx
             {
                 transaction.Start();
 
+                var interior = IsInteriorPlacement(_info.Placement);
                 var xChain = CreateChainDimension(
                     doc,
                     viewPlan,
-                    CollectChainReferences(edges, viewPlan, roomCenter, forXChain: true),
+                    CollectChainReferences(edges, viewPlan, roomCenter, forXChain: true, preferExterior: !interior),
                     forXChain: true,
                     bounds,
                     roomCenter,
@@ -76,7 +77,7 @@ public class DimensionRoomWallsEventHandler : IExternalEventHandler, IWaitableEx
                 var yChain = CreateChainDimension(
                     doc,
                     viewPlan,
-                    CollectChainReferences(edges, viewPlan, roomCenter, forXChain: false),
+                    CollectChainReferences(edges, viewPlan, roomCenter, forXChain: false, preferExterior: !interior),
                     forXChain: false,
                     bounds,
                     roomCenter,
@@ -229,7 +230,8 @@ public class DimensionRoomWallsEventHandler : IExternalEventHandler, IWaitableEx
         List<BoundaryEdge> edges,
         View view,
         XYZ roomCenter,
-        bool forXChain)
+        bool forXChain,
+        bool preferExterior)
     {
         var references = new List<(double Key, Reference Ref)>();
         var measureDirection = forXChain ? XYZ.BasisX : XYZ.BasisY;
@@ -243,7 +245,8 @@ public class DimensionRoomWallsEventHandler : IExternalEventHandler, IWaitableEx
 
             var start = edge.Curve.GetEndPoint(0);
             var end = edge.Curve.GetEndPoint(1);
-            // Key = wall position along measure axis (midpoint); reference = inner (room-side) face.
+            // Key = wall position along measure axis (midpoint).
+            // Face = interior (room-side) or exterior finish per placement.
             var key = forXChain
                 ? (start.X + end.X) / 2.0
                 : (start.Y + end.Y) / 2.0;
@@ -252,7 +255,8 @@ public class DimensionRoomWallsEventHandler : IExternalEventHandler, IWaitableEx
                 edge.Wall,
                 view,
                 measureDirection,
-                roomCenter);
+                roomCenter,
+                preferExterior);
 
             if (wallRef != null)
                 TryAddReference(references, key, wallRef);

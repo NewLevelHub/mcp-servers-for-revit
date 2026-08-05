@@ -186,23 +186,80 @@ public static class DimensionAnnotationHelper
     }
 
     /// <summary>
-    ///     Prefer the wall face on the room side (inner finish face): among vertical planar
-    ///     faces aligned with <paramref name="measureDirection"/>, pick the one closest to
-    ///     <paramref name="preferNearPoint"/> (typically the room center). This keeps clear
-    ///     room dimensions from starting outside or through the wall thickness.
+    ///     Wall face for dimensioning: interior (room-side, closest to
+    ///     <paramref name="preferNearPoint"/>) or exterior (far side / outer finish).
     /// </summary>
     public static Reference GetBestWallReference(
         Wall wall,
         View view,
         XYZ measureDirection,
-        XYZ preferNearPoint)
+        XYZ preferNearPoint,
+        bool preferExterior = false)
     {
-        var roomSide = FindRoomSideWallFace(wall, view, measureDirection, preferNearPoint);
-        if (roomSide != null)
-            return roomSide;
+        if (preferExterior)
+        {
+            var exterior = FindExteriorSideWallFace(wall, view, measureDirection, preferNearPoint);
+            if (exterior != null)
+                return exterior;
+        }
+        else
+        {
+            var roomSide = FindRoomSideWallFace(wall, view, measureDirection, preferNearPoint);
+            if (roomSide != null)
+                return roomSide;
+        }
 
         var refs = GetReferences(wall, view, measureDirection);
         return refs.Count > 0 ? refs[0] : null;
+    }
+
+    /// <summary>
+    ///     Outer finish face: among vertical faces aligned with measure, pick the one
+    ///     farthest from the room center (opposite of interior/clear dimensions).
+    /// </summary>
+    public static Reference FindExteriorSideWallFace(
+        Wall wall,
+        View view,
+        XYZ measureDirection,
+        XYZ preferNearPoint)
+    {
+        if (wall == null || preferNearPoint == null)
+            return null;
+
+        Reference bestRef = null;
+        var bestDistance = double.MinValue;
+        var bestAlignment = -1.0;
+
+        foreach (var reference in EnumerateWallSideFaceReferences(wall, ShellLayerType.Exterior)
+                     .Concat(EnumerateWallSideFaceReferences(wall)))
+        {
+            if (wall.GetGeometryObjectFromReference(reference) is not PlanarFace planarFace)
+                continue;
+
+            var normal = planarFace.FaceNormal;
+            if (Math.Abs(normal.Z) > 0.9)
+                continue;
+
+            var alignment = measureDirection == null
+                ? 1.0
+                : Math.Abs(normal.DotProduct(measureDirection));
+            if (alignment < 0.85)
+                continue;
+
+            var facePoint = planarFace.Origin;
+            var distance = preferNearPoint.DistanceTo(
+                new XYZ(facePoint.X, facePoint.Y, preferNearPoint.Z));
+
+            if (alignment > bestAlignment + 1e-6
+                || (Math.Abs(alignment - bestAlignment) <= 1e-6 && distance > bestDistance))
+            {
+                bestAlignment = alignment;
+                bestDistance = distance;
+                bestRef = reference;
+            }
+        }
+
+        return bestRef;
     }
 
     public static Reference FindRoomSideWallFace(
@@ -258,24 +315,8 @@ public static class DimensionAnnotationHelper
     {
         foreach (var layer in new[] { ShellLayerType.Interior, ShellLayerType.Exterior })
         {
-            IList<Reference> faces;
-            try
-            {
-                faces = HostObjectUtils.GetSideFaces(wall, layer);
-            }
-            catch
-            {
-                continue;
-            }
-
-            if (faces == null)
-                continue;
-
-            foreach (var face in faces)
-            {
-                if (face != null)
-                    yield return face;
-            }
+            foreach (var face in EnumerateWallSideFaceReferences(wall, layer))
+                yield return face;
         }
     }
 
@@ -455,6 +496,476 @@ public static class DimensionAnnotationHelper
         }
 
         return references;
+    }
+
+    /// <summary>
+    ///     Both jamb faces of a door/window along <paramref name="measureDirection"/>,
+    ///     ordered by position. Prefers stable <see cref="FamilyInstanceReferenceType"/>
+    ///     Left/Right (instance geometry often has null Face.Reference).
+    /// </summary>
+    public static List<(Reference Reference, double PositionMm)> GetOpeningJambReferences(
+        FamilyInstance instance,
+        View view,
+        XYZ measureDirection,
+        double minAlignment = 0.85)
+    {
+        if (instance == null || measureDirection == null || measureDirection.GetLength() < 1e-9)
+            return new List<(Reference, double)>();
+
+        var measure = measureDirection.Normalize();
+        var fromFamily = TryGetJambsFromFamilyReferences(instance, measure);
+        if (fromFamily.Count >= 2)
+            return fromFamily;
+
+        // Instance GetInstanceGeometry usually drops Face.Reference — use symbol geom + transform.
+        var candidates = CollectAlignedFaceCutPointsFromInstance(
+            instance, view, measure, minAlignment);
+        if (candidates.Count >= 2)
+        {
+            candidates.Sort((a, b) => a.PositionMm.CompareTo(b.PositionMm));
+            return new List<(Reference, double)>
+            {
+                candidates[0],
+                candidates[candidates.Count - 1]
+            };
+        }
+
+        if (fromFamily.Count > 0)
+            return fromFamily;
+        if (candidates.Count > 0)
+            return candidates;
+
+        // Last resort: host wall cut faces near computed jamb positions (have stable refs).
+        return TryGetJambsFromHostWallCuts(instance, view, measure, minAlignment);
+    }
+
+    private static List<(Reference Reference, double PositionMm)> TryGetJambsFromHostWallCuts(
+        FamilyInstance instance,
+        View view,
+        XYZ measure,
+        double minAlignment)
+    {
+        var result = new List<(Reference Reference, double PositionMm)>();
+        if (instance.Host is not Wall host || instance.Location is not LocationPoint locationPoint)
+            return result;
+
+        var halfWidth = GetOpeningWidthInternalFeet(instance) / 2.0;
+        if (halfWidth <= 1e-6)
+            return result;
+
+        var centerMm = ProjectPointMm(locationPoint.Point, measure);
+        var halfMm = halfWidth * 304.8;
+        const double jambTolMm = 120;
+
+        var wallFaces = CollectAlignedFaceCutPoints(host, view, measure, minAlignment);
+        foreach (var face in wallFaces)
+        {
+            if (Math.Abs(face.PositionMm - (centerMm - halfMm)) <= jambTolMm
+                || Math.Abs(face.PositionMm - (centerMm + halfMm)) <= jambTolMm)
+            {
+                result.Add(face);
+            }
+        }
+
+        if (result.Count < 2)
+            return result;
+
+        result.Sort((a, b) => a.PositionMm.CompareTo(b.PositionMm));
+        return new List<(Reference Reference, double PositionMm)>
+        {
+            result[0],
+            result[result.Count - 1]
+        };
+    }
+
+    private static List<(Reference Reference, double PositionMm)> TryGetJambsFromFamilyReferences(
+        FamilyInstance instance,
+        XYZ measure)
+    {
+        var result = new List<(Reference Reference, double PositionMm)>();
+        if (instance.Location is not LocationPoint locationPoint)
+            return result;
+
+        var loc = locationPoint.Point;
+        var hand = instance.HandOrientation;
+        if (hand == null || hand.GetLength() < 1e-9)
+            return result;
+
+        hand = hand.Normalize();
+        // Align hand with measure axis so Left/Right map to min/max along the facade.
+        if (hand.DotProduct(measure) < 0)
+            hand = hand.Negate();
+
+        var halfWidth = GetOpeningWidthInternalFeet(instance) / 2.0;
+        if (halfWidth <= 1e-6)
+            return result;
+
+        TryAddFamilyJamb(
+            instance,
+            FamilyInstanceReferenceType.Left,
+            ProjectPointMm(loc - hand * halfWidth, measure),
+            result);
+        TryAddFamilyJamb(
+            instance,
+            FamilyInstanceReferenceType.Right,
+            ProjectPointMm(loc + hand * halfWidth, measure),
+            result);
+
+        if (result.Count >= 2)
+        {
+            result.Sort((a, b) => a.PositionMm.CompareTo(b.PositionMm));
+            return result;
+        }
+
+        // Some families only expose CenterLeftRight — still useless alone; keep whatever we got.
+        return result;
+    }
+
+    private static void TryAddFamilyJamb(
+        FamilyInstance instance,
+        FamilyInstanceReferenceType referenceType,
+        double positionMm,
+        List<(Reference Reference, double PositionMm)> sink)
+    {
+        IList<Reference> refs;
+        try
+        {
+            refs = instance.GetReferences(referenceType);
+        }
+        catch
+        {
+            return;
+        }
+
+        if (refs == null || refs.Count == 0 || refs[0] == null)
+            return;
+
+        sink.Add((refs[0], positionMm));
+    }
+
+    private static double ProjectPointMm(XYZ point, XYZ measure)
+    {
+        return (point.X * measure.X + point.Y * measure.Y) * 304.8;
+    }
+
+    private static double GetOpeningWidthInternalFeet(FamilyInstance instance)
+    {
+        var widthParam = instance.get_Parameter(BuiltInParameter.DOOR_WIDTH)
+            ?? instance.get_Parameter(BuiltInParameter.WINDOW_WIDTH)
+            ?? instance.Symbol?.get_Parameter(BuiltInParameter.DOOR_WIDTH)
+            ?? instance.Symbol?.get_Parameter(BuiltInParameter.WINDOW_WIDTH)
+            ?? instance.Symbol?.get_Parameter(BuiltInParameter.FAMILY_WIDTH_PARAM);
+
+        if (widthParam != null && widthParam.HasValue)
+        {
+            var value = widthParam.AsDouble();
+            if (value > 1e-6)
+                return value;
+        }
+
+        var bbox = instance.get_BoundingBox(null);
+        if (bbox == null)
+            return 0;
+
+        var hand = instance.HandOrientation;
+        if (hand == null || hand.GetLength() < 1e-9)
+            return Math.Max(bbox.Max.X - bbox.Min.X, bbox.Max.Y - bbox.Min.Y);
+
+        hand = hand.Normalize();
+        var diag = bbox.Max - bbox.Min;
+        return Math.Abs(diag.DotProduct(hand));
+    }
+
+    private static List<(Reference Reference, double PositionMm)> CollectAlignedFaceCutPointsFromInstance(
+        FamilyInstance instance,
+        View view,
+        XYZ measure,
+        double minAlignment)
+    {
+        var result = new List<(Reference, double)>();
+        var options = new Options
+        {
+            View = view,
+            ComputeReferences = true
+        };
+
+        var geometry = instance.get_Geometry(options);
+        if (geometry == null)
+            return result;
+
+        const double feetToMm = 304.8;
+
+        foreach (var obj in geometry)
+        {
+            if (obj is Solid solid && solid.Faces.Size > 0)
+            {
+                AddAlignedFaces(solid, Transform.Identity, measure, minAlignment, feetToMm, result);
+                continue;
+            }
+
+            if (obj is not GeometryInstance geometryInstance)
+                continue;
+
+            // Symbol geometry keeps references; apply instance transform to positions.
+            var transform = geometryInstance.Transform;
+            GeometryElement symbolGeom;
+            try
+            {
+                symbolGeom = geometryInstance.GetSymbolGeometry();
+            }
+            catch
+            {
+                continue;
+            }
+
+            if (symbolGeom == null)
+                continue;
+
+            foreach (var subObj in symbolGeom)
+            {
+                if (subObj is Solid subSolid && subSolid.Faces.Size > 0)
+                    AddAlignedFaces(subSolid, transform, measure, minAlignment, feetToMm, result);
+            }
+        }
+
+        return result;
+    }
+
+    private static void AddAlignedFaces(
+        Solid solid,
+        Transform transform,
+        XYZ measure,
+        double minAlignment,
+        double feetToMm,
+        List<(Reference Reference, double PositionMm)> sink)
+    {
+        foreach (Face face in solid.Faces)
+        {
+            if (face is not PlanarFace planarFace || face.Reference == null)
+                continue;
+
+            var normal = transform.OfVector(planarFace.FaceNormal).Normalize();
+            if (Math.Abs(normal.Z) > 0.9)
+                continue;
+
+            var alignment = Math.Abs(normal.DotProduct(measure));
+            if (alignment < minAlignment)
+                continue;
+
+            var origin = transform.OfPoint(planarFace.Origin);
+            var positionMm = (origin.X * measure.X + origin.Y * measure.Y) * feetToMm;
+            sink.Add((face.Reference, positionMm));
+        }
+    }
+
+    /// <summary>
+    ///     Wall end faces (normals along <paramref name="measureDirection"/>), typically two.
+    ///     Prefer <see cref="GetExteriorShellFaceReference"/> for exterior facade chains —
+    ///     joined wall ends often sit on the <em>interior</em> face of the return wall.
+    /// </summary>
+    public static List<(Reference Reference, double PositionMm)> GetWallEndReferences(
+        Wall wall,
+        View view,
+        XYZ measureDirection,
+        double minAlignment = 0.85)
+    {
+        var candidates = CollectAlignedFaceCutPoints(wall, view, measureDirection, minAlignment);
+        if (candidates.Count == 0)
+            return new List<(Reference Reference, double PositionMm)>();
+
+        candidates.Sort((a, b) => a.PositionMm.CompareTo(b.PositionMm));
+        if (candidates.Count == 1)
+            return candidates;
+
+        return new List<(Reference Reference, double PositionMm)>
+        {
+            candidates[0],
+            candidates[candidates.Count - 1]
+        };
+    }
+
+    /// <summary>
+    ///     Exterior finish face of a wall whose normal aligns with
+    ///     <paramref name="outwardNormal"/> (unit vector pointing outside the building).
+    ///     Used for exterior dimension chains so corners snap to outer envelope, not inner.
+    /// </summary>
+    public static (Reference Reference, double PositionMm)? GetExteriorShellFaceReference(
+        Wall wall,
+        XYZ outwardNormal,
+        XYZ measureDirection,
+        double minAlignment = 0.85)
+    {
+        if (wall == null || outwardNormal == null || outwardNormal.GetLength() < 1e-9)
+            return null;
+
+        var outward = outwardNormal.Normalize();
+        var measure = measureDirection?.Normalize() ?? outward;
+
+        Reference bestRef = null;
+        var bestScore = double.MinValue;
+        var bestPos = 0.0;
+
+        foreach (var reference in EnumerateWallSideFaceReferences(wall, ShellLayerType.Exterior))
+        {
+            if (wall.GetGeometryObjectFromReference(reference) is not PlanarFace planarFace)
+                continue;
+
+            var normal = planarFace.FaceNormal;
+            if (Math.Abs(normal.Z) > 0.9)
+                continue;
+
+            var outwardDot = normal.DotProduct(outward);
+            if (outwardDot < minAlignment)
+                continue;
+
+            var measureDot = Math.Abs(normal.DotProduct(measure));
+            if (measureDot < minAlignment)
+                continue;
+
+            var origin = planarFace.Origin;
+            var positionMm = (origin.X * measure.X + origin.Y * measure.Y) * 304.8;
+            // Prefer faces that point most strongly outward.
+            if (outwardDot > bestScore)
+            {
+                bestScore = outwardDot;
+                bestRef = reference;
+                bestPos = positionMm;
+            }
+        }
+
+        if (bestRef != null)
+            return (bestRef, bestPos);
+
+        // Fallback: any side face pointing outward (some compound walls omit Exterior).
+        foreach (var reference in EnumerateWallSideFaceReferences(wall))
+        {
+            if (wall.GetGeometryObjectFromReference(reference) is not PlanarFace planarFace)
+                continue;
+
+            var normal = planarFace.FaceNormal;
+            if (Math.Abs(normal.Z) > 0.9)
+                continue;
+
+            var outwardDot = normal.DotProduct(outward);
+            if (outwardDot < minAlignment)
+                continue;
+
+            var origin = planarFace.Origin;
+            var positionMm = (origin.X * measure.X + origin.Y * measure.Y) * 304.8;
+            if (outwardDot > bestScore)
+            {
+                bestScore = outwardDot;
+                bestRef = reference;
+                bestPos = positionMm;
+            }
+        }
+
+        return bestRef == null ? null : (bestRef, bestPos);
+    }
+
+    /// <summary>
+    ///     Interior finish face closest to <paramref name="preferNearPoint"/> (room center).
+    ///     Alias kept for callers; same as <see cref="FindRoomSideWallFace"/>.
+    /// </summary>
+    public static Reference GetInteriorShellFaceReference(
+        Wall wall,
+        View view,
+        XYZ measureDirection,
+        XYZ preferNearPoint)
+    {
+        return FindRoomSideWallFace(wall, view, measureDirection, preferNearPoint);
+    }
+
+    private static IEnumerable<Reference> EnumerateWallSideFaceReferences(
+        Wall wall,
+        ShellLayerType layer)
+    {
+        IList<Reference> faces;
+        try
+        {
+            faces = HostObjectUtils.GetSideFaces(wall, layer);
+        }
+        catch
+        {
+            yield break;
+        }
+
+        if (faces == null)
+            yield break;
+
+        foreach (var face in faces)
+        {
+            if (face != null)
+                yield return face;
+        }
+    }
+
+    private static List<(Reference Reference, double PositionMm)> CollectAlignedFaceCutPoints(
+        Element element,
+        View view,
+        XYZ measureDirection,
+        double minAlignment)
+    {
+        var result = new List<(Reference Reference, double PositionMm)>();
+        if (element == null || measureDirection == null || measureDirection.GetLength() < 1e-9)
+            return result;
+
+        var measure = measureDirection.Normalize();
+        var options = new Options
+        {
+            View = view,
+            ComputeReferences = true
+        };
+
+        var geometry = element.get_Geometry(options);
+        if (geometry == null)
+            return result;
+
+        const double feetToMm = 304.8;
+
+        foreach (var obj in geometry)
+        {
+            foreach (var solid in EnumerateSolids(obj))
+            {
+                foreach (Face face in solid.Faces)
+                {
+                    if (face is not PlanarFace planarFace || face.Reference == null)
+                        continue;
+
+                    var normal = planarFace.FaceNormal;
+                    if (Math.Abs(normal.Z) > 0.9)
+                        continue;
+
+                    var alignment = Math.Abs(normal.DotProduct(measure));
+                    if (alignment < minAlignment)
+                        continue;
+
+                    var origin = planarFace.Origin;
+                    var positionMm = (origin.X * measure.X + origin.Y * measure.Y) * feetToMm;
+                    result.Add((face.Reference, positionMm));
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private static IEnumerable<Solid> EnumerateSolids(GeometryObject obj)
+    {
+        if (obj is Solid solid && solid.Faces.Size > 0)
+        {
+            yield return solid;
+            yield break;
+        }
+
+        if (obj is not GeometryInstance geometryInstance)
+            yield break;
+
+        foreach (var subObj in geometryInstance.GetInstanceGeometry())
+        {
+            if (subObj is Solid subSolid && subSolid.Faces.Size > 0)
+                yield return subSolid;
+        }
     }
 
     private static XYZ ComputeDefaultLineAnchor(XYZ startPoint, XYZ endPoint, XYZ direction, double offsetMm)

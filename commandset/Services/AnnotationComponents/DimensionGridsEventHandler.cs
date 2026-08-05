@@ -9,9 +9,10 @@ using RevitMCPSDK.API.Interfaces;
 namespace RevitMCPCommandSet.Services.AnnotationComponents;
 
 /// <summary>
-///     Creates exterior axial dimension chains offset from the full building envelope
+///     Creates exterior dimension chains offset from the full building envelope
 ///     (walls including loggias/balconies), not from grid axis coordinates.
-///     Working-drawing layout: numbers bottom, letters left; inter-axis then overall tiers.
+///     Working-drawing layout: numbers bottom, letters left;
+///     openings/piers → inter-axis → overall (REV-141).
 /// </summary>
 public class DimensionGridsEventHandler : IExternalEventHandler, IWaitableExternalEventHandler
 {
@@ -58,9 +59,14 @@ public class DimensionGridsEventHandler : IExternalEventHandler, IWaitableExtern
             var firstOffset = _info.FirstOffsetMm > 0 ? _info.FirstOffsetMm : 1200;
             var tierGap = _info.TierGapMm > 0 ? _info.TierGapMm : 800;
             var bubbleClearance = _info.BubbleClearanceMm > 0 ? _info.BubbleClearanceMm : 1200;
+            var includeOpeningTier = _info.IncludeOpeningTier;
+            var openingOffset = OpeningFacadeDimensionCollector.ComputeOpeningOffsetMm(firstOffset, tierGap);
 
             var createdIds = new List<int>();
+            var openingTierIds = new List<int>();
             var warnings = new List<string>();
+            var z = ResolvePlanZ(viewPlan, grids);
+            var createdOverall = false;
 
             using (var transaction = new Transaction(doc, "Dimension Grids"))
             {
@@ -69,23 +75,45 @@ public class DimensionGridsEventHandler : IExternalEventHandler, IWaitableExtern
                 if (vertical.Count >= 2)
                 {
                     var sorted = vertical.OrderBy(g => g.PositionMm).ToList();
+                    var towardMin = IsBottomSide(_info.NumericSide);
+                    var facadeSide = towardMin
+                        ? OpeningFacadeDimensionCollector.FacadeSide.Bottom
+                        : OpeningFacadeDimensionCollector.FacadeSide.Top;
+
+                    if (includeOpeningTier)
+                    {
+                        var openingY = ComputeExteriorLineCoordinate(
+                            envelope.MinYMm, envelope.MaxYMm, openingOffset, towardMin);
+                        var openingDim = TryCreateOpeningChain(
+                            doc, viewPlan, levelId, envelope, facadeSide,
+                            forHorizontalChain: true, openingY, z, warnings);
+                        if (openingDim != null)
+                        {
+                            var id = openingDim.Id.GetIntValue();
+                            createdIds.Add(id);
+                            openingTierIds.Add(id);
+                        }
+                    }
+
                     var lineY = ComputeExteriorLineCoordinate(
                         envelope.MinYMm,
                         envelope.MaxYMm,
                         firstOffset,
-                        IsBottomSide(_info.NumericSide));
+                        towardMin);
 
                     var inter = CreateChain(doc, viewPlan, sorted, forHorizontalChain: true, lineY);
                     if (inter != null)
                         createdIds.Add(inter.Id.GetIntValue());
 
-                    if (_info.IncludeOverall && sorted.Count >= 2)
+                    // Overall = extreme grids only. With exactly 2 grids it duplicates inter-axis
+                    // (same refs → two identical 8000/12000 chains). Need ≥3 grids.
+                    if (_info.IncludeOverall && sorted.Count >= 3)
                     {
                         var overallY = ComputeExteriorLineCoordinate(
                             envelope.MinYMm,
                             envelope.MaxYMm,
                             firstOffset + tierGap,
-                            IsBottomSide(_info.NumericSide));
+                            towardMin);
                         var extremes = new List<GridAxis>
                         {
                             sorted.First(),
@@ -93,7 +121,15 @@ public class DimensionGridsEventHandler : IExternalEventHandler, IWaitableExtern
                         };
                         var overall = CreateChain(doc, viewPlan, extremes, forHorizontalChain: true, overallY);
                         if (overall != null)
+                        {
                             createdIds.Add(overall.Id.GetIntValue());
+                            createdOverall = true;
+                        }
+                    }
+                    else if (_info.IncludeOverall && sorted.Count == 2)
+                    {
+                        warnings.Add(
+                            "Overall tier skipped (vertical grids): only 2 grids — would duplicate inter-axis.");
                     }
                 }
                 else
@@ -104,23 +140,43 @@ public class DimensionGridsEventHandler : IExternalEventHandler, IWaitableExtern
                 if (horizontal.Count >= 2)
                 {
                     var sorted = horizontal.OrderBy(g => g.PositionMm).ToList();
+                    var towardMin = IsLeftSide(_info.LetterSide);
+                    var facadeSide = towardMin
+                        ? OpeningFacadeDimensionCollector.FacadeSide.Left
+                        : OpeningFacadeDimensionCollector.FacadeSide.Right;
+
+                    if (includeOpeningTier)
+                    {
+                        var openingX = ComputeExteriorLineCoordinate(
+                            envelope.MinXMm, envelope.MaxXMm, openingOffset, towardMin);
+                        var openingDim = TryCreateOpeningChain(
+                            doc, viewPlan, levelId, envelope, facadeSide,
+                            forHorizontalChain: false, openingX, z, warnings);
+                        if (openingDim != null)
+                        {
+                            var id = openingDim.Id.GetIntValue();
+                            createdIds.Add(id);
+                            openingTierIds.Add(id);
+                        }
+                    }
+
                     var lineX = ComputeExteriorLineCoordinate(
                         envelope.MinXMm,
                         envelope.MaxXMm,
                         firstOffset,
-                        IsLeftSide(_info.LetterSide));
+                        towardMin);
 
                     var inter = CreateChain(doc, viewPlan, sorted, forHorizontalChain: false, lineX);
                     if (inter != null)
                         createdIds.Add(inter.Id.GetIntValue());
 
-                    if (_info.IncludeOverall && sorted.Count >= 2)
+                    if (_info.IncludeOverall && sorted.Count >= 3)
                     {
                         var overallX = ComputeExteriorLineCoordinate(
                             envelope.MinXMm,
                             envelope.MaxXMm,
                             firstOffset + tierGap,
-                            IsLeftSide(_info.LetterSide));
+                            towardMin);
                         var extremes = new List<GridAxis>
                         {
                             sorted.First(),
@@ -128,7 +184,15 @@ public class DimensionGridsEventHandler : IExternalEventHandler, IWaitableExtern
                         };
                         var overall = CreateChain(doc, viewPlan, extremes, forHorizontalChain: false, overallX);
                         if (overall != null)
+                        {
                             createdIds.Add(overall.Id.GetIntValue());
+                            createdOverall = true;
+                        }
+                    }
+                    else if (_info.IncludeOverall && sorted.Count == 2)
+                    {
+                        warnings.Add(
+                            "Overall tier skipped (horizontal grids): only 2 grids — would duplicate inter-axis.");
                     }
                 }
                 else
@@ -140,13 +204,14 @@ public class DimensionGridsEventHandler : IExternalEventHandler, IWaitableExtern
                 {
                     try
                     {
+                        var outerGap = createdOverall ? tierGap : 0;
                         ExtendGridExtentsBeyondTiers(
                             doc,
                             viewPlan,
                             grids,
                             envelope,
                             firstOffset,
-                            _info.IncludeOverall ? tierGap : 0,
+                            outerGap,
                             bubbleClearance);
                     }
                     catch (Exception ex)
@@ -162,11 +227,13 @@ public class DimensionGridsEventHandler : IExternalEventHandler, IWaitableExtern
                 throw new InvalidOperationException("No axial dimensions could be created.");
 
             var message =
-                $"Successfully created {createdIds.Count} axial dimension chain(s) " +
+                $"Successfully created {createdIds.Count} exterior dimension chain(s) " +
                 $"from building envelope " +
                 $"(X [{envelope.MinXMm:F0}..{envelope.MaxXMm:F0}], " +
                 $"Y [{envelope.MinYMm:F0}..{envelope.MaxYMm:F0}] mm), " +
-                $"firstOffset={firstOffset} mm.";
+                $"firstOffset={firstOffset} mm" +
+                (includeOpeningTier ? $", openingOffset={openingOffset} mm" : "") +
+                ".";
             if (warnings.Count > 0)
                 message += " " + string.Join(" ", warnings);
 
@@ -177,6 +244,9 @@ public class DimensionGridsEventHandler : IExternalEventHandler, IWaitableExtern
                 Response = new
                 {
                     dimensionIds = createdIds,
+                    openingTierIds,
+                    includeOpeningTier,
+                    openingOffsetMm = includeOpeningTier ? openingOffset : (double?)null,
                     envelopeMm = new
                     {
                         minX = envelope.MinXMm,
@@ -236,6 +306,78 @@ public class DimensionGridsEventHandler : IExternalEventHandler, IWaitableExtern
     {
         var s = (side ?? "left").Trim().ToLowerInvariant();
         return s is not ("right" or "max" or "east");
+    }
+
+    private Dimension TryCreateOpeningChain(
+        Document doc,
+        ViewPlan view,
+        ElementId levelId,
+        EnvelopeMm envelope,
+        OpeningFacadeDimensionCollector.FacadeSide facadeSide,
+        bool forHorizontalChain,
+        double lineCoordMm,
+        double z,
+        List<string> warnings)
+    {
+        try
+        {
+            var cuts = OpeningFacadeDimensionCollector.CollectOrderedReferences(
+                doc, view, levelId, envelope, facadeSide, faceToleranceMm: 800);
+            var diag = OpeningFacadeDimensionCollector.LastCollectionDiagnostics;
+            if (cuts.Count < 2)
+            {
+                warnings.Add(
+                    $"Opening tier ({facadeSide}): fewer than 2 face refs — skipped. [{diag}]");
+                return null;
+            }
+
+            // Wall ends alone ≈ 2 cuts; real openings/piers need many more cut points.
+            if (cuts.Count <= 2 && diag.Contains("openings=") && !diag.Contains("openings=0"))
+            {
+                warnings.Add(
+                    $"Opening tier ({facadeSide}): openings present but jamb refs missing — " +
+                    $"chain may be overall-only. [{diag}]");
+            }
+
+            var references = new ReferenceArray();
+            foreach (var cut in cuts)
+                references.Append(cut.Reference);
+
+            Line line;
+            if (forHorizontalChain)
+            {
+                var y = lineCoordMm / FeetToMm;
+                var x0 = cuts.First().PositionMm / FeetToMm;
+                var x1 = cuts.Last().PositionMm / FeetToMm;
+                line = Line.CreateBound(new XYZ(x0, y, z), new XYZ(x1, y, z));
+            }
+            else
+            {
+                var x = lineCoordMm / FeetToMm;
+                var y0 = cuts.First().PositionMm / FeetToMm;
+                var y1 = cuts.Last().PositionMm / FeetToMm;
+                line = Line.CreateBound(new XYZ(x, y0, z), new XYZ(x, y1, z));
+            }
+
+            var dimension = doc.Create.NewDimension(view, line, references);
+            if (dimension == null)
+            {
+                warnings.Add($"Opening tier ({facadeSide}): NewDimension returned null.");
+                return null;
+            }
+
+            DimensionAnnotationHelper.ApplyDimensionType(
+                dimension,
+                doc,
+                _info.DimensionType,
+                _info.DimensionStyleId);
+            return dimension;
+        }
+        catch (Exception ex)
+        {
+            warnings.Add($"Opening tier ({facadeSide}): {ex.Message}");
+            return null;
+        }
     }
 
     private Dimension CreateChain(
@@ -311,6 +453,17 @@ public class DimensionGridsEventHandler : IExternalEventHandler, IWaitableExtern
         };
 
         GridDisplayHelper.ConfigureGrids(doc, grids, options, view);
+    }
+
+    private static double ResolvePlanZ(ViewPlan viewPlan, IReadOnlyList<Grid> grids)
+    {
+        foreach (var grid in grids)
+        {
+            if (grid.Curve != null)
+                return grid.Curve.GetEndPoint(0).Z;
+        }
+
+        return viewPlan.GenLevel?.Elevation ?? 0;
     }
 
     private static View ResolveView(Document doc, UIDocument uiDoc, int viewId)

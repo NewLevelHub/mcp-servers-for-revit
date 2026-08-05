@@ -53,11 +53,11 @@ alwaysApply: true
 - **По умолчанию размеры помещений — ВНУТРИ комнаты**: цепочки ширины и глубины
   внутри габарита помещения. Инструмент: `dimension_room_walls` с
   `placement: "interior"` (это значение по умолчанию — можно не передавать).
-- **Фразы «размеры комнат», «проставь размеры помещений», «размеры этажа»** →
-  `dimension_room_walls` `placement: "interior"`. Не путать с осевыми (`dimension_grids`).
-- **Внешние цепочки (`placement: "exterior"`) — только по явному запросу
-  пользователя**: «снаружи», «по осям», «фасадные», обмер по контуру.
-- `offsetMm` — отступ от границы помещения: внутрь при interior, наружу при exterior.
+- **Помещения (размеры комнат):** `dimension_room_walls`
+  - «внутренние размеры» / «размеры комнат» → `placement: "interior"` — **внутренние (отделочные) грани** стен, цепочка внутри комнаты.
+  - «наружные размеры комнаты» / «снаружи» → `placement: "exterior"` — **наружные грани**, цепочка снаружи.
+- **Фасад / корпус (оси + проёмы):** `dimension_grids` — всегда **наружные грани** контура здания (углы = Exterior face return-стен, не внутренний угол стыка). Не путать с внутренними размерами помещений.
+- **Правило для ИИ:** сказал пользователь «наружные» → только наружные грани; сказал «внутренние» → только внутренние. Не смешивать в одной цепочке.
 - Типоразмер: **`ADSK_Основной_2.5 мм`** (шаблон организации); пустое имя — автоподбор ADSK.
 - **Плотное ядро** (лифт, коридоры, санузлы): не ставить «пачкой на все комнаты» —
   выборочно крупные помещения или сразу больший `offsetMm`.
@@ -80,13 +80,16 @@ alwaysApply: true
 на лоджии, которые выступают ниже (габарит −9700). Всегда считать от габарита.
 
 **Предпочтительный вызов:** `dimension_grids` — сам считает габарит по всем стенам этажа
-и ставит межосевой + габаритный ярусы (цифры снизу, буквы слева). Параметры по умолчанию:
-`firstOffsetMm: 1200`, `tierGapMm: 800`, `numericSide: "bottom"`, `letterSide: "left"`.
+и ставит 3 яруса снаружи (цифры снизу, буквы слева): проёмы/простенки → межосевой → габарит.
+Параметры по умолчанию: `includeOpeningTier: true`, `firstOffsetMm: 1200` (межосевой),
+`tierGapMm: 800`, opening offset = `max(300, firstOffsetMm - tierGapMm)` → **400 мм**,
+`numericSide: "bottom"`, `letterSide: "left"`.
+`includeOpeningTier: false` — только межосевой + габарит (как до REV-141).
 
 Ручной режим (`create_dimensions`) — только если нужны нестандартные цепочки:
 
 1. Габарит здания: `get_current_view_elements` (`OST_Walls`…), min/max X/Y по `StartMm`/`EndMm`.
-2. Межосевой: ≈ **1200 мм за габаритом**; габаритный: ещё ≈ **800 мм** дальше.
+2. Проёмы/простенки: ≈ **400 мм** за габаритом; межосевой: ≈ **1200 мм**; габаритный: ещё ≈ **800 мм** дальше.
 3. Цифровые оси → цепочки **снизу**; буквенные → **слева**.
 4. Марки осей — снаружи за габаритной цепочкой (`extentOvershootMm` ≥ 4000).
 5. Тип: **`ADSK_Основной_2.5 мм`**.
@@ -103,7 +106,7 @@ alwaysApply: true
 - **Типы:** для цепочек с геометрии — округление до 10 мм; для осей/габаритов — точный
   (см. «Общее»). Выноска включена у всех.
 - Отступ первой цепочки от стены и зазор ярусов по MCP не читаются — держим дефолты
-  (внутр. 300; внеш. firstOffset 1200 / tierGap 800), пока не названы пользователем.
+  (внутр. 300; внеш. opening ~400 / firstOffset 1200 / tierGap 800), пока не названы пользователем.
 
 ## Размеры не должны накладываться (правка пользователя 2026-07-18; REV-143)
 
@@ -146,8 +149,11 @@ alwaysApply: true
 - `get_element_parameters {elementId}` / `set_element_parameter {elementId, parameterName, value}`
   (напр. «Тип»=id, «Граница помещения»=true).
 - `create_grid {autoFromWalls:true, wallFilter:"structural", minWallThicknessMm, bubbleEnd:"bottomLeft", gridTypeName:"Марка оси 5 мм"}` — для тонких стен снижать `minWallThicknessMm` (300 мм → 250).
+  Тип марки **всегда «Марка оси 5 мм»** (не 6,5 мм и не дефолтный огромный пузырь). После создания проверить; при огромных пузырях — `configure_grid_display` / `set_element_parameter` «Тип».
 - `configure_grid_display {gridTypeName, bubbleEnd, xExtentMin/Max, yExtentMin/Max, applyToAllFloorPlans}`.
-- `dimension_grids {firstOffsetMm:1200, tierGapMm:800, numericSide:"bottom", letterSide:"left", dimensionType}`.
+- `dimension_grids {includeOpeningTier:true, firstOffsetMm:1200, tierGapMm:800, numericSide:"bottom", letterSide:"left", dimensionType}`.
+  3 яруса при ≥3 осях в направлении: проёмы → межосевой → габарит. При **только 2 осях** габарит **не** создаётся (иначе два одинаковых 8000). `includeOpeningTier:false` — без яруса проёмов.
+- **Двери vs перегородки:** никогда не ставить перегородку в проём/на полотно двери. Плечо от откоса до примыкающей стены ≥100 мм (лучше ≥600 мм от угла).
 - `dimension_room_walls {roomId, placement:"interior", dimensionType?}`.
   После ≥3: verify `get_current_view_elements` `annotationCategoryList:["OST_Dimensions"]`.
 - `create_room {data:[{name, number, location:{x,y,z}}]}`.

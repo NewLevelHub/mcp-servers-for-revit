@@ -34,6 +34,13 @@ public class GridDimensionInfo
     public bool IncludeOverall { get; set; } = true;
 
     /// <summary>
+    ///     Create innermost exterior tier: openings and wall piers along the facade.
+    ///     Offset = max(300, firstOffsetMm - tierGapMm). Default true.
+    /// </summary>
+    [JsonProperty("includeOpeningTier")]
+    public bool IncludeOpeningTier { get; set; } = true;
+
+    /// <summary>
     ///     Side for numeric (vertical) grids: "bottom" (default) or "top".
     /// </summary>
     [JsonProperty("numericSide")]

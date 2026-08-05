@@ -1,6 +1,7 @@
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using RevitMCPCommandSet.Models.Views;
+using RevitMCPCommandSet.Utils;
 using RevitMCPSDK.API.Interfaces;
 
 namespace RevitMCPCommandSet.Services.Views;
@@ -92,7 +93,7 @@ public class CreateSheetEventHandler : IExternalEventHandler, IWaitableExternalE
         if (info.TitleBlockTypeId > 0)
         {
             var symbol = doc.GetElement(new ElementId(info.TitleBlockTypeId)) as FamilySymbol;
-            if (symbol != null && symbol.Category?.Id.IntegerValue == (int)BuiltInCategory.OST_TitleBlocks)
+            if (symbol != null && symbol.Category?.Id.GetIntValue() == (int)BuiltInCategory.OST_TitleBlocks)
                 return EnsureTitleBlockActive(doc, symbol);
 
             warnings.Add($"Title block type id '{info.TitleBlockTypeId}' was not found.");
