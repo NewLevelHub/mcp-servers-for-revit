@@ -52,6 +52,9 @@ namespace revit_mcp_plugin.Core.Assistant
                 case "get_available_family_types":
                     shaped = ShapeFamilyTypes(result);
                     break;
+                case "get_cad_link_geometry":
+                    shaped = ShapeCadLinkGeometry(result);
+                    break;
                 default:
                     shaped = ShapeGeneric(toolName, result);
                     break;
@@ -493,6 +496,50 @@ namespace revit_mcp_plugin.Core.Assistant
             };
             if (suggestedId.HasValue)
                 shaped["suggestedWallTypeId"] = suggestedId.Value;
+            return shaped;
+        }
+
+        private static JObject ShapeCadLinkGeometry(JToken result)
+        {
+            var obj = result as JObject ?? new JObject();
+            var ok = obj["ok"]?.Value<bool>() ?? obj["success"]?.Value<bool>() ?? true;
+            if (!ok)
+            {
+                var msg = FirstString(obj, "message", "summary", "Message") ?? "нет CAD на виде";
+                return new JObject
+                {
+                    ["ok"] = false,
+                    ["summary"] = msg,
+                    ["count"] = 0,
+                    ["items"] = new JArray(),
+                    ["nextStep"] = "Привяжите DWG к уровню плана (Вставка → Связь CAD) и повторите."
+                };
+            }
+
+            var itemsToken = obj["items"] as JArray ?? new JArray();
+            var total = FirstInt(obj, "count") ?? itemsToken.Count;
+            var shown = new JArray(itemsToken.Take(DefaultItemLimit));
+            var name = FirstString(obj, "cadLinkName") ?? "CAD";
+            var summary = FirstString(obj, "summary")
+                          ?? $"DWG «{name}»: {total} сегмент(ов)";
+
+            var shaped = OkBase(
+                summary,
+                total,
+                shown,
+                total,
+                "Сегменты урезаны; сузь layerFilter / cadLinkName.",
+                "Построй стены create_line_based_element по startMm/endMm (typeId обязателен).");
+
+            if (obj["bboxMm"] != null)
+                shaped["bboxMm"] = obj["bboxMm"];
+            if (obj["cadLinkName"] != null)
+                shaped["cadLinkName"] = obj["cadLinkName"];
+            if (obj["cadLinkElementId"] != null)
+                shaped["cadLinkElementId"] = obj["cadLinkElementId"];
+            if (obj["availableLinks"] != null)
+                shaped["availableLinks"] = obj["availableLinks"];
+
             return shaped;
         }
 

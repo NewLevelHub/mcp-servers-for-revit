@@ -309,6 +309,11 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "get_cad_link_geometry",
+      "description": "Линии/дуги/полилинии DWG CAD-подложки в мм (для перечерчивания стен)",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "get_vertical_circulation_info",
       "description": "Лестницы, пандусы, ограждения: ширина, подступенок, проступь, высота",
       "assemblyPath": "RevitMCPCommandSet.dll"
