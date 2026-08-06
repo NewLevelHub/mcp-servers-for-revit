@@ -57,9 +57,13 @@ namespace revit_mcp_plugin.Core.Assistant
             "0) Сначала declare_plan: goal + steps[{n,what,tool}] — чеклист до любых create_*. " +
             "Одно чтение («сколько комнат») — без плана.\n" +
             "A) get_current_view_info → elevation уровня (мм) = baseLevel.\n" +
-            "A2) Перечерчивание по DWG/CAD: get_cad_link_geometry → координаты сегментов в мм " +
-            "(не угадывай стены «на глаз»). layerFilter по слоям стен/осей; затем create_line_based_element " +
-            "по startMm/endMm. Нет CAD на виде → скажи привязать DWG к уровню.\n" +
+            "A2) Перечерчивание по DWG/CAD: trace_walls_from_cad (wallTypeId обязателен) — " +
+            "читает CAD + Model Lines (если DWG взорван), сливает двойные линии в центр, " +
+            "меряет толщину по зазору граней и подбирает тип стены по мм в имени. " +
+            "Сначала dryRun=true → thicknessClusters / recommendedWallTypes, потом создание. " +
+            "Или вручную: get_cad_link_geometry → create_line_based_element по startMm/endMm " +
+            "(не угадывай стены «на глаз»). layerFilter по слоям стен; bboxMm — отсечь лишние фрагменты листа. " +
+            "Нет CAD на виде → скажи привязать DWG к уровню.\n" +
             "B) get_available_family_types categoryName=OST_Walls → typeId = suggestedWallTypeId " +
             "(Базовая стена / перегородка). Не Витраж/Curtain — они дают таймаут. " +
             "Без typeId create_*_element вернёт ошибку с candidates — автоподстановки нет.\n" +
@@ -83,7 +87,7 @@ namespace revit_mcp_plugin.Core.Assistant
             "G) tag_rooms; dimension_room_walls roomId=ElementId, placement=interior.\n" +
             "H) run_norm_audit — только после готовой планировки.\n" +
             "Помещения только внутри замкнутых стен. Room Bounding=true — на стенах, не на комнатах.\n" +
-            "Пример: «Перечерти стены по DWG» → get_cad_link_geometry → typeId стен → create_line_based_element по startMm/endMm.\n" +
+            "Пример: «Перечерти стены по DWG» → get_available_family_types → trace_walls_from_cad wallTypeId + layerFilter=wall.\n" +
             "Пример: «Построй две комнаты» → declare_plan → view → types → 5 сегментов → дверь в перегородке → create_room ×2.\n" +
             "Пример: «Школа» / ask_user=Школа → вестибюль, коридор, ≥3 класса, учительская, санузлы — не две комнаты.\n" +
             "Пример: «Сколько комнат на этаже?» → export_room_data filterByActiveView=true (без плана).";

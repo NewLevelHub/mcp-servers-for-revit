@@ -39,6 +39,10 @@ namespace RevitMCPCommandSet.Models.DataExtraction
 
         [JsonProperty("cadLinkElementId")]
         public long CadLinkElementId { get; set; }
+
+        /// <summary>Origin of the segment: importInstance | modelLine | detailLine.</summary>
+        [JsonProperty("source")]
+        public string Source { get; set; } = "importInstance";
     }
 
     public class CadBboxMm
@@ -69,6 +73,15 @@ namespace RevitMCPCommandSet.Models.DataExtraction
 
         [JsonProperty("segmentCount")]
         public int SegmentCount { get; set; }
+    }
+
+    public class CadLayerSummaryItem
+    {
+        [JsonProperty("layer")]
+        public string Layer { get; set; } = string.Empty;
+
+        [JsonProperty("count")]
+        public int Count { get; set; }
     }
 
     /// <summary>
@@ -114,5 +127,8 @@ namespace RevitMCPCommandSet.Models.DataExtraction
 
         [JsonProperty("message")]
         public string Message { get; set; }
+
+        [JsonProperty("layerSummary")]
+        public List<CadLayerSummaryItem> LayerSummary { get; set; }
     }
 }

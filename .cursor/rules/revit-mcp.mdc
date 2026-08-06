@@ -93,7 +93,8 @@ MCP **не создаёт** новый проект. Сообщи пользов
 |--------|------------|
 | Проверка связи | `say_hello` |
 | Вид / элементы | `get_current_view_info`, `get_current_view_elements`, `ai_element_filter` |
-| CAD / DWG подложка (линии в мм) | **`get_cad_link_geometry`** — сегменты ImportInstance для перечерчивания стен |
+| CAD / DWG подложка (линии в мм) | **`get_cad_link_geometry`** — сегменты ImportInstance; при exploded DWG — `includeModelLines=true` (Model/Detail lines) |
+| **Стены по DWG (пайплайн)** | **`trace_walls_from_cad`** — CAD/model lines → двойные линии → центрлинии + толщина из зазора → тип стены по мм → create + verify (REV-140). Сначала `dryRun`. `wallTypeId` = fallback. Playbook: `revit-cad-redraw.mdc` (REV-142). Двери из CAD — follow-up REV-147 (пока нет tool) |
 | Выделение | `get_selected_elements` |
 | Типы семейств | `get_available_family_types` |
 | Стены, балки | `create_line_based_element` (**`typeId` обязателен**, иначе fail) |

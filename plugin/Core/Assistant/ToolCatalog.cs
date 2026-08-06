@@ -55,6 +55,7 @@ namespace revit_mcp_plugin.Core.Assistant
                 [Profiles.Modeling] = new[]
                 {
                     "get_cad_link_geometry",
+                    "trace_walls_from_cad",
                     "create_line_based_element",
                     "create_point_based_element",
                     "create_surface_based_element",
@@ -765,6 +766,7 @@ namespace revit_mcp_plugin.Core.Assistant
                 ["get_door_egress_info"] = "эвак. данные дверей",
                 ["get_opening_geometry_info"] = "геометрия проёмов",
                 ["get_cad_link_geometry"] = "геометрия DWG/CAD",
+                ["trace_walls_from_cad"] = "стены по DWG/CAD",
                 ["get_vertical_circulation_info"] = "лестницы / пандусы",
                 ["create_detail_lines"] = "линии деталировки",
                 ["create_detail_view"] = "вид детали",
@@ -1184,13 +1186,27 @@ namespace revit_mcp_plugin.Core.Assistant
                 T("get_opening_geometry_info", "Window sill height, opening height (mm).", P(
                     ("levelName", S(), null))),
                 T("get_cad_link_geometry",
-                    "Read DWG/CAD ImportInstance lines in mm (startMm/endMm/layer). Before tracing walls from CAD.",
+                    "Read DWG/CAD ImportInstance lines in mm. For exploded DWG set includeModelLines=true.",
                     P(
                         ("cadLinkName", S(), null),
                         ("layerFilter", S(), "layer name or substring"),
                         ("viewId", N(), null),
                         ("minLengthMm", N(), null),
-                        ("limit", N(), null))),
+                        ("limit", N(), null),
+                        ("includeModelLines", B(), "also Model/Detail lines"))),
+                T("trace_walls_from_cad",
+                    "Trace walls from DWG/model lines: double-line centerlines, thickness from gap, auto-match wall type by mm. wallTypeId required fallback. Prefer dryRun first.",
+                    P(
+                        R("wallTypeId"),
+                        ("wallTypeId", N(), "fallback Wall type id"),
+                        ("cadLinkName", S(), null),
+                        ("layerFilter", S(), "e.g. wall"),
+                        ("bboxMm", O(), "clip region mm"),
+                        ("toleranceMm", N(), "default 50"),
+                        ("includeModelLines", S(), "true|false|auto"),
+                        ("autoMatchWallTypes", B(), "match type by measured thickness"),
+                        ("dryRun", B(), "preview axes + thicknessClusters"),
+                        ("heightMm", N(), "default 3000"))),
                 T("get_vertical_circulation_info", "Stair/ramp/railing geometry for norms (mm).", P(
                     ("levelName", S(), null))),
                 T("create_detail_lines", "Detail polylines on plan/detail view (mm).", P(

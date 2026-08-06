@@ -1,0 +1,56 @@
+---
+description: Перечерчивание по DWG/CAD link (Cursor + MCP) — pipeline, dryRun, verify; не угадывать координаты
+alwaysApply: true
+---
+
+# Перечерчивание по DWG (REV-142)
+
+**Канал:** Cursor + MCP. Не in-Revit chat.
+
+Фразы: «перечерти по DWG», «по подложке», «по CAD», «по связи», «обведи стены с плана».
+
+## Обязательный алгоритм
+
+1. `get_current_view_info` — активный **план этажа**.
+2. `get_cad_link_geometry` (или сразу `trace_walls_from_cad`) — есть ли ImportInstance / слои.
+3. Нет CAD на виде → сказать: **привяжите / импортируйте DWG** на план. **Не** рисовать стены «на глаз» и **не** выдумывать координаты для `create_line_based_element`.
+4. Есть CAD → **`trace_walls_from_cad`** (не сырой `create_line_based_element` с придуманными мм).
+5. Сначала **`dryRun: true`** → смотреть `plannedCount`, `thicknessClusters`, `verify`.
+6. Create → в ответе пользователю: создано N/M, толщины, `maxDeviationMm` / failedAxes.
+
+## Предпочтительный CAD
+
+| Лучше | Хуже |
+|-------|------|
+| Связь / import **не exploded** | Exploded → Model Lines (шум, ложные толщины) |
+| Слои стен: `A-WALL`, `I-WALL`, `WALL`, `Стены` | Все на одном слое + размеры/оси |
+| Двойные линии = толщина | Одиночные контуры без пары |
+
+Exploded DWG: `includeModelLines` (auto/true). Связной с тонкими слоями — `includeModelLines: false`.
+
+## Слои (крупный план)
+
+- **Наружные:** `layerFilter: ["A-WALL"]` (или `WALL`), `maxPairGapMm` до ~550 если есть 380/510.
+- **Внутренние:** `layerFilter: ["I-WALL"]`, `maxPairGapMm` ~280.
+- **Витражи:** `A-GLAZ-CURT` / `GLAZ` → тип «Витраж» / «Наружное остекление», не обычная кладка.
+- **Не стены:** `A-DOOR`, `S-COLS`, `S-GRID`, `C-PRKG`, лестницы — не гнать в `trace_walls_from_cad` одним фильтром «всё».
+- Двери из CAD → отдельный tool ([REV-147](https://linear.app/newlevelhub/issue/REV-147)); пока — только вручную `create_point_based_element` после стен.
+
+## Параметры
+
+- `wallTypeId` — **обязателен** (fallback из `get_available_family_types`).
+- `autoMatchWallTypes: true` — тип по мм в имени; при странном матче (250→брус) предупредить / сменить тип.
+- `requirePair: true`, `orthoOnly: true` по умолчанию.
+- `cadLinkName` — если несколько связей.
+- `bboxMm` / `autoBbox` — отрезать дальний мусор.
+
+## Запрещено
+
+- Угадывать Start/End стен без CAD-tools.
+- Ставить стены по скрину / «примерно по сетке» без `get_cad_link_geometry` / `trace_walls_from_cad`.
+- Один create на все слои сразу на огромном плане — дробить: A-WALL → I-WALL → GLAZ.
+- Обещать двери/колонны из CAD, пока нет соответствующего tool.
+
+## Ответ пользователю
+
+Кратко: сколько осей/стен, по каким слоям, verify (maxDeviationMm), что не делалось (двери, колонны). Таблица MCP-tools в конце (как в `revit-mcp.mdc`).

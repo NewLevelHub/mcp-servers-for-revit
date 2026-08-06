@@ -16,6 +16,8 @@ namespace RevitMCPCommandSet.Services.DataExtraction
         private long _viewId;
         private double _minLengthMm;
         private int _limit;
+        private bool _includeHiddenLayers;
+        private bool _includeModelLines;
 
         public GetCadLinkGeometryResult ResultInfo { get; private set; } = new();
         public bool TaskCompleted { get; private set; }
@@ -26,7 +28,9 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             IEnumerable<string> layerFilters = null,
             long viewId = 0,
             double minLengthMm = 0,
-            int limit = 5000)
+            int limit = 5000,
+            bool includeHiddenLayers = false,
+            bool includeModelLines = false)
         {
             _cadLinkName = cadLinkName ?? string.Empty;
             _layerFilters = (layerFilters ?? Enumerable.Empty<string>())
@@ -36,6 +40,8 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             _viewId = viewId;
             _minLengthMm = Math.Max(0, minLengthMm);
             _limit = limit > 0 ? limit : 5000;
+            _includeHiddenLayers = includeHiddenLayers;
+            _includeModelLines = includeModelLines;
             TaskCompleted = false;
             _resetEvent.Reset();
         }
@@ -77,19 +83,23 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                     .Cast<ImportInstance>()
                     .ToList();
 
-                if (importsOnView.Count == 0)
+                var selected = FilterByName(doc, importsOnView, _cadLinkName);
+
+                // Exploded DWG often leaves wall faces as Model/Detail lines, while only
+                // block leftovers remain as ImportInstance. Allow model-line fallback.
+                if (importsOnView.Count == 0 && !_includeModelLines)
                 {
                     var hint = allInDoc.Count == 0
                         ? "На виде нет CAD/DWG. Привяжите DWG к уровню (Вставка → Связь CAD) и откройте план этажа."
                         : $"На виде «{view.Name}» нет видимых CAD-подложек (в проекте есть {allInDoc.Count}). " +
-                          "Покажите связь на этом плане или привяжите DWG к уровню вида.";
+                          "Покажите связь на этом плане или привяжите DWG к уровню вида. " +
+                          "Если DWG взорван — вызовите с includeModelLines=true.";
 
                     ResultInfo = Fail(hint, view, BuildLinkInfos(doc, allInDoc));
                     return;
                 }
 
-                var selected = FilterByName(doc, importsOnView, _cadLinkName);
-                if (selected.Count == 0)
+                if (!string.IsNullOrWhiteSpace(_cadLinkName) && selected.Count == 0 && !_includeModelLines)
                 {
                     var available = string.Join(", ",
                         importsOnView.Select(i => $"«{GetCadName(doc, i)}»"));
@@ -103,7 +113,8 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                 var options = new Options
                 {
                     ComputeReferences = false,
-                    IncludeNonVisibleObjects = true
+                    IncludeNonVisibleObjects = true,
+                    View = view
                 };
 
                 var items = new List<CadSegmentItem>();
@@ -132,30 +143,10 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                         if (truncated)
                             break;
 
-                        if (top is GeometryInstance gi)
-                        {
-                            var instanceGeom = gi.GetInstanceGeometry();
-                            if (instanceGeom == null)
-                                continue;
-
-                            foreach (GeometryObject obj in instanceGeom)
-                            {
-                                if (truncated)
-                                    break;
-
-                                AppendObject(
-                                    doc, view, obj, linkName, linkId, geomIndex++,
-                                    items, ref truncated, ref hasBbox,
-                                    ref minX, ref minY, ref maxX, ref maxY);
-                            }
-                        }
-                        else
-                        {
-                            AppendObject(
-                                doc, view, top, linkName, linkId, geomIndex++,
-                                items, ref truncated, ref hasBbox,
-                                ref minX, ref minY, ref maxX, ref maxY);
-                        }
+                        AppendGeometryObject(
+                            doc, view, top, linkName, linkId, ref geomIndex,
+                            items, ref truncated, ref hasBbox,
+                            ref minX, ref minY, ref maxX, ref maxY);
                     }
 
                     linkInfos.Add(new CadLinkInfo
@@ -167,36 +158,66 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                     });
                 }
 
+                int modelLineCount = 0;
+                if (_includeModelLines && !truncated)
+                {
+                    modelLineCount = AppendModelAndDetailLines(
+                        doc, view, items, ref truncated, ref hasBbox,
+                        ref minX, ref minY, ref maxX, ref maxY);
+                    if (modelLineCount > 0)
+                    {
+                        linkInfos.Add(new CadLinkInfo
+                        {
+                            ElementId = 0,
+                            Name = "modelLines/detailLines",
+                            IsLinked = false,
+                            SegmentCount = modelLineCount
+                        });
+                    }
+                }
+
                 if (items.Count == 0)
                 {
-                    ResultInfo = Fail(
-                        "CAD найден, но линий/дуг/полилиний нет (или все отфильтрованы по слою/длине). " +
-                        "Проверьте видимость слоёв DWG на виде.",
-                        view,
-                        BuildLinkInfos(doc, selected));
+                    var hint = _includeModelLines
+                        ? "Нет линий ImportInstance и Model/Detail Lines (или все отфильтрованы по слою/длине)."
+                        : "CAD найден, но линий/дуг/полилиний нет (или все отфильтрованы по слою/длине). " +
+                          "Если DWG взорван в линии модели — повторите с includeModelLines=true.";
+                    ResultInfo = Fail(hint, view, BuildLinkInfos(doc, selected.Count > 0 ? selected : importsOnView));
                     return;
                 }
 
-                var primary = selected[0];
-                var primaryName = GetCadName(doc, primary);
+                var primary = selected.Count > 0 ? selected[0] : null;
+                var primaryName = primary != null ? GetCadName(doc, primary) : (modelLineCount > 0 ? "modelLines" : null);
                 var layers = items.Select(i => i.Layer).Where(l => !string.IsNullOrEmpty(l)).Distinct().Take(8);
                 var layerHint = string.Join("/", layers);
+
+                var layerSummary = items
+                    .GroupBy(i => i.Layer ?? string.Empty)
+                    .Select(g => new CadLayerSummaryItem { Layer = g.Key, Count = g.Count() })
+                    .OrderByDescending(x => x.Count)
+                    .Take(24)
+                    .ToList();
+
+                var sourceHint = modelLineCount > 0
+                    ? $", model/detail lines {modelLineCount}"
+                    : "";
 
                 ResultInfo = new GetCadLinkGeometryResult
                 {
                     Ok = true,
-                    Summary = selected.Count == 1
-                        ? $"DWG «{primaryName}»: {items.Count} сегмент(ов)" +
+                    Summary = selected.Count <= 1
+                        ? $"{(primaryName != null ? $"DWG «{primaryName}»" : "Линии")}: {items.Count} сегмент(ов)" +
                           (string.IsNullOrEmpty(layerHint) ? "" : $", слои {layerHint}") +
+                          sourceHint +
                           (truncated ? " (урезано)" : "")
-                        : $"CAD ×{selected.Count}: {items.Count} сегмент(ов)" + (truncated ? " (урезано)" : ""),
+                        : $"CAD ×{selected.Count}: {items.Count} сегмент(ов)" + sourceHint + (truncated ? " (урезано)" : ""),
                     Count = items.Count,
                     Items = items,
                     BboxMm = hasBbox
                         ? new CadBboxMm { MinX = Round1(minX), MinY = Round1(minY), MaxX = Round1(maxX), MaxY = Round1(maxY) }
                         : null,
-                    CadLinkName = selected.Count == 1 ? primaryName : null,
-                    CadLinkElementId = selected.Count == 1 ? primary.Id.GetValue() : null,
+                    CadLinkName = selected.Count == 1 ? primaryName : (selected.Count == 0 && modelLineCount > 0 ? "modelLines" : null),
+                    CadLinkElementId = selected.Count == 1 ? primary!.Id.GetValue() : null,
                     ImportUnits = "mm",
                     ViewId = view.Id.GetValue(),
                     ViewName = view.Name,
@@ -204,7 +225,8 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                     Truncated = truncated,
                     Message = truncated
                         ? $"Показаны первые {_limit} сегментов. Уточните layerFilter или увеличьте limit."
-                        : null
+                        : null,
+                    LayerSummary = layerSummary
                 };
             }
             catch (Exception ex)
@@ -215,6 +237,192 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             {
                 TaskCompleted = true;
                 _resetEvent.Set();
+            }
+        }
+
+        private void AppendGeometryObject(
+            Document doc,
+            View view,
+            GeometryObject obj,
+            string linkName,
+            long linkId,
+            ref int geomIndex,
+            List<CadSegmentItem> items,
+            ref bool truncated,
+            ref bool hasBbox,
+            ref double minX,
+            ref double minY,
+            ref double maxX,
+            ref double maxY)
+        {
+            if (obj == null || truncated)
+                return;
+
+            if (obj is GeometryInstance gi)
+            {
+                var instanceGeom = gi.GetInstanceGeometry();
+                bool instanceHasCurves = GeometryElementHasDrawableCurves(instanceGeom);
+
+                if (instanceHasCurves)
+                {
+                    foreach (GeometryObject child in instanceGeom)
+                    {
+                        if (truncated)
+                            break;
+                        AppendGeometryObject(
+                            doc, view, child, linkName, linkId, ref geomIndex,
+                            items, ref truncated, ref hasBbox,
+                            ref minX, ref minY, ref maxX, ref maxY);
+                    }
+                }
+                else
+                {
+                    // Some exploded blocks expose geometry only via symbol + transform.
+                    var symbolGeom = gi.GetSymbolGeometry();
+                    if (symbolGeom != null)
+                    {
+                        var transform = gi.Transform;
+                        foreach (GeometryObject child in symbolGeom)
+                        {
+                            if (truncated)
+                                break;
+                            AppendTransformedGeometryObject(
+                                doc, view, child, transform, linkName, linkId, ref geomIndex,
+                                items, ref truncated, ref hasBbox,
+                                ref minX, ref minY, ref maxX, ref maxY);
+                        }
+                    }
+                }
+
+                return;
+            }
+
+            AppendObject(
+                doc, view, obj, linkName, linkId, geomIndex++,
+                items, ref truncated, ref hasBbox,
+                ref minX, ref minY, ref maxX, ref maxY);
+        }
+
+        private static bool GeometryElementHasDrawableCurves(GeometryElement geom)
+        {
+            if (geom == null)
+                return false;
+
+            foreach (GeometryObject obj in geom)
+            {
+                if (obj is Line || obj is PolyLine || obj is Arc || obj is Curve)
+                    return true;
+                if (obj is GeometryInstance nested)
+                {
+                    if (GeometryElementHasDrawableCurves(nested.GetInstanceGeometry()))
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        private void AppendTransformedGeometryObject(
+            Document doc,
+            View view,
+            GeometryObject obj,
+            Transform transform,
+            string linkName,
+            long linkId,
+            ref int geomIndex,
+            List<CadSegmentItem> items,
+            ref bool truncated,
+            ref bool hasBbox,
+            ref double minX,
+            ref double minY,
+            ref double maxX,
+            ref double maxY)
+        {
+            if (obj == null || truncated)
+                return;
+
+            if (obj is GeometryInstance gi)
+            {
+                var instanceGeom = gi.GetInstanceGeometry();
+                if (instanceGeom != null)
+                {
+                    var combined = transform.Multiply(gi.Transform);
+                    foreach (GeometryObject child in instanceGeom)
+                    {
+                        if (truncated)
+                            break;
+                        AppendTransformedGeometryObject(
+                            doc, view, child, combined, linkName, linkId, ref geomIndex,
+                            items, ref truncated, ref hasBbox,
+                            ref minX, ref minY, ref maxX, ref maxY);
+                    }
+                }
+
+                return;
+            }
+
+            var layer = ResolveLayer(doc, obj);
+            if (!LayerMatches(layer))
+                return;
+
+            if (!_includeHiddenLayers && !IsLayerVisible(doc, view, obj))
+                return;
+
+            if (obj is PolyLine poly)
+            {
+                var coords = poly.GetCoordinates();
+                for (int i = 0; i < coords.Count - 1; i++)
+                {
+                    if (!TryAddSegment(
+                            items, transform.OfPoint(coords[i]), transform.OfPoint(coords[i + 1]),
+                            layer, linkName, linkId,
+                            $"{linkId}:{geomIndex}:pl{i}", "polylineSegment",
+                            "importInstance",
+                            ref truncated, ref hasBbox, ref minX, ref minY, ref maxX, ref maxY))
+                        return;
+                }
+
+                return;
+            }
+
+            if (obj is Line line)
+            {
+                TryAddSegment(
+                    items, transform.OfPoint(line.GetEndPoint(0)), transform.OfPoint(line.GetEndPoint(1)),
+                    layer, linkName, linkId,
+                    $"{linkId}:{geomIndex}:ln", "line",
+                    "importInstance",
+                    ref truncated, ref hasBbox, ref minX, ref minY, ref maxX, ref maxY);
+                return;
+            }
+
+            if (obj is Arc || obj is Curve)
+            {
+                var c = obj as Curve;
+                if (c == null)
+                    return;
+
+                IList<XYZ> pts;
+                try
+                {
+                    pts = c.Tessellate();
+                }
+                catch
+                {
+                    pts = new List<XYZ> { c.GetEndPoint(0), c.GetEndPoint(1) };
+                }
+
+                var curveType = obj is Arc ? "arc" : "curve";
+                for (int i = 0; i < pts.Count - 1; i++)
+                {
+                    if (!TryAddSegment(
+                            items, transform.OfPoint(pts[i]), transform.OfPoint(pts[i + 1]),
+                            layer, linkName, linkId,
+                            $"{linkId}:{geomIndex}:{curveType}{i}", curveType,
+                            "importInstance",
+                            ref truncated, ref hasBbox, ref minX, ref minY, ref maxX, ref maxY))
+                        return;
+                }
             }
         }
 
@@ -240,7 +448,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             if (!LayerMatches(layer))
                 return;
 
-            if (!IsLayerVisible(doc, view, obj))
+            if (!_includeHiddenLayers && !IsLayerVisible(doc, view, obj))
                 return;
 
             if (obj is PolyLine poly)
@@ -251,6 +459,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                     if (!TryAddSegment(
                             items, coords[i], coords[i + 1], layer, linkName, linkId,
                             $"{linkId}:{geomIndex}:pl{i}", "polylineSegment",
+                            "importInstance",
                             ref truncated, ref hasBbox, ref minX, ref minY, ref maxX, ref maxY))
                         return;
                 }
@@ -263,6 +472,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                 TryAddSegment(
                     items, line.GetEndPoint(0), line.GetEndPoint(1), layer, linkName, linkId,
                     $"{linkId}:{geomIndex}:ln", "line",
+                    "importInstance",
                     ref truncated, ref hasBbox, ref minX, ref minY, ref maxX, ref maxY);
                 return;
             }
@@ -289,10 +499,110 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                     if (!TryAddSegment(
                             items, pts[i], pts[i + 1], layer, linkName, linkId,
                             $"{linkId}:{geomIndex}:{curveType}{i}", curveType,
+                            "importInstance",
                             ref truncated, ref hasBbox, ref minX, ref minY, ref maxX, ref maxY))
                         return;
                 }
             }
+        }
+
+        /// <summary>
+        /// Exploded DWG wall faces often live as ModelCurve / DetailCurve, not ImportInstance.
+        /// </summary>
+        private int AppendModelAndDetailLines(
+            Document doc,
+            View view,
+            List<CadSegmentItem> items,
+            ref bool truncated,
+            ref bool hasBbox,
+            ref double minX,
+            ref double minY,
+            ref double maxX,
+            ref double maxY)
+        {
+            int added = 0;
+            var curves = new FilteredElementCollector(doc, view.Id)
+                .OfClass(typeof(CurveElement))
+                .WhereElementIsNotElementType()
+                .Cast<CurveElement>();
+
+            foreach (var curveEl in curves)
+            {
+                if (truncated)
+                    break;
+
+                if (curveEl is not ModelCurve && curveEl is not DetailCurve)
+                    continue;
+
+                Curve geom;
+                try
+                {
+                    geom = curveEl.GeometryCurve;
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (geom == null || !geom.IsBound)
+                    continue;
+
+                var styleName = string.Empty;
+                try
+                {
+                    styleName = curveEl.LineStyle?.Name ?? string.Empty;
+                }
+                catch
+                {
+                    // ignore
+                }
+
+                if (!LayerMatches(styleName) && _layerFilters.Count > 0)
+                {
+                    // Also allow empty style through when no explicit style filter match needed for model lines
+                    // unless user asked for a layer — then skip non-matching styles.
+                    continue;
+                }
+
+                var source = curveEl is DetailCurve ? "detailLine" : "modelLine";
+                var id = curveEl.Id.GetValue();
+                var before = items.Count;
+
+                if (geom is Line || geom is Arc || geom is Curve)
+                {
+                    IList<XYZ> pts;
+                    try
+                    {
+                        if (geom is Line)
+                            pts = new List<XYZ> { geom.GetEndPoint(0), geom.GetEndPoint(1) };
+                        else
+                            pts = geom.Tessellate();
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    var curveType = geom is Line ? "line" : (geom is Arc ? "arc" : "curve");
+                    for (int i = 0; i < pts.Count - 1; i++)
+                    {
+                        if (!TryAddSegment(
+                                items, pts[i], pts[i + 1],
+                                string.IsNullOrEmpty(styleName) ? source : styleName,
+                                "modelLines",
+                                id,
+                                $"{id}:{curveType}{i}",
+                                curveType,
+                                source,
+                                ref truncated, ref hasBbox, ref minX, ref minY, ref maxX, ref maxY))
+                            break;
+                    }
+                }
+
+                added += items.Count - before;
+            }
+
+            return added;
         }
 
         private bool TryAddSegment(
@@ -304,6 +614,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             long linkId,
             string cadId,
             string curveType,
+            string source,
             ref bool truncated,
             ref bool hasBbox,
             ref double minX,
@@ -338,7 +649,8 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                 LengthMm = Round1(lengthMm),
                 CurveType = curveType,
                 CadLinkName = linkName,
-                CadLinkElementId = linkId
+                CadLinkElementId = linkId,
+                Source = source
             });
             return true;
         }

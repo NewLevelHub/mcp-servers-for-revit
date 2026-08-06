@@ -8,6 +8,7 @@ export function registerGetCadLinkGeometryTool(server: McpServer) {
     "Read line/arc/polyline geometry from a DWG/CAD ImportInstance (link or import) " +
       "on the active floor plan. Returns segments in mm { startMm, endMm, layer, cadId } " +
       "plus bbox — use before tracing walls from CAD (REV-138). " +
+      "If DWG was exploded, set includeModelLines=true to also read Model/Detail lines. " +
       "Fail-fast if no CAD is visible on the view.",
     {
       cadLinkName: z
@@ -36,12 +37,28 @@ export function registerGetCadLinkGeometryTool(server: McpServer) {
         .optional()
         .default(5000)
         .describe("Max segments to return (default 5000)."),
+      includeHiddenLayers: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "Include DWG layers hidden on the view (recommended true for wall tracing)."
+        ),
+      includeModelLines: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "Also return ModelCurve/DetailCurve on the view (needed when DWG was exploded into model lines)."
+        ),
     },
     async (args) => {
       const params: Record<string, unknown> = {
         cadLinkName: args.cadLinkName ?? "",
         minLengthMm: args.minLengthMm ?? 0,
         limit: args.limit ?? 5000,
+        includeHiddenLayers: args.includeHiddenLayers ?? false,
+        includeModelLines: args.includeModelLines ?? false,
       };
       if (args.layerFilter !== undefined) {
         params.layerFilter = args.layerFilter;

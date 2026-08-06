@@ -55,6 +55,9 @@ namespace revit_mcp_plugin.Core.Assistant
                 case "get_cad_link_geometry":
                     shaped = ShapeCadLinkGeometry(result);
                     break;
+                case "trace_walls_from_cad":
+                    shaped = ShapeTraceWallsFromCad(result);
+                    break;
                 default:
                     shaped = ShapeGeneric(toolName, result);
                     break;
@@ -539,6 +542,50 @@ namespace revit_mcp_plugin.Core.Assistant
                 shaped["cadLinkElementId"] = obj["cadLinkElementId"];
             if (obj["availableLinks"] != null)
                 shaped["availableLinks"] = obj["availableLinks"];
+
+            return shaped;
+        }
+
+        private static JObject ShapeTraceWallsFromCad(JToken result)
+        {
+            var obj = result as JObject ?? new JObject();
+            var ok = obj["ok"]?.Value<bool>() ?? false;
+            if (!ok)
+            {
+                var msg = FirstString(obj, "message", "summary", "Message") ?? "не удалось построить стены по CAD";
+                return new JObject
+                {
+                    ["ok"] = false,
+                    ["summary"] = msg,
+                    ["count"] = 0,
+                    ["createdCount"] = 0,
+                    ["nextStep"] = "Проверьте wallTypeId, layerFilter, bboxMm; привяжите DWG к уровню."
+                };
+            }
+
+            var summary = FirstString(obj, "summary") ?? "Стены по CAD созданы";
+            var created = FirstInt(obj, "createdCount") ?? FirstInt(obj, "count") ?? 0;
+            var planned = FirstInt(obj, "plannedCount") ?? created;
+            var elementIds = obj["elementIds"] as JArray ?? new JArray();
+            var shownIds = new JArray(elementIds.Take(DefaultItemLimit));
+
+            var shaped = new JObject
+            {
+                ["ok"] = true,
+                ["summary"] = summary,
+                ["count"] = created,
+                ["plannedCount"] = planned,
+                ["createdCount"] = created,
+                ["elementIds"] = shownIds,
+                ["nextStep"] = "Проверьте контур: get_current_view_elements OST_Walls; затем create_room / двери."
+            };
+
+            if (obj["verify"] != null)
+                shaped["verify"] = obj["verify"];
+            if (obj["stats"] != null)
+                shaped["stats"] = obj["stats"];
+            if (obj["dryRun"]?.Value<bool>() == true)
+                shaped["dryRun"] = true;
 
             return shaped;
         }
