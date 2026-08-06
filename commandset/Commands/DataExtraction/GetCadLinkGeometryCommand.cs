@@ -24,6 +24,8 @@ namespace RevitMCPCommandSet.Commands.DataExtraction
                 long viewId = parameters?["viewId"]?.Value<long>() ?? 0;
                 double minLengthMm = parameters?["minLengthMm"]?.Value<double>() ?? 0;
                 int limit = parameters?["limit"]?.Value<int>() ?? 5000;
+                bool includeHiddenLayers = parameters?["includeHiddenLayers"]?.Value<bool>() ?? false;
+                bool includeModelLines = parameters?["includeModelLines"]?.Value<bool>() ?? false;
 
                 var layerFilters = new List<string>();
                 var layerToken = parameters?["layerFilter"];
@@ -43,7 +45,9 @@ namespace RevitMCPCommandSet.Commands.DataExtraction
                         layerFilters.Add(s);
                 }
 
-                _handler.SetParameters(cadLinkName, layerFilters, viewId, minLengthMm, limit);
+                _handler.SetParameters(
+                    cadLinkName, layerFilters, viewId, minLengthMm, limit,
+                    includeHiddenLayers, includeModelLines);
 
                 if (RaiseAndWaitForCompletion(60000))
                 {

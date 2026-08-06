@@ -58,7 +58,9 @@ namespace revit_mcp_plugin.Core.Assistant
             "Одно чтение («сколько комнат») — без плана.\n" +
             "A) get_current_view_info → elevation уровня (мм) = baseLevel.\n" +
             "A2) Перечерчивание по DWG/CAD: trace_walls_from_cad (wallTypeId обязателен) — " +
-            "читает CAD, сливает двойные линии в центр, создаёт стены. " +
+            "читает CAD + Model Lines (если DWG взорван), сливает двойные линии в центр, " +
+            "меряет толщину по зазору граней и подбирает тип стены по мм в имени. " +
+            "Сначала dryRun=true → thicknessClusters / recommendedWallTypes, потом создание. " +
             "Или вручную: get_cad_link_geometry → create_line_based_element по startMm/endMm " +
             "(не угадывай стены «на глаз»). layerFilter по слоям стен; bboxMm — отсечь лишние фрагменты листа. " +
             "Нет CAD на виде → скажи привязать DWG к уровню.\n" +
