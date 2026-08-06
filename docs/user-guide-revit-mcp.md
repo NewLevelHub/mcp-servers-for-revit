@@ -194,14 +194,20 @@
 
 
 
-**Перечерчивание по DWG**
+**Перечерчивание по DWG** (REV-142, Cursor + MCP)
 
 1. На активном плане этажа привяжите / импортируйте DWG (**лучше не explode** — оставить связь).
 2. В Cursor:
 
 > Перечерти стены по DWG на активном плане. Сначала dryRun, потом создай. По правилам revit-mcp.
 
-Агент должен вызвать `get_cad_link_geometry` / `trace_walls_from_cad`, а не угадывать координаты. Подробнее: `.cursor/rules/revit-cad-redraw.mdc`. Двери из CAD — пока вручную (тикет REV-147).
+Ожидаемое поведение агента:
+- цепочка `get_current_view_info` → `get_cad_link_geometry` / `trace_walls_from_cad` (сначала `dryRun`, потом create);
+- **не** угадывать Start/End для голого `create_line_based_element`;
+- нет CAD на виде → «привяжите / импортируйте DWG», без рисования «на глаз»;
+- в ответе: создано N/M, слои, **verify** (`maxDeviationMm` / failedAxes).
+
+Подробнее: `.cursor/rules/revit-cad-redraw.mdc`. Двери и окна из CAD — пока вручную (тикет REV-147).
 
 
 

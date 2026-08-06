@@ -34,7 +34,7 @@ Exploded DWG: `includeModelLines` (auto/true). Связной с тонкими 
 - **Внутренние:** `layerFilter: ["I-WALL"]`, `maxPairGapMm` ~280.
 - **Витражи:** `A-GLAZ-CURT` / `GLAZ` → тип «Витраж» / «Наружное остекление», не обычная кладка.
 - **Не стены:** `A-DOOR`, `S-COLS`, `S-GRID`, `C-PRKG`, лестницы — не гнать в `trace_walls_from_cad` одним фильтром «всё».
-- Двери из CAD → отдельный tool ([REV-147](https://linear.app/newlevelhub/issue/REV-147)); пока — только вручную `create_point_based_element` после стен.
+- Двери и окна из CAD → [REV-147](https://linear.app/newlevelhub/issue/REV-147) (`trace_doors/windows_from_cad`); пока tool нет — только вручную `create_point_based_element` после стен.
 
 ## Параметры
 
@@ -49,8 +49,14 @@ Exploded DWG: `includeModelLines` (auto/true). Связной с тонкими 
 - Угадывать Start/End стен без CAD-tools.
 - Ставить стены по скрину / «примерно по сетке» без `get_cad_link_geometry` / `trace_walls_from_cad`.
 - Один create на все слои сразу на огромном плане — дробить: A-WALL → I-WALL → GLAZ.
-- Обещать двери/колонны из CAD, пока нет соответствующего tool.
+- Обещать двери/окна/колонны из CAD, пока нет tool (REV-147 для дверей и окон).
 
-## Ответ пользователю
+## Ответ пользователю (обязательно)
 
-Кратко: сколько осей/стен, по каким слоям, verify (maxDeviationMm), что не делалось (двери, колонны). Таблица MCP-tools в конце (как в `revit-mcp.mdc`).
+Кратко в ответе всегда:
+1. создано **N/M** (или plannedCount при dryRun);
+2. слои / толщины;
+3. **verify**: `maxDeviationMm` (и failedAxes, если есть);
+4. что **не** делалось (двери, окна, колонны → REV-147).
+
+Таблица MCP-tools в конце (как в `revit-mcp.mdc`).
