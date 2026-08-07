@@ -9,7 +9,7 @@
 | # | Запрос в Cursor | Ожидаемые tools | Pass? |
 |---|-----------------|-----------------|-------|
 | 1 | `say_hello` / «какой активный вид?» | `say_hello` / `get_current_view_info` | |
-| 2 | «Перечерти стены по DWG» (связь **не** exploded) | `get_cad_link_geometry` и/или `trace_walls_from_cad` (`dryRun` → create); в ответе verify | |
+| 2 | «Перечерти стены по DWG» (связь **не** exploded) | `get_cad_link_geometry` и/или `trace_walls_from_cad` (`dryRun` → create); в ответе verify (`maxDeviationMm` / N/M). Правило: `revit-cad-redraw.mdc` (REV-142) | |
 | 3 | «Наружные размеры по осям» | `dimension_grids` (3 яруса: проёмы → межосевой → габарит) | |
 | 4 | «Размеры комнат» (≥3) | `dimension_room_walls` interior + verify `OST_Dimensions` | |
 | 5 | Сессия ~30 мин | 0 ручных restart Revit/MCP (REV-139) | |
