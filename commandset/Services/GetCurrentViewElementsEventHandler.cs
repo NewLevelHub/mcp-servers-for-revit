@@ -255,6 +255,26 @@ namespace RevitMCPCommandSet.Services
                     }
                 }
 
+                // REV-149: walls host CAD-traced openings — expose type and dimensions so a
+                // bridge wall can be cloned from a neighbour instead of guessed.
+                if (element is Wall wall)
+                {
+#if REVIT2024_OR_GREATER
+                    properties.Add("WallTypeId", wall.GetTypeId().Value.ToString());
+#else
+                    properties.Add("WallTypeId", wall.GetTypeId().IntegerValue.ToString());
+#endif
+                    properties.Add("WallWidthMm", (wall.Width * ftToMm).ToString("F1"));
+
+                    var heightParam = wall.get_Parameter(BuiltInParameter.WALL_USER_HEIGHT_PARAM);
+                    if (heightParam != null && heightParam.HasValue)
+                        properties.Add("WallHeightMm", (heightParam.AsDouble() * ftToMm).ToString("F1"));
+
+                    var baseOffsetParam = wall.get_Parameter(BuiltInParameter.WALL_BASE_OFFSET);
+                    if (baseOffsetParam != null && baseOffsetParam.HasValue)
+                        properties.Add("WallBaseOffsetMm", (baseOffsetParam.AsDouble() * ftToMm).ToString("F1"));
+                }
+
                 // 获取常用参数值
                 var commonParams = new[] { "Comments", "Mark", "Level", "Family", "Type" };
                 foreach (var paramName in commonParams)

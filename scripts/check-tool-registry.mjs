@@ -43,6 +43,8 @@ const SERVER_ONLY_TOOLS = new Set([
   "fill_title_block",
   "number_rooms",
   "trace_walls_from_cad",
+  "trace_openings_from_cad",
+  "trace_columns_from_cad",
   "color_elements",
   "tag_all_rooms",
   "tag_all_walls",

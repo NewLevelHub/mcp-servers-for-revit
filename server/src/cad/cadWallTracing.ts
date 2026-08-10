@@ -14,6 +14,31 @@ export type CadSegment = {
   curveType?: string;
   cadLinkName?: string;
   source?: string;
+  /** REV-149: index into CadBlock[] when the segment came from a DWG block; -1 if loose. */
+  blockIndex?: number;
+  /** REV-149: shared across every chord of one arc. */
+  arcId?: string;
+  arcCenterMm?: PointMm;
+  arcRadiusMm?: number;
+  arcStartAngleDeg?: number;
+  arcEndAngleDeg?: number;
+};
+
+/**
+ * REV-149: a DWG block instance. Insert point + rotation + mirror give a door's position,
+ * facing and hand directly — no clustering, no heuristics.
+ */
+export type CadBlock = {
+  index: number;
+  name: string;
+  insertMm: PointMm;
+  rotationDeg: number;
+  mirrored: boolean;
+  layer?: string;
+  segmentCount?: number;
+  bboxMm?: BboxMm;
+  cadLinkElementId?: number;
+  source?: string;
 };
 
 /** Substrings matched against cadLinkName (case-insensitive) — exploded furniture/door blocks. */
@@ -207,10 +232,41 @@ export type TraceStats = {
   thicknessOutliersDropped: number;
 };
 
+/**
+ * REV-150: why a CAD line did not become a wall.
+ *
+ * A count alone ("unpairedSkipped: 3") cannot be acted on — you cannot see which wall
+ * is missing or which parameter to widen. Each drop now carries its coordinates and the
+ * measured gap to its nearest parallel neighbour, which is what names the fix.
+ */
+export type SkipReason =
+  | "gapTooWide"
+  | "gapTooNarrow"
+  | "partnerTaken"
+  | "noParallel"
+  | "tooShort"
+  | "thicknessOutlier";
+
+export type SkippedSegment = {
+  reason: SkipReason;
+  startMm: PointMm;
+  endMm: PointMm;
+  lengthMm: number;
+  layer?: string;
+  /** Distance to the nearest parallel overlapping line, whatever the pairing band. */
+  nearestParallelGapMm?: number;
+  /** Layer of that nearest neighbour — a cross-layer gap is often the real story. */
+  nearestParallelLayer?: string;
+};
+
 export type TraceResult = {
   axes: WallAxis[];
   stats: TraceStats;
   thicknessClusters: ThicknessCluster[];
+  /** REV-150: dropped CAD lines with coordinates and reason. */
+  skipped: SkippedSegment[];
+  /** REV-150: plain-language next step, e.g. "raise maxPairGapMm to 400". */
+  hints: string[];
 };
 
 type InternalSeg = {
@@ -396,11 +452,20 @@ function pairDoubleLines(
       "minPairGapMm" | "maxPairGapMm" | "minWallLengthMm" | "toleranceMm" | "requirePair"
     >
   >
-): { axes: WallAxis[]; pairedCount: number; unpairedSkipped: number } {
+): {
+  axes: WallAxis[];
+  pairedCount: number;
+  unpairedSkipped: number;
+  skipped: SkippedSegment[];
+} {
   const axes: WallAxis[] = [];
+  const skipped: SkippedSegment[] = [];
   let pairedCount = 0;
   let unpairedSkipped = 0;
   const angleTolDeg = 3;
+  // Only look this far for a "nearest parallel" when explaining a skip. A line metres
+  // away is unrelated geometry, and reporting it would suggest an absurd maxPairGapMm.
+  const searchRadius = Math.max(opts.maxPairGapMm * 4, 1200);
 
   // Sort by offset within continuous angle neighborhoods (search adjacent degree bins).
   const sorted = [...segments].sort((a, b) => a.angle - b.angle || a.offset - b.offset);
@@ -472,18 +537,70 @@ function pairDoubleLines(
       if (axis.lengthMm >= opts.minWallLengthMm) {
         axes.push(axis);
         pairedCount += 1;
+      } else {
+        skipped.push({ ...describeSegment(a), reason: "tooShort" });
       }
     } else if (!a.used) {
       a.used = true;
       if (opts.requirePair) {
         unpairedSkipped += 1;
+        // Measure the nearest parallel line regardless of the band — that number is
+        // what tells the caller whether to widen maxPairGapMm or fix the DWG.
+        const near = nearestParallel(a, sorted, searchRadius);
+        skipped.push({
+          ...describeSegment(a),
+          reason: classifyUnpaired(near, opts.minPairGapMm, opts.maxPairGapMm),
+          nearestParallelGapMm: near ? round1(near.gap) : undefined,
+          nearestParallelLayer: near?.seg.layer || undefined,
+        });
       } else if (a.length >= opts.minWallLengthMm) {
         axes.push(internalToAxis(a, [a.cadId]));
       }
     }
   }
 
-  return { axes, pairedCount, unpairedSkipped };
+  return { axes, pairedCount, unpairedSkipped, skipped };
+}
+
+function describeSegment(s: InternalSeg): Omit<SkippedSegment, "reason"> {
+  return {
+    startMm: { x: round1(s.x0), y: round1(s.y0), z: 0 },
+    endMm: { x: round1(s.x1), y: round1(s.y1), z: 0 },
+    lengthMm: round1(s.length),
+    layer: s.layer || undefined,
+  };
+}
+
+/** Closest parallel, overlapping line within searchRadius — used or not, in band or not. */
+function nearestParallel(
+  a: InternalSeg,
+  all: InternalSeg[],
+  searchRadius: number
+): { seg: InternalSeg; gap: number } | null {
+  let best: { seg: InternalSeg; gap: number } | null = null;
+  for (const b of all) {
+    if (b === a) continue;
+    if (!anglesMatch(a.angle, b.angle, 3)) continue;
+    const gap = Math.abs(b.offset - a.offset);
+    if (gap < 0.5) continue; // the same line drawn twice
+    if (gap > searchRadius) continue;
+    const ov = overlapT(a, b);
+    if (ov < Math.min(a.length, b.length) * 0.25 && ov < 200) continue;
+    if (!best || gap < best.gap) best = { seg: b, gap };
+  }
+  return best;
+}
+
+function classifyUnpaired(
+  near: { seg: InternalSeg; gap: number } | null,
+  minPairGapMm: number,
+  maxPairGapMm: number
+): SkipReason {
+  if (!near) return "noParallel";
+  if (near.gap > maxPairGapMm) return "gapTooWide";
+  if (near.gap < minPairGapMm) return "gapTooNarrow";
+  // In band but still unpaired → a neighbour consumed it first.
+  return "partnerTaken";
 }
 
 /**
@@ -756,6 +873,7 @@ export function traceWallAxesFromCad(
   let axes: WallAxis[];
   let pairedCount = 0;
   let unpairedSkipped = 0;
+  const skipped: SkippedSegment[] = [];
 
   if (pairingMode === "raw") {
     axes = internal
@@ -772,6 +890,7 @@ export function traceWallAxesFromCad(
     axes = paired.axes;
     pairedCount = paired.pairedCount;
     unpairedSkipped = paired.unpairedSkipped;
+    skipped.push(...paired.skipped);
   }
 
   const afterPairing = axes.length;
@@ -785,6 +904,15 @@ export function traceWallAxesFromCad(
     });
     thicknessOutliersDropped = filtered.dropped.length;
     axes = filtered.axes;
+    for (const d of filtered.dropped) {
+      skipped.push({
+        reason: "thicknessOutlier",
+        startMm: d.startMm,
+        endMm: d.endMm,
+        lengthMm: d.lengthMm,
+        nearestParallelGapMm: d.thicknessMm,
+      });
+    }
   }
 
   const skippedShort = afterBbox.length - afterPairing - unpairedSkipped;
@@ -805,7 +933,68 @@ export function traceWallAxesFromCad(
       thicknessOutliersDropped,
     },
     thicknessClusters,
+    skipped,
+    hints: buildTraceHints(skipped, { minPairGapMm, maxPairGapMm, requirePair }),
   };
+}
+
+/**
+ * REV-150: turn the drop reasons into the one parameter change that would fix them.
+ */
+export function buildTraceHints(
+  skipped: SkippedSegment[],
+  opts: { minPairGapMm: number; maxPairGapMm: number; requirePair: boolean }
+): string[] {
+  const hints: string[] = [];
+  const by = (r: SkipReason) => skipped.filter((s) => s.reason === r);
+
+  const wide = by("gapTooWide");
+  if (wide.length > 0) {
+    const gaps = wide
+      .map((s) => s.nearestParallelGapMm)
+      .filter((g): g is number => g != null)
+      .sort((a, b) => a - b);
+    const needed = Math.ceil((gaps[gaps.length - 1] + 20) / 10) * 10;
+    hints.push(
+      `${wide.length} линий(и) не спарены: расстояние до параллельной грани ` +
+        `${gaps[0]}–${gaps[gaps.length - 1]} мм больше maxPairGapMm=${opts.maxPairGapMm}. ` +
+        `Это толстые стены — повторите с maxPairGapMm: ${needed}.`
+    );
+  }
+
+  const narrow = by("gapTooNarrow");
+  if (narrow.length > 0) {
+    hints.push(
+      `${narrow.length} линий(и) ближе minPairGapMm=${opts.minPairGapMm} мм — ` +
+        "обычно это штриховка или обводка, а не грани стены. Проверьте слой."
+    );
+  }
+
+  const taken = by("partnerTaken");
+  if (taken.length > 0) {
+    hints.push(
+      `${taken.length} линий(и) имели пару в допуске, но она уже занята соседней стеной. ` +
+        "Сузьте layerFilter или разбейте участок через bboxMm."
+    );
+  }
+
+  const none = by("noParallel");
+  if (none.length > 0 && opts.requirePair) {
+    hints.push(
+      `${none.length} одиночных линий без парной грани пропущено (requirePair=true). ` +
+        "Если стены на подложке нарисованы одной линией — requirePair: false плюс явная толщина типа."
+    );
+  }
+
+  const outliers = by("thicknessOutlier");
+  if (outliers.length > 0) {
+    hints.push(
+      `${outliers.length} осей отброшено как выброс по толщине относительно основного кластера. ` +
+        "Если это реальные толстые стены — поднимите maxThicknessRatio или трассируйте их отдельным вызовом."
+    );
+  }
+
+  return hints;
 }
 
 /** Perpendicular distance from point (px,py) to segment (x0,y0)-(x1,y1). */

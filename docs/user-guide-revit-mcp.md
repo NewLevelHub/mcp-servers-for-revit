@@ -207,7 +207,16 @@
 - нет CAD на виде → «привяжите / импортируйте DWG», без рисования «на глаз»;
 - в ответе: создано N/M, слои, **verify** (`maxDeviationMm` / failedAxes).
 
-Подробнее: `.cursor/rules/revit-cad-redraw.mdc`. Двери и окна из CAD — пока вручную (тикет REV-147).
+Подробнее: `.cursor/rules/revit-cad-redraw.mdc`.
+
+**Двери и окна по DWG (после стен)**
+
+> Перечерти двери и окна по DWG на активном плане. Сначала dryRun, потом создай. По правилам revit-mcp.
+
+Ожидаемое поведение:
+- стены-host уже есть → `get_available_family_types` (OST_Doors / OST_Windows) → `trace_openings_from_cad` (`category`, `doorTypeId` / `windowTypeId`, сначала `dryRun`);
+- **не** угадывать `locationPoint` / `hostWallId` вручную при наличии слоёв проёмов;
+- в ответе: двери N/M, окна M/K, verify maxDeviation.
 
 
 

@@ -613,12 +613,24 @@ export function registerTraceWallsFromCadTool(server: McpServer) {
                   .join(", ")
               : "n/a";
 
+          // REV-150: a dropped CAD line is the difference between «перечертил» and
+          // «перечертил, но одну стену пропустил». Always surface what was skipped.
+          const skippedSegments = traced.skipped.slice(0, 40);
+          const skippedTruncated = traced.skipped.length > skippedSegments.length;
+          const skippedByReason = traced.skipped.reduce<Record<string, number>>(
+            (acc, s) => {
+              acc[s.reason] = (acc[s.reason] ?? 0) + 1;
+              return acc;
+            },
+            {}
+          );
+
           if (axesForCreate.length === 0) {
             return {
               ok: false,
               summary:
                 "После обработки нет осей стен (двойные линии не спарились). " +
-                "Проверьте includeModelLines / minPairGapMm / requirePair.",
+                (traced.hints[0] ?? "Проверьте includeModelLines / minPairGapMm / requirePair."),
               count: 0,
               createdCount: 0,
               plannedCount: 0,
@@ -626,6 +638,10 @@ export function registerTraceWallsFromCadTool(server: McpServer) {
               verify,
               filterStats,
               thicknessClusters: traced.thicknessClusters,
+              hints: traced.hints,
+              skippedByReason,
+              skippedSegments,
+              skippedTruncated,
               cadSummary: cadRaw.summary,
             };
           }
@@ -638,6 +654,9 @@ export function registerTraceWallsFromCadTool(server: McpServer) {
                 `Dry-run: ${axesForCreate.length} осей стен; толщины [${thicknessHint}] мм` +
                 (verify.failedAxes.length > 0
                   ? ` (отброшено verify: ${verify.failedAxes.length})`
+                  : "") +
+                (traced.skipped.length > 0
+                  ? `; ПРОПУЩЕНО линий CAD: ${traced.skipped.length} — см. hints / skippedSegments`
                   : ""),
               count: axesForCreate.length,
               plannedCount: axesForCreate.length,
@@ -649,6 +668,10 @@ export function registerTraceWallsFromCadTool(server: McpServer) {
               verify,
               filterStats,
               thicknessClusters: traced.thicknessClusters,
+              hints: traced.hints,
+              skippedByReason,
+              skippedSegments,
+              skippedTruncated,
               recommendedWallTypes: traced.thicknessClusters.slice(0, 5).map((c) => {
                 const m = matchWallTypeByThickness(c.thicknessMm, wallTypes, 45);
                 return {
@@ -711,7 +734,10 @@ export function registerTraceWallsFromCadTool(server: McpServer) {
               ? `Создано ${createdCount}/${plannedCount} стен по CAD; толщины [${thicknessHint}] мм` +
                 (verify.failedAxes.length > 0
                   ? `; verify: max отклонение ${verify.maxDeviationMm} мм`
-                  : `; verify OK (max ${verify.maxDeviationMm} мм)`)
+                  : `; verify OK (max ${verify.maxDeviationMm} мм)`) +
+                (traced.skipped.length > 0
+                  ? `; ПРОПУЩЕНО линий CAD: ${traced.skipped.length} — см. hints / skippedSegments`
+                  : "")
               : `Создано 0/${plannedCount} стен` +
                   (errors.length ? `: ${errors[0]}` : ""),
             count: createdCount,
@@ -726,6 +752,10 @@ export function registerTraceWallsFromCadTool(server: McpServer) {
             verify,
             filterStats,
             thicknessClusters: traced.thicknessClusters,
+            hints: traced.hints,
+            skippedByReason,
+            skippedSegments,
+            skippedTruncated,
             cadLinkName: cadRaw.cadLinkName,
             viewName: cadRaw.viewName ?? viewInfo.name ?? viewInfo.Name,
             errors,

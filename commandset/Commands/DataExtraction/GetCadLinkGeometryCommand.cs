@@ -26,6 +26,7 @@ namespace RevitMCPCommandSet.Commands.DataExtraction
                 int limit = parameters?["limit"]?.Value<int>() ?? 5000;
                 bool includeHiddenLayers = parameters?["includeHiddenLayers"]?.Value<bool>() ?? false;
                 bool includeModelLines = parameters?["includeModelLines"]?.Value<bool>() ?? false;
+                string arcMode = parameters?["arcMode"]?.Value<string>() ?? "tessellate";
 
                 var layerFilters = new List<string>();
                 var layerToken = parameters?["layerFilter"];
@@ -47,7 +48,7 @@ namespace RevitMCPCommandSet.Commands.DataExtraction
 
                 _handler.SetParameters(
                     cadLinkName, layerFilters, viewId, minLengthMm, limit,
-                    includeHiddenLayers, includeModelLines);
+                    includeHiddenLayers, includeModelLines, arcMode);
 
                 if (RaiseAndWaitForCompletion(60000))
                 {

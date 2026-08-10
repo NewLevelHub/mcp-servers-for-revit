@@ -2,7 +2,7 @@
 
 Приёмка перед следующим тестом заказчика. Канал: **Cursor ↔ Revit MCP** (не in-Revit assistant).
 
-Связанные тикеты: [REV-137](https://linear.app/newlevelhub/issue/REV-137) (epic), [REV-138](https://linear.app/newlevelhub/issue/REV-138), [REV-140](https://linear.app/newlevelhub/issue/REV-140), [REV-141](https://linear.app/newlevelhub/issue/REV-141), [REV-142](https://linear.app/newlevelhub/issue/REV-142), [REV-147](https://linear.app/newlevelhub/issue/REV-147) (двери — follow-up).
+Связанные тикеты: [REV-137](https://linear.app/newlevelhub/issue/REV-137) (epic), [REV-138](https://linear.app/newlevelhub/issue/REV-138), [REV-140](https://linear.app/newlevelhub/issue/REV-140), [REV-141](https://linear.app/newlevelhub/issue/REV-141), [REV-142](https://linear.app/newlevelhub/issue/REV-142), [REV-147](https://linear.app/newlevelhub/issue/REV-147) (двери/окна по CAD).
 
 ## Чеклист
 
@@ -25,7 +25,7 @@
 | `A-GLAZ-CURT` | то же, тип «Наружное остекление» | 63/63 (толщина ~25 мм) |
 | Итого на виде | `get_current_view_elements` OST_Walls | **347** стен |
 
-**Не в scope прогона:** двери (`A-DOOR` → REV-147), колонны (`S-COLS`).
+**Проёмы (REV-147):** после стен — `trace_openings_from_cad` dryRun на `A-DOOR` / оконном слое → create; колонны (`S-COLS`) — вне scope.
 
 **Exploded cottage (раньше):** хуже — ложные толщины, overlaps; prefer linked DWG + layer filters.
 

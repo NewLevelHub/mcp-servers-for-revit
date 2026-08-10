@@ -803,7 +803,9 @@ namespace RevitMCPCommandSet.Utils
             out string warning,
             double spanFraction = 0.5,
             Document doc = null,
-            bool preferRequestedPoint = true)
+            bool preferRequestedPoint = true,
+            bool strict = false,
+            double strictToleranceFt = 0)
         {
             warning = null;
             if (wall == null)
@@ -818,6 +820,54 @@ namespace RevitMCPCommandSet.Utils
             XYZ p1 = curve.GetEndPoint(1);
             double length = p0.DistanceTo(p1);
             double z = requested?.Z ?? p0.Z;
+
+            // REV-149 strict mode: the caller traced this point off a DWG underlay and knows
+            // exactly where the opening goes. Project onto the centerline and stop — no end
+            // clamping, no junction nudging, no mid-span fallback. Anything that cannot be
+            // honored is reported as an error by the caller instead of silently relocated.
+            if (strict)
+            {
+                if (requested == null)
+                {
+                    warning = "strictLocation requires locationPoint.";
+                    return null;
+                }
+
+                if (!TryGetNormalizedParameterOnWall(wall, requested, out double strictN, out double perpFt))
+                {
+                    warning =
+                        $"strictLocation: locationPoint cannot be projected onto wall {wall.Id.GetIntValue()}.";
+                    return null;
+                }
+
+                if (strictToleranceFt > 0 && perpFt > strictToleranceFt)
+                {
+                    warning =
+                        $"strictLocation: locationPoint is {perpFt * 304.8:F0} mm off wall " +
+                        $"{wall.Id.GetIntValue()} centerline (limit {strictToleranceFt * 304.8:F0} mm).";
+                    return null;
+                }
+
+                if (strictN < 0 || strictN > 1)
+                {
+                    warning =
+                        $"strictLocation: locationPoint falls outside wall {wall.Id.GetIntValue()} " +
+                        $"(param {strictN:F3}); create or extend the host wall first.";
+                    return null;
+                }
+
+                double halfOpenN = length > 1e-6 ? (openingWidthFt * 0.5) / length : 0.5;
+                if (strictN - halfOpenN < -1e-6 || strictN + halfOpenN > 1 + 1e-6)
+                {
+                    warning =
+                        $"strictLocation: opening {openingWidthFt * 304.8:F0} mm does not fit on wall " +
+                        $"{wall.Id.GetIntValue()} ({length * 304.8:F0} mm) at param {strictN:F3}.";
+                    return null;
+                }
+
+                XYZ strictPt = curve.Evaluate(strictN, true);
+                return new XYZ(strictPt.X, strictPt.Y, z);
+            }
 
             double n = spanFraction;
             bool usedRequested = false;

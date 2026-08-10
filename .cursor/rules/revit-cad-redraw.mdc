@@ -3,20 +3,51 @@ description: Перечерчивание по DWG/CAD link (Cursor + MCP) — p
 alwaysApply: true
 ---
 
-# Перечерчивание по DWG (REV-142)
+# Перечерчивание по DWG (REV-142 + REV-147 + REV-149)
 
 **Канал:** Cursor + MCP. Не in-Revit chat.
 
-Фразы: «перечерти по DWG», «по подложке», «по CAD», «по связи», «обведи стены с плана».
+Фразы: «перечерти по DWG», «по подложке», «по CAD», «по связи», «обведи стены с плана»,
+«перечерти двери/окна по DWG», «проёмы по подложке».
 
-## Обязательный алгоритм
+## Обязательный алгоритм (стены)
 
 1. `get_current_view_info` — активный **план этажа**.
 2. `get_cad_link_geometry` (или сразу `trace_walls_from_cad`) — есть ли ImportInstance / слои.
 3. Нет CAD на виде → сказать: **привяжите / импортируйте DWG** на план. **Не** рисовать стены «на глаз» и **не** выдумывать координаты для `create_line_based_element`.
 4. Есть CAD → **`trace_walls_from_cad`** (не сырой `create_line_based_element` с придуманными мм).
 5. Сначала **`dryRun: true`** → смотреть `plannedCount`, `thicknessClusters`, `verify`.
-6. Create → в ответе пользователю: создано N/M, толщины, `maxDeviationMm` / failedAxes.
+6. **Обязательно проверить `hints` и `skippedByReason`** (REV-150). Пустой `plannedCount` — не единственный признак проблемы: часть линий может тихо не спариться.
+   - `gapTooWide` → стена толще `maxPairGapMm` (дефолт **280**). Повторить с `maxPairGapMm` из `hints` (380/510 мм стены требуют ~400–550).
+   - `noParallel` → стена нарисована одной линией; `requirePair: false` + явная толщина типа.
+   - `gapTooNarrow` → это штриховка/обводка, а не грани стены — уточнить `layerFilter`.
+   - `partnerTaken` → сузить `layerFilter` или разбить участок через `bboxMm`.
+   - `thicknessOutlier` → поднять `maxThicknessRatio` или трассировать толстые стены отдельным вызовом.
+   `skippedSegments` даёт координаты каждой пропущенной линии — по ним видно, какая стена отсутствует.
+7. Create → в ответе пользователю: создано N/M, толщины, `maxDeviationMm` / failedAxes **и сколько линий пропущено**.
+
+## Обязательный алгоритм (двери / окна — REV-147 + REV-149)
+
+1. Стены-host уже на плане (`trace_walls_from_cad` / существующие).
+2. `get_available_family_types` → `doorTypeId` (OST_Doors) и/или `windowTypeId` (OST_Windows).
+3. **`trace_openings_from_cad`** с `category: "door" | "window" | "both"`.
+   Сначала **`dryRun: true`** → `doors.plannedCount` / `windows.plannedCount` + `hostWallId`.
+4. В dryRun смотреть **`doorStats.detection`**:
+   - `arc` — двери взяты с дуг открывания DWG: позиция, ширина, сторона открывания и петля точные;
+   - `leaf` / `cluster` — дуг в DWG нет, работают старые эвристики → результат проверять глазами.
+5. Create → в ответе: двери N/M, окна M/K и **`doors.placement.maxDeviationMm`** — это факт,
+   прочитанный из модели после создания, а не план.
+6. `ok: false` + `misplacedCount > 0` → проёмы встали дальше допуска от DWG. Это **не** успех:
+   разобрать `doors.placement.items`, не «досоздавать» поверх.
+7. **Не** угадывать `locationPoint` / `hostWallId` вручную, если есть слои проёмов на DWG.
+8. Без typeId → fail-fast. Витраж-лента (`A-GLAZ-CURT`) — через `trace_walls_from_cad`, не окна.
+
+## Обязательный алгоритм (колонны — REV-149)
+
+1. `get_available_family_types` → `columnTypeId` (OST_StructuralColumns или OST_Columns).
+2. **`trace_columns_from_cad`**, `dryRun: true` → сечения, поворот, `shape` (rectangular / round).
+3. Тип подбирается по сечению в имени (`400x400`, `D400`); `300x600` подходит и для `600x300`.
+4. Колонны **никогда** не гнать через `trace_walls_from_cad` — контур станет четырьмя огрызками стен.
 
 ## Предпочтительный CAD
 
@@ -24,39 +55,53 @@ alwaysApply: true
 |-------|------|
 | Связь / import **не exploded** | Exploded → Model Lines (шум, ложные толщины) |
 | Слои стен: `A-WALL`, `I-WALL`, `WALL`, `Стены` | Все на одном слое + размеры/оси |
+| Слои проёмов: `A-DOOR`, `A-GLAZ` / `WINDOW` | Нет слоёв проёмов — best-effort skip |
 | Двойные линии = толщина | Одиночные контуры без пары |
 
-Exploded DWG: `includeModelLines` (auto/true). Связной с тонкими слоями — `includeModelLines: false`.
+Exploded DWG: `includeModelLines` (auto/true для стен). Связной с тонкими слоями — `includeModelLines: false`.
 
 ## Слои (крупный план)
 
 - **Наружные:** `layerFilter: ["A-WALL"]` (или `WALL`), `maxPairGapMm` до ~550 если есть 380/510.
 - **Внутренние:** `layerFilter: ["I-WALL"]`, `maxPairGapMm` ~280.
 - **Витражи:** `A-GLAZ-CURT` / `GLAZ` → тип «Витраж» / «Наружное остекление», не обычная кладка.
-- **Не стены:** `A-DOOR`, `S-COLS`, `S-GRID`, `C-PRKG`, лестницы — не гнать в `trace_walls_from_cad` одним фильтром «всё».
-- Двери и окна из CAD → [REV-147](https://linear.app/newlevelhub/issue/REV-147) (`trace_doors/windows_from_cad`); пока tool нет — только вручную `create_point_based_element` после стен.
+- **Двери:** `trace_openings_from_cad` `category:"door"` — слои `A-DOOR` / `DOOR` / `Двер`.
+- **Окна:** `category:"window"` — `A-GLAZ` / `WINDOW` / `Окна` (**не** `A-GLAZ-CURT`).
+- **Не стены:** `A-DOOR`, `S-COLS`, `S-GRID`, `C-PRKG` — не гнать в `trace_walls_from_cad` одним фильтром «всё».
+- **Колонны:** `S-COLS` / `A-COLS` / `Колонны` → `trace_columns_from_cad` (REV-149).
 
 ## Параметры
 
-- `wallTypeId` — **обязателен** (fallback из `get_available_family_types`).
-- `autoMatchWallTypes: true` — тип по мм в имени; при странном матче (250→брус) предупредить / сменить тип.
-- `requirePair: true`, `orthoOnly: true` по умолчанию.
+- `wallTypeId` — **обязателен** для стен (fallback из `get_available_family_types`).
+- `doorTypeId` / `windowTypeId` — **обязательны** для своего режима в `trace_openings_from_cad`.
+- `autoMatchWallTypes: true` / `autoMatchTypesByWidth: true` — тип по мм в имени.
+- `requirePair: true`, `orthoOnly: true` по умолчанию для стен.
 - `cadLinkName` — если несколько связей.
 - `bboxMm` / `autoBbox` — отрезать дальний мусор.
+- `maxHostDistanceMm` — макс. перпендикулярное расстояние проём→ось стены (дефолт **250**, REV-148; 800 цеплял чужие стены).
+- Проёмы в зазоре между короткими простенками (кабинки WC): tool сам делает **bridge/stub** host (`allowBridge: true`) — не угадывать точки. Тип, высота и смещение перемычки берутся с соседней стены.
+- `strictLocation: true` (дефолт) — проём ставится ровно в точку DWG. Revit больше не отодвигает его от концов стены и от примыканий молча: что не влезло, приходит **ошибкой**. Снимать флаг только осознанно.
+- `useArcs: true` (дефолт) — двери с дуг открывания. Выключать только если в DWG дуги взорваны в полилинии.
+- Verify — двухуровневый: `verify` (план) и **`placement`** (факт из модели после создания). Пользователю показывать `placement`.
 
 ## Запрещено
 
 - Угадывать Start/End стен без CAD-tools.
 - Ставить стены по скрину / «примерно по сетке» без `get_cad_link_geometry` / `trace_walls_from_cad`.
-- Один create на все слои сразу на огромном плане — дробить: A-WALL → I-WALL → GLAZ.
-- Обещать двери/окна/колонны из CAD, пока нет tool (REV-147 для дверей и окон).
+- Угадывать точки дверей/окон при наличии слоёв проёмов — только `trace_openings_from_cad`.
+- Один create на все слои сразу на огромном плане — дробить: A-WALL → I-WALL → GLAZ → двери/окна → колонны.
+- Гнать колонны через `trace_walls_from_cad`.
+- Отчитываться «готово» при `misplacedCount > 0` или `ok: false`.
+- Отчитываться «стены перечерчены» при непустом `skippedByReason`, не показав, что пропущено.
 
 ## Ответ пользователю (обязательно)
 
 Кратко в ответе всегда:
 1. создано **N/M** (или plannedCount при dryRun);
-2. слои / толщины;
-3. **verify**: `maxDeviationMm` (и failedAxes, если есть);
-4. что **не** делалось (двери, окна, колонны → REV-147).
+2. слои / толщины (стены), hostWallId count (проёмы), сечения (колонны);
+3. **факт**: `placement.maxDeviationMm` для проёмов (не `verify`), `maxDeviationMm` для стен,
+   плюс `misplacedCount`, если он > 0;
+4. для дверей — `doorStats.detection` (`arc` = точно по подложке, иначе эвристика);
+5. что **не** делалось.
 
 Таблица MCP-tools в конце (как в `revit-mcp.mdc`).

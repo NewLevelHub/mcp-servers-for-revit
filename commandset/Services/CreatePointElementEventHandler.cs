@@ -25,6 +25,8 @@ namespace RevitMCPCommandSet.Services
         /// </summary>
         public AIResult<List<int>> Result { get; private set; }
         private List<string> _warnings = new List<string>();
+        /// <summary>Per-item off-wall location hints for door/window facing (before centerline snap).</summary>
+        private Dictionary<int, XYZ> _requestedFacingHints;
 
         /// <summary>
         /// 设置创建的参数
@@ -43,6 +45,7 @@ namespace RevitMCPCommandSet.Services
                 var elementIds = new List<int>();
                 var errors = new List<string>();
                 _warnings.Clear();
+                _requestedFacingHints = new Dictionary<int, XYZ>();
                 int requestedCount = CreatedInfo?.Count ?? 0;
 
                 using (Transaction transaction = new Transaction(doc, "Create point-based elements"))
@@ -61,6 +64,9 @@ namespace RevitMCPCommandSet.Services
                     for (int i = 0; i < requestedCount; i++)
                     {
                         var preview = CreatedInfo[i];
+                        // Strict items keep their exact XY — they must not join the auto-spacing pool,
+                        // otherwise one strict door would shift its neighbours to 1/3, 2/3 (REV-149).
+                        if (preview != null && preview.StrictLocation) continue;
                         if (preview?.HostWallId <= 0) continue;
                         Element pe = doc.GetElement(new ElementId(preview.HostWallId));
                         if (!(pe is Wall)) continue;
@@ -124,12 +130,26 @@ namespace RevitMCPCommandSet.Services
                                 continue;
                             }
 
-                            XYZ locPt = JZPoint.ToXYZ(data.LocationPoint);
+                            // Keep the caller’s off-wall point for facing side (REV-147).
+                            // GetSafeOpeningPointOnWall projects onto the centerline — if we
+                            // overwrite LocationPoint first, auto-flip always sees side≈0.
+                            XYZ requestedLocPt = JZPoint.ToXYZ(data.LocationPoint);
+                            XYZ locPt = requestedLocPt;
                             double doorWidthFt = data.Width > 0 ? data.Width / 304.8 : 900.0 / 304.8;
-                            explicitHost = ProjectUtils.ResolveHostWallForOpening(
-                                doc, hostWall, locPt, baseLevel, doorWidthFt, out var hostWarn);
-                            if (!string.IsNullOrEmpty(hostWarn))
-                                _warnings.Add($"[{index}] {hostWarn}");
+
+                            // REV-149: in strict mode the caller traced the point off a DWG
+                            // underlay — never re-host it onto a neighbouring wall.
+                            if (data.StrictLocation)
+                            {
+                                explicitHost = hostWall;
+                            }
+                            else
+                            {
+                                explicitHost = ProjectUtils.ResolveHostWallForOpening(
+                                    doc, hostWall, locPt, baseLevel, doorWidthFt, out var hostWarn);
+                                if (!string.IsNullOrEmpty(hostWarn))
+                                    _warnings.Add($"[{index}] {hostWarn}");
+                            }
 
                             if (explicitHost == null)
                             {
@@ -152,6 +172,10 @@ namespace RevitMCPCommandSet.Services
                                 : (slot + 1.0) / (totalOnWall + 1.0);
                             bool preferRequested = totalOnWall <= 1;
 
+                            double strictTolFt = data.StrictToleranceMm > 0
+                                ? data.StrictToleranceMm / 304.8
+                                : 50.0 / 304.8;
+
                             locPt = ProjectUtils.GetSafeOpeningPointOnWall(
                                 (Wall)explicitHost,
                                 locPt,
@@ -159,12 +183,23 @@ namespace RevitMCPCommandSet.Services
                                 out var snapWarn,
                                 spanFraction,
                                 doc,
-                                preferRequested);
+                                preferRequested,
+                                data.StrictLocation,
+                                strictTolFt);
+
+                            if (data.StrictLocation && locPt == null)
+                            {
+                                // Loud failure beats a door quietly moved half a metre (REV-149).
+                                errors.Add($"[{index}] {snapWarn ?? "strictLocation could not be satisfied."}");
+                                continue;
+                            }
+
                             if (!string.IsNullOrEmpty(snapWarn))
                                 _warnings.Add($"[{index}] {snapWarn}");
 
                             data.LocationPoint = new JZPoint(
                                 locPt.X * 304.8, locPt.Y * 304.8, locPt.Z * 304.8);
+                            _requestedFacingHints[index] = requestedLocPt;
                         }
                         else if (data.HostWallId > 0)
                         {
@@ -211,7 +246,13 @@ namespace RevitMCPCommandSet.Services
                                     LocationCurve locCurve = hostWall.Location as LocationCurve;
                                     if (locCurve != null)
                                     {
-                                        XYZ originalPt = JZPoint.ToXYZ(data.LocationPoint);
+                                        // Prefer the caller's off-wall point (swing side hint).
+                                        // After GetSafeOpeningPointOnWall, LocationPoint sits on
+                                        // the centerline so side≈0 and auto-flip never runs.
+                                        XYZ originalPt = _requestedFacingHints != null
+                                            && _requestedFacingHints.TryGetValue(index, out var hint)
+                                            ? hint
+                                            : JZPoint.ToXYZ(data.LocationPoint);
                                         XYZ wallStart = locCurve.Curve.GetEndPoint(0);
                                         XYZ wallEnd = locCurve.Curve.GetEndPoint(1);
                                         XYZ wallDir = new XYZ(wallEnd.X - wallStart.X, wallEnd.Y - wallStart.Y, 0).Normalize();
@@ -237,6 +278,67 @@ namespace RevitMCPCommandSet.Services
                             {
                                 instance.flipFacing();
                                 doc.Regenerate();
+                            }
+
+                            // REV-149: hand (hinge side) is independent of facing. Without it a
+                            // door reads as mirrored against the DWG swing even when the side
+                            // it opens toward is right.
+                            bool flipHandNow = data.HandFlipped;
+                            if (!flipHandNow && data.HandHintPoint != null)
+                            {
+                                XYZ hingePt = JZPoint.ToXYZ(data.HandHintPoint);
+                                XYZ centerPt = JZPoint.ToXYZ(data.LocationPoint);
+                                if (hingePt != null && centerPt != null)
+                                {
+                                    XYZ toHinge = new XYZ(
+                                        hingePt.X - centerPt.X, hingePt.Y - centerPt.Y, 0);
+                                    if (toHinge.GetLength() > 1e-9)
+                                    {
+                                        toHinge = toHinge.Normalize();
+                                        // HandOrientation runs hinge → latch on Revit's stock doors,
+                                        // but read it live rather than trusting the convention: the
+                                        // facing flip above may already have changed it.
+                                        XYZ hand = instance.HandOrientation;
+                                        if (hand != null && hand.DotProduct(toHinge) > 0)
+                                            flipHandNow = true;
+                                    }
+                                }
+                            }
+
+                            if (flipHandNow)
+                            {
+                                try
+                                {
+                                    instance.flipHand();
+                                    doc.Regenerate();
+                                }
+                                catch (Exception handEx)
+                                {
+                                    _warnings.Add($"[{index}] flipHand failed: {handEx.Message}");
+                                }
+                            }
+
+                            if (data.StrictLocation)
+                            {
+                                double tolFt = (data.StrictToleranceMm > 0 ? data.StrictToleranceMm : 50.0) / 304.8;
+                                XYZ placed = (instance.Location as LocationPoint)?.Point;
+                                XYZ wanted = JZPoint.ToXYZ(data.LocationPoint);
+                                if (placed != null && wanted != null)
+                                {
+                                    double driftFt = new XYZ(
+                                        placed.X - wanted.X, placed.Y - wanted.Y, 0).GetLength();
+                                    if (driftFt > tolFt)
+                                    {
+                                        // Revit relocated it after hosting — drop it rather than
+                                        // report success for an element that is not where the DWG says.
+                                        errors.Add(
+                                            $"[{index}] strictLocation: Revit placed the opening " +
+                                            $"{driftFt * 304.8:F0} mm from the requested point " +
+                                            $"(limit {tolFt * 304.8:F0} mm); element removed.");
+                                        doc.Delete(instance.Id);
+                                        continue;
+                                    }
+                                }
                             }
                         }
 
