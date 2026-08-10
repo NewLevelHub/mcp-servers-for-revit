@@ -61,6 +61,45 @@ export function registerCreatePointBasedElementTool(server: McpServer) {
                 "Whether to flip the facing direction of the door/window. " +
                   "When true, the element faces the opposite side of the wall."
               ),
+            handFlipped: z
+              .boolean()
+              .optional()
+              .default(false)
+              .describe(
+                "Force a door hand (hinge side) flip. A door has four states — facing × hand — " +
+                  "so setting facing alone can still leave the swing mirrored. " +
+                  "Prefer handHintPoint, which lets Revit decide from the real orientation."
+              ),
+            handHintPoint: z
+              .object({
+                x: z.number(),
+                y: z.number(),
+                z: z.number(),
+              })
+              .optional()
+              .describe(
+                "A point on the hinge side of the opening, along the wall. Revit compares it " +
+                  "with the placed door's HandOrientation and flips the hand when mirrored. " +
+                  "Family-convention agnostic — use this instead of guessing handFlipped."
+              ),
+            strictLocation: z
+              .boolean()
+              .optional()
+              .default(false)
+              .describe(
+                "Place exactly at locationPoint: disables end clamping, junction nudging, " +
+                  "batch auto-spacing and host re-resolution. An opening that cannot be honored " +
+                  "fails with an error instead of being silently moved. Use for CAD redraw, " +
+                  "where the caller already knows the exact position."
+              ),
+            strictToleranceMm: z
+              .number()
+              .optional()
+              .default(50)
+              .describe(
+                "Max mm the placement may drift from locationPoint in strict mode before the " +
+                  "item is rejected and removed (default 50)."
+              ),
           })
         )
         .describe("Array of point-based elements to create"),

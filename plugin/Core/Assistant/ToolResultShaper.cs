@@ -58,6 +58,9 @@ namespace revit_mcp_plugin.Core.Assistant
                 case "trace_walls_from_cad":
                     shaped = ShapeTraceWallsFromCad(result);
                     break;
+                case "trace_openings_from_cad":
+                    shaped = ShapeTraceOpeningsFromCad(result);
+                    break;
                 default:
                     shaped = ShapeGeneric(toolName, result);
                     break;
@@ -584,6 +587,49 @@ namespace revit_mcp_plugin.Core.Assistant
                 shaped["verify"] = obj["verify"];
             if (obj["stats"] != null)
                 shaped["stats"] = obj["stats"];
+            if (obj["dryRun"]?.Value<bool>() == true)
+                shaped["dryRun"] = true;
+
+            return shaped;
+        }
+
+        private static JObject ShapeTraceOpeningsFromCad(JToken result)
+        {
+            var obj = result as JObject ?? new JObject();
+            var ok = obj["ok"]?.Value<bool>() ?? false;
+            if (!ok)
+            {
+                var msg = FirstString(obj, "message", "summary", "Message") ?? "не удалось поставить проёмы по CAD";
+                return new JObject
+                {
+                    ["ok"] = false,
+                    ["summary"] = msg,
+                    ["plannedCount"] = 0,
+                    ["createdCount"] = 0,
+                    ["nextStep"] = "Проверьте doorTypeId/windowTypeId, слои A-DOOR/A-GLAZ и что стены-host уже на плане."
+                };
+            }
+
+            var summary = FirstString(obj, "summary") ?? "Проёмы по CAD";
+            var created = FirstInt(obj, "createdCount") ?? 0;
+            var planned = FirstInt(obj, "plannedCount") ?? created;
+            var elementIds = obj["elementIds"] as JArray ?? new JArray();
+            var shownIds = new JArray(elementIds.Take(DefaultItemLimit));
+
+            var shaped = new JObject
+            {
+                ["ok"] = true,
+                ["summary"] = summary,
+                ["plannedCount"] = planned,
+                ["createdCount"] = created,
+                ["elementIds"] = shownIds,
+                ["nextStep"] = "Проверьте двери/окна на плане; при ошибках — dryRun и maxHostDistanceMm."
+            };
+
+            if (obj["doors"] != null)
+                shaped["doors"] = obj["doors"];
+            if (obj["windows"] != null)
+                shaped["windows"] = obj["windows"];
             if (obj["dryRun"]?.Value<bool>() == true)
                 shaped["dryRun"] = true;
 

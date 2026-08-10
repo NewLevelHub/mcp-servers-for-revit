@@ -18,10 +18,23 @@ namespace RevitMCPCommandSet.Services.DataExtraction
         private int _limit;
         private bool _includeHiddenLayers;
         private bool _includeModelLines;
+        /// <summary>REV-149: tessellate (chords, default) | single (one chord per arc + arc metadata).</summary>
+        private string _arcMode = "tessellate";
+        private List<CadBlockItem> _blocks = new List<CadBlockItem>();
 
         public GetCadLinkGeometryResult ResultInfo { get; private set; } = new();
         public bool TaskCompleted { get; private set; }
         private readonly ManualResetEvent _resetEvent = new(false);
+
+        /// <summary>REV-149: arc center/radius/endpoints in model space, shared by every chord.</summary>
+        private sealed class ArcInfo
+        {
+            public string Id;
+            public CadPointMm CenterMm;
+            public double RadiusMm;
+            public double StartAngleDeg;
+            public double EndAngleDeg;
+        }
 
         public void SetParameters(
             string cadLinkName = "",
@@ -30,7 +43,8 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             double minLengthMm = 0,
             int limit = 5000,
             bool includeHiddenLayers = false,
-            bool includeModelLines = false)
+            bool includeModelLines = false,
+            string arcMode = "tessellate")
         {
             _cadLinkName = cadLinkName ?? string.Empty;
             _layerFilters = (layerFilters ?? Enumerable.Empty<string>())
@@ -42,6 +56,10 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             _limit = limit > 0 ? limit : 5000;
             _includeHiddenLayers = includeHiddenLayers;
             _includeModelLines = includeModelLines;
+            _arcMode = string.Equals(arcMode, "single", StringComparison.OrdinalIgnoreCase)
+                ? "single"
+                : "tessellate";
+            _blocks = new List<CadBlockItem>();
             TaskCompleted = false;
             _resetEvent.Reset();
         }
@@ -138,13 +156,19 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                     if (geometry == null)
                         continue;
 
+                    // REV-149: an exploded DWG turns every block into its own ImportInstance,
+                    // so the import transform IS the block placement (insert point + rotation
+                    // + mirror). Record it before walking the curves.
+                    int importBlockIndex = RegisterBlock(
+                        linkName, SafeImportTransform(import), linkId, "importInstance");
+
                     foreach (GeometryObject top in geometry)
                     {
                         if (truncated)
                             break;
 
                         AppendGeometryObject(
-                            doc, view, top, linkName, linkId, ref geomIndex,
+                            doc, view, top, linkName, linkId, importBlockIndex, ref geomIndex,
                             items, ref truncated, ref hasBbox,
                             ref minX, ref minY, ref maxX, ref maxY);
                     }
@@ -202,15 +226,20 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                     ? $", model/detail lines {modelLineCount}"
                     : "";
 
+                // REV-149: keep only blocks that actually produced geometry; Index stays the
+                // value stored on the segments, so it is a lookup key, not a list position.
+                var blocks = _blocks.Where(b => b.SegmentCount > 0).ToList();
+                var blockHint = blocks.Count > 0 ? $", блоков {blocks.Count}" : "";
+
                 ResultInfo = new GetCadLinkGeometryResult
                 {
                     Ok = true,
                     Summary = selected.Count <= 1
                         ? $"{(primaryName != null ? $"DWG «{primaryName}»" : "Линии")}: {items.Count} сегмент(ов)" +
                           (string.IsNullOrEmpty(layerHint) ? "" : $", слои {layerHint}") +
-                          sourceHint +
+                          sourceHint + blockHint +
                           (truncated ? " (урезано)" : "")
-                        : $"CAD ×{selected.Count}: {items.Count} сегмент(ов)" + sourceHint + (truncated ? " (урезано)" : ""),
+                        : $"CAD ×{selected.Count}: {items.Count} сегмент(ов)" + sourceHint + blockHint + (truncated ? " (урезано)" : ""),
                     Count = items.Count,
                     Items = items,
                     BboxMm = hasBbox
@@ -226,7 +255,8 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                     Message = truncated
                         ? $"Показаны первые {_limit} сегментов. Уточните layerFilter или увеличьте limit."
                         : null,
-                    LayerSummary = layerSummary
+                    LayerSummary = layerSummary,
+                    Blocks = blocks
                 };
             }
             catch (Exception ex)
@@ -246,6 +276,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             GeometryObject obj,
             string linkName,
             long linkId,
+            int blockIndex,
             ref int geomIndex,
             List<CadSegmentItem> items,
             ref bool truncated,
@@ -260,6 +291,10 @@ namespace RevitMCPCommandSet.Services.DataExtraction
 
             if (obj is GeometryInstance gi)
             {
+                // REV-149: a nested instance is a block inside the DWG — record its placement.
+                int nestedIndex = RegisterBlock(
+                    ResolveInstanceName(doc, gi, linkName), gi.Transform, linkId, "nested");
+
                 var instanceGeom = gi.GetInstanceGeometry();
                 bool instanceHasCurves = GeometryElementHasDrawableCurves(instanceGeom);
 
@@ -270,7 +305,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                         if (truncated)
                             break;
                         AppendGeometryObject(
-                            doc, view, child, linkName, linkId, ref geomIndex,
+                            doc, view, child, linkName, linkId, nestedIndex, ref geomIndex,
                             items, ref truncated, ref hasBbox,
                             ref minX, ref minY, ref maxX, ref maxY);
                     }
@@ -287,7 +322,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                             if (truncated)
                                 break;
                             AppendTransformedGeometryObject(
-                                doc, view, child, transform, linkName, linkId, ref geomIndex,
+                                doc, view, child, transform, linkName, linkId, nestedIndex, ref geomIndex,
                                 items, ref truncated, ref hasBbox,
                                 ref minX, ref minY, ref maxX, ref maxY);
                         }
@@ -298,9 +333,82 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             }
 
             AppendObject(
-                doc, view, obj, linkName, linkId, geomIndex++,
+                doc, view, obj, linkName, linkId, blockIndex, geomIndex++,
                 items, ref truncated, ref hasBbox,
                 ref minX, ref minY, ref maxX, ref maxY);
+        }
+
+        /// <summary>
+        /// REV-149: store a block placement and return its index (-1 when the transform is unusable).
+        /// </summary>
+        private int RegisterBlock(string name, Transform transform, long linkId, string source)
+        {
+            if (transform == null)
+                return -1;
+
+            XYZ bx;
+            XYZ by;
+            XYZ origin;
+            try
+            {
+                bx = transform.BasisX;
+                by = transform.BasisY;
+                origin = transform.Origin;
+            }
+            catch
+            {
+                return -1;
+            }
+
+            if (bx == null || by == null || origin == null)
+                return -1;
+
+            // 2D determinant < 0 → left-handed basis → the CAD symbol is mirrored.
+            double det = (bx.X * by.Y) - (bx.Y * by.X);
+            double rotationDeg = Math.Atan2(bx.Y, bx.X) * 180.0 / Math.PI;
+
+            var block = new CadBlockItem
+            {
+                Index = _blocks.Count,
+                Name = name ?? string.Empty,
+                InsertMm = ToPointMm(origin),
+                RotationDeg = Round1(rotationDeg),
+                Mirrored = det < 0,
+                CadLinkElementId = linkId,
+                Source = source
+            };
+            _blocks.Add(block);
+            return block.Index;
+        }
+
+        private static Transform SafeImportTransform(ImportInstance import)
+        {
+            try
+            {
+                return import?.GetTransform();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string ResolveInstanceName(Document doc, GeometryInstance gi, string fallback)
+        {
+            try
+            {
+#pragma warning disable CS0612 // GeometryInstance.Symbol is the only block-name source for imports.
+                var symbolName = gi.Symbol?.Name;
+#pragma warning restore CS0612
+                if (!string.IsNullOrWhiteSpace(symbolName))
+                    return symbolName;
+            }
+            catch
+            {
+                // Imported symbols can throw; fall back to the link name.
+            }
+
+            return fallback ?? string.Empty;
         }
 
         private static bool GeometryElementHasDrawableCurves(GeometryElement geom)
@@ -329,6 +437,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             Transform transform,
             string linkName,
             long linkId,
+            int blockIndex,
             ref int geomIndex,
             List<CadSegmentItem> items,
             ref bool truncated,
@@ -347,12 +456,14 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                 if (instanceGeom != null)
                 {
                     var combined = transform.Multiply(gi.Transform);
+                    int nestedIndex = RegisterBlock(
+                        ResolveInstanceName(doc, gi, linkName), combined, linkId, "nested");
                     foreach (GeometryObject child in instanceGeom)
                     {
                         if (truncated)
                             break;
                         AppendTransformedGeometryObject(
-                            doc, view, child, combined, linkName, linkId, ref geomIndex,
+                            doc, view, child, combined, linkName, linkId, nestedIndex, ref geomIndex,
                             items, ref truncated, ref hasBbox,
                             ref minX, ref minY, ref maxX, ref maxY);
                     }
@@ -375,9 +486,9 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                 {
                     if (!TryAddSegment(
                             items, transform.OfPoint(coords[i]), transform.OfPoint(coords[i + 1]),
-                            layer, linkName, linkId,
+                            layer, linkName, linkId, blockIndex,
                             $"{linkId}:{geomIndex}:pl{i}", "polylineSegment",
-                            "importInstance",
+                            "importInstance", null,
                             ref truncated, ref hasBbox, ref minX, ref minY, ref maxX, ref maxY))
                         return;
                 }
@@ -389,9 +500,9 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             {
                 TryAddSegment(
                     items, transform.OfPoint(line.GetEndPoint(0)), transform.OfPoint(line.GetEndPoint(1)),
-                    layer, linkName, linkId,
+                    layer, linkName, linkId, blockIndex,
                     $"{linkId}:{geomIndex}:ln", "line",
-                    "importInstance",
+                    "importInstance", null,
                     ref truncated, ref hasBbox, ref minX, ref minY, ref maxX, ref maxY);
                 return;
             }
@@ -402,27 +513,115 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                 if (c == null)
                     return;
 
-                IList<XYZ> pts;
-                try
-                {
-                    pts = c.Tessellate();
-                }
-                catch
-                {
-                    pts = new List<XYZ> { c.GetEndPoint(0), c.GetEndPoint(1) };
-                }
+                AppendCurve(
+                    c, transform, layer, linkName, linkId, blockIndex, geomIndex,
+                    items, ref truncated, ref hasBbox, ref minX, ref minY, ref maxX, ref maxY);
+            }
+        }
 
-                var curveType = obj is Arc ? "arc" : "curve";
-                for (int i = 0; i < pts.Count - 1; i++)
+        /// <summary>
+        /// REV-149: emit a curve as chords, attaching arc center/radius/endpoint angles so the
+        /// client can rebuild the real arc (door swing → hinge + hand) instead of guessing.
+        /// In arcMode=single an arc becomes ONE chord — tessellated chords of a small swing
+        /// otherwise fall under minLengthMm and vanish.
+        /// </summary>
+        private void AppendCurve(
+            Curve c,
+            Transform transform,
+            string layer,
+            string linkName,
+            long linkId,
+            int blockIndex,
+            int geomIndex,
+            List<CadSegmentItem> items,
+            ref bool truncated,
+            ref bool hasBbox,
+            ref double minX,
+            ref double minY,
+            ref double maxX,
+            ref double maxY)
+        {
+            var arcInfo = BuildArcInfo(c, transform, linkId, geomIndex);
+            var curveType = c is Arc ? "arc" : "curve";
+
+            if (arcInfo != null && _arcMode == "single")
+            {
+                TryAddSegment(
+                    items,
+                    TransformPoint(transform, c.GetEndPoint(0)),
+                    TransformPoint(transform, c.GetEndPoint(1)),
+                    layer, linkName, linkId, blockIndex,
+                    $"{linkId}:{geomIndex}:{curveType}", curveType,
+                    "importInstance", arcInfo,
+                    ref truncated, ref hasBbox, ref minX, ref minY, ref maxX, ref maxY);
+                return;
+            }
+
+            IList<XYZ> pts;
+            try
+            {
+                pts = c.Tessellate();
+            }
+            catch
+            {
+                pts = new List<XYZ> { c.GetEndPoint(0), c.GetEndPoint(1) };
+            }
+
+            for (int i = 0; i < pts.Count - 1; i++)
+            {
+                if (!TryAddSegment(
+                        items,
+                        TransformPoint(transform, pts[i]),
+                        TransformPoint(transform, pts[i + 1]),
+                        layer, linkName, linkId, blockIndex,
+                        $"{linkId}:{geomIndex}:{curveType}{i}", curveType,
+                        "importInstance", arcInfo,
+                        ref truncated, ref hasBbox, ref minX, ref minY, ref maxX, ref maxY))
+                    return;
+            }
+        }
+
+        private static XYZ TransformPoint(Transform transform, XYZ p)
+        {
+            if (p == null)
+                return null;
+            return transform == null ? p : transform.OfPoint(p);
+        }
+
+        /// <summary>
+        /// Arc center/radius/endpoint angles in model space. Endpoint angles (not the arc's own
+        /// parameters) keep the result frame-independent after an arbitrary block transform.
+        /// </summary>
+        private static ArcInfo BuildArcInfo(Curve c, Transform transform, long linkId, int geomIndex)
+        {
+            if (c is not Arc arc)
+                return null;
+
+            try
+            {
+                XYZ center = TransformPoint(transform, arc.Center);
+                XYZ p0 = TransformPoint(transform, arc.GetEndPoint(0));
+                XYZ p1 = TransformPoint(transform, arc.GetEndPoint(1));
+                if (center == null || p0 == null || p1 == null)
+                    return null;
+
+                double radiusMm = RevitUnitConversion.ToMillimeters(
+                    new XYZ(p0.X - center.X, p0.Y - center.Y, 0).GetLength());
+                if (radiusMm < 0.1)
+                    return null;
+
+                return new ArcInfo
                 {
-                    if (!TryAddSegment(
-                            items, transform.OfPoint(pts[i]), transform.OfPoint(pts[i + 1]),
-                            layer, linkName, linkId,
-                            $"{linkId}:{geomIndex}:{curveType}{i}", curveType,
-                            "importInstance",
-                            ref truncated, ref hasBbox, ref minX, ref minY, ref maxX, ref maxY))
-                        return;
-                }
+                    Id = $"{linkId}:{geomIndex}:arc",
+                    CenterMm = ToPointMm(center),
+                    RadiusMm = Round1(radiusMm),
+                    StartAngleDeg = Round1(Math.Atan2(p0.Y - center.Y, p0.X - center.X) * 180.0 / Math.PI),
+                    EndAngleDeg = Round1(Math.Atan2(p1.Y - center.Y, p1.X - center.X) * 180.0 / Math.PI)
+                };
+            }
+            catch
+            {
+                return null;
             }
         }
 
@@ -432,6 +631,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             GeometryObject obj,
             string linkName,
             long linkId,
+            int blockIndex,
             int geomIndex,
             List<CadSegmentItem> items,
             ref bool truncated,
@@ -457,9 +657,9 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                 for (int i = 0; i < coords.Count - 1; i++)
                 {
                     if (!TryAddSegment(
-                            items, coords[i], coords[i + 1], layer, linkName, linkId,
+                            items, coords[i], coords[i + 1], layer, linkName, linkId, blockIndex,
                             $"{linkId}:{geomIndex}:pl{i}", "polylineSegment",
-                            "importInstance",
+                            "importInstance", null,
                             ref truncated, ref hasBbox, ref minX, ref minY, ref maxX, ref maxY))
                         return;
                 }
@@ -470,9 +670,9 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             if (obj is Line line)
             {
                 TryAddSegment(
-                    items, line.GetEndPoint(0), line.GetEndPoint(1), layer, linkName, linkId,
+                    items, line.GetEndPoint(0), line.GetEndPoint(1), layer, linkName, linkId, blockIndex,
                     $"{linkId}:{geomIndex}:ln", "line",
-                    "importInstance",
+                    "importInstance", null,
                     ref truncated, ref hasBbox, ref minX, ref minY, ref maxX, ref maxY);
                 return;
             }
@@ -483,26 +683,9 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                 if (c == null)
                     return;
 
-                IList<XYZ> pts;
-                try
-                {
-                    pts = c.Tessellate();
-                }
-                catch
-                {
-                    pts = new List<XYZ> { c.GetEndPoint(0), c.GetEndPoint(1) };
-                }
-
-                var curveType = obj is Arc ? "arc" : "curve";
-                for (int i = 0; i < pts.Count - 1; i++)
-                {
-                    if (!TryAddSegment(
-                            items, pts[i], pts[i + 1], layer, linkName, linkId,
-                            $"{linkId}:{geomIndex}:{curveType}{i}", curveType,
-                            "importInstance",
-                            ref truncated, ref hasBbox, ref minX, ref minY, ref maxX, ref maxY))
-                        return;
-                }
+                AppendCurve(
+                    c, null, layer, linkName, linkId, blockIndex, geomIndex,
+                    items, ref truncated, ref hasBbox, ref minX, ref minY, ref maxX, ref maxY);
             }
         }
 
@@ -570,10 +753,16 @@ namespace RevitMCPCommandSet.Services.DataExtraction
 
                 if (geom is Line || geom is Arc || geom is Curve)
                 {
+                    // REV-149: one ArcInfo per curve — every chord shares it, so the client
+                    // can group chords back into the original arc.
+                    var arcInfo = BuildArcInfo(geom, null, id, 0);
+
                     IList<XYZ> pts;
                     try
                     {
                         if (geom is Line)
+                            pts = new List<XYZ> { geom.GetEndPoint(0), geom.GetEndPoint(1) };
+                        else if (arcInfo != null && _arcMode == "single")
                             pts = new List<XYZ> { geom.GetEndPoint(0), geom.GetEndPoint(1) };
                         else
                             pts = geom.Tessellate();
@@ -591,9 +780,11 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                                 string.IsNullOrEmpty(styleName) ? source : styleName,
                                 "modelLines",
                                 id,
+                                -1,
                                 $"{id}:{curveType}{i}",
                                 curveType,
                                 source,
+                                arcInfo,
                                 ref truncated, ref hasBbox, ref minX, ref minY, ref maxX, ref maxY))
                             break;
                     }
@@ -612,9 +803,11 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             string layer,
             string linkName,
             long linkId,
+            int blockIndex,
             string cadId,
             string curveType,
             string source,
+            ArcInfo arcInfo,
             ref bool truncated,
             ref bool hasBbox,
             ref double minX,
@@ -640,7 +833,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             ExpandBbox(s, ref hasBbox, ref minX, ref minY, ref maxX, ref maxY);
             ExpandBbox(e, ref hasBbox, ref minX, ref minY, ref maxX, ref maxY);
 
-            items.Add(new CadSegmentItem
+            var item = new CadSegmentItem
             {
                 StartMm = s,
                 EndMm = e,
@@ -650,9 +843,52 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                 CurveType = curveType,
                 CadLinkName = linkName,
                 CadLinkElementId = linkId,
-                Source = source
-            });
+                Source = source,
+                BlockIndex = blockIndex
+            };
+
+            if (arcInfo != null)
+            {
+                item.ArcId = arcInfo.Id;
+                item.ArcCenterMm = arcInfo.CenterMm;
+                item.ArcRadiusMm = arcInfo.RadiusMm;
+                item.ArcStartAngleDeg = arcInfo.StartAngleDeg;
+                item.ArcEndAngleDeg = arcInfo.EndAngleDeg;
+            }
+
+            items.Add(item);
+
+            if (blockIndex >= 0 && blockIndex < _blocks.Count)
+            {
+                var block = _blocks[blockIndex];
+                block.SegmentCount++;
+                block.BboxMm = ExpandBlockBbox(block.BboxMm, s, e);
+                if (string.IsNullOrEmpty(block.Layer) && !string.IsNullOrEmpty(layer))
+                    block.Layer = layer;
+            }
+
             return true;
+        }
+
+        private static CadBboxMm ExpandBlockBbox(CadBboxMm bbox, CadPointMm a, CadPointMm b)
+        {
+            bbox ??= new CadBboxMm
+            {
+                MinX = double.MaxValue,
+                MinY = double.MaxValue,
+                MaxX = double.MinValue,
+                MaxY = double.MinValue
+            };
+
+            foreach (var p in new[] { a, b })
+            {
+                if (p.X < bbox.MinX) bbox.MinX = p.X;
+                if (p.Y < bbox.MinY) bbox.MinY = p.Y;
+                if (p.X > bbox.MaxX) bbox.MaxX = p.X;
+                if (p.Y > bbox.MaxY) bbox.MaxY = p.Y;
+            }
+
+            return bbox;
         }
 
         private View ResolveView(Document doc, UIDocument uiDoc)

@@ -43,6 +43,75 @@ namespace RevitMCPCommandSet.Models.DataExtraction
         /// <summary>Origin of the segment: importInstance | modelLine | detailLine.</summary>
         [JsonProperty("source")]
         public string Source { get; set; } = "importInstance";
+
+        /// <summary>
+        /// REV-149: index into <see cref="GetCadLinkGeometryResult.Blocks"/> when this segment
+        /// came from a DWG block instance; -1 for loose geometry.
+        /// </summary>
+        [JsonProperty("blockIndex")]
+        public int BlockIndex { get; set; } = -1;
+
+        /// <summary>
+        /// REV-149: shared id across every chord tessellated from one arc, so the client can
+        /// rebuild the original arc instead of guessing swing side from chords.
+        /// </summary>
+        [JsonProperty("arcId", NullValueHandling = NullValueHandling.Ignore)]
+        public string ArcId { get; set; }
+
+        [JsonProperty("arcCenterMm", NullValueHandling = NullValueHandling.Ignore)]
+        public CadPointMm ArcCenterMm { get; set; }
+
+        [JsonProperty("arcRadiusMm", NullValueHandling = NullValueHandling.Ignore)]
+        public double? ArcRadiusMm { get; set; }
+
+        /// <summary>Arc start angle, degrees CCW from +X in model space.</summary>
+        [JsonProperty("arcStartAngleDeg", NullValueHandling = NullValueHandling.Ignore)]
+        public double? ArcStartAngleDeg { get; set; }
+
+        [JsonProperty("arcEndAngleDeg", NullValueHandling = NullValueHandling.Ignore)]
+        public double? ArcEndAngleDeg { get; set; }
+    }
+
+    /// <summary>
+    /// REV-149: a DWG block instance (door / window / column symbol) with its placement.
+    /// Insert point + rotation + mirror is what a door actually needs — far more reliable
+    /// than clustering the exploded line soup back into a symbol.
+    /// </summary>
+    public class CadBlockItem
+    {
+        [JsonProperty("index")]
+        public int Index { get; set; }
+
+        [JsonProperty("name")]
+        public string Name { get; set; } = string.Empty;
+
+        /// <summary>Block insertion point (transform origin) in mm.</summary>
+        [JsonProperty("insertMm")]
+        public CadPointMm InsertMm { get; set; } = new CadPointMm();
+
+        /// <summary>Rotation of the block X axis, degrees CCW from +X.</summary>
+        [JsonProperty("rotationDeg")]
+        public double RotationDeg { get; set; }
+
+        /// <summary>True when the block basis is left-handed (mirrored) — flips door hand.</summary>
+        [JsonProperty("mirrored")]
+        public bool Mirrored { get; set; }
+
+        [JsonProperty("layer")]
+        public string Layer { get; set; } = string.Empty;
+
+        [JsonProperty("segmentCount")]
+        public int SegmentCount { get; set; }
+
+        [JsonProperty("bboxMm", NullValueHandling = NullValueHandling.Ignore)]
+        public CadBboxMm BboxMm { get; set; }
+
+        [JsonProperty("cadLinkElementId")]
+        public long CadLinkElementId { get; set; }
+
+        /// <summary>importInstance (exploded block) | nested (block inside a linked DWG).</summary>
+        [JsonProperty("source")]
+        public string Source { get; set; } = "importInstance";
     }
 
     public class CadBboxMm
@@ -130,5 +199,9 @@ namespace RevitMCPCommandSet.Models.DataExtraction
 
         [JsonProperty("layerSummary")]
         public List<CadLayerSummaryItem> LayerSummary { get; set; }
+
+        /// <summary>REV-149: DWG block instances behind the segments (see CadSegmentItem.BlockIndex).</summary>
+        [JsonProperty("blocks")]
+        public List<CadBlockItem> Blocks { get; set; } = new List<CadBlockItem>();
     }
 }

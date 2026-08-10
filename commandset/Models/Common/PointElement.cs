@@ -80,6 +80,38 @@ public class PointElement
     public bool FacingFlipped { get; set; } = false;
 
     /// <summary>
+    ///     REV-149: force a door hand (hinge side) flip. Independent of <see cref="FacingFlipped" /> —
+    ///     a door has four states (facing × hand) and CAD gives both.
+    /// </summary>
+    [JsonProperty("handFlipped")]
+    public bool HandFlipped { get; set; } = false;
+
+    /// <summary>
+    ///     REV-149: a point on the hinge side of the opening (along the wall). The handler
+    ///     compares it against the live HandOrientation after placement and flips the hand
+    ///     when the door came out mirrored against the CAD swing. Family-convention agnostic:
+    ///     the actual orientation is read back rather than assumed.
+    /// </summary>
+    [JsonProperty("handHintPoint")]
+    public JZPoint HandHintPoint { get; set; }
+
+    /// <summary>
+    ///     REV-149: place exactly at <see cref="LocationPoint" />. Disables end clamping,
+    ///     junction nudging and batch auto-spacing; if the point cannot host the opening the
+    ///     item fails loudly instead of being moved somewhere else.
+    ///     Required for CAD redraw — the caller already knows the exact position.
+    /// </summary>
+    [JsonProperty("strictLocation")]
+    public bool StrictLocation { get; set; } = false;
+
+    /// <summary>
+    ///     REV-149: max mm the placement may drift from <see cref="LocationPoint" /> in strict
+    ///     mode before the item is rejected (default 50).
+    /// </summary>
+    [JsonProperty("strictToleranceMm")]
+    public double StrictToleranceMm { get; set; } = 50;
+
+    /// <summary>
     ///     参数化属性
     /// </summary>
     [JsonProperty("parameters")]

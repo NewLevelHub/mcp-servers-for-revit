@@ -51,6 +51,16 @@ export function registerGetCadLinkGeometryTool(server: McpServer) {
         .describe(
           "Also return ModelCurve/DetailCurve on the view (needed when DWG was exploded into model lines)."
         ),
+      arcMode: z
+        .enum(["tessellate", "single"])
+        .optional()
+        .default("tessellate")
+        .describe(
+          "How arcs are returned. 'tessellate' (default) splits each arc into chords. " +
+            "'single' returns one chord per arc — use it for door swings, whose chords " +
+            "otherwise fall under minLengthMm. Either way every chord carries arcId, " +
+            "arcCenterMm and arcRadiusMm, so the original arc can be rebuilt."
+        ),
     },
     async (args) => {
       const params: Record<string, unknown> = {
@@ -59,6 +69,7 @@ export function registerGetCadLinkGeometryTool(server: McpServer) {
         limit: args.limit ?? 5000,
         includeHiddenLayers: args.includeHiddenLayers ?? false,
         includeModelLines: args.includeModelLines ?? false,
+        arcMode: args.arcMode ?? "tessellate",
       };
       if (args.layerFilter !== undefined) {
         params.layerFilter = args.layerFilter;

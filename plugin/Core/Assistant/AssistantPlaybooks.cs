@@ -63,7 +63,9 @@ namespace revit_mcp_plugin.Core.Assistant
             "Сначала dryRun=true → thicknessClusters / recommendedWallTypes, потом создание. " +
             "Или вручную: get_cad_link_geometry → create_line_based_element по startMm/endMm " +
             "(не угадывай стены «на глаз»). layerFilter по слоям стен; bboxMm — отсечь лишние фрагменты листа. " +
-            "Нет CAD на виде → скажи привязать DWG к уровню.\n" +
+            "Нет CAD на виде → скажи привязать DWG к уровню. " +
+            "После стен: двери/окна по DWG → trace_openings_from_cad (doorTypeId/windowTypeId, category=door|window|both, dryRun сначала). " +
+            "Не угадывай locationPoint при наличии слоёв A-DOOR / A-GLAZ. Витраж A-GLAZ-CURT — стены, не окна.\n" +
             "B) get_available_family_types categoryName=OST_Walls → typeId = suggestedWallTypeId " +
             "(Базовая стена / перегородка). Не Витраж/Curtain — они дают таймаут. " +
             "Без typeId create_*_element вернёт ошибку с candidates — автоподстановки нет.\n" +
@@ -88,6 +90,7 @@ namespace revit_mcp_plugin.Core.Assistant
             "H) run_norm_audit — только после готовой планировки.\n" +
             "Помещения только внутри замкнутых стен. Room Bounding=true — на стенах, не на комнатах.\n" +
             "Пример: «Перечерти стены по DWG» → get_available_family_types → trace_walls_from_cad wallTypeId + layerFilter=wall.\n" +
+            "Пример: «Перечерти двери/окна по DWG» → типы OST_Doors/Windows → trace_openings_from_cad dryRun → create.\n" +
             "Пример: «Построй две комнаты» → declare_plan → view → types → 5 сегментов → дверь в перегородке → create_room ×2.\n" +
             "Пример: «Школа» / ask_user=Школа → вестибюль, коридор, ≥3 класса, учительская, санузлы — не две комнаты.\n" +
             "Пример: «Сколько комнат на этаже?» → export_room_data filterByActiveView=true (без плана).";
