@@ -22,6 +22,10 @@ import {
   parseOpeningTypeWidthMm,
   verifyOpeningsAgainstHosts,
 } from "../cad/cadOpeningTracing.js";
+import {
+  readWithLimitEscalation,
+  truncationWarning,
+} from "../cad/cadReadEscalation.js";
 
 const bboxSchema = z.object({
   minX: z.number(),
@@ -165,6 +169,27 @@ async function resolveDonorWallTypeId(
  * REV-149: type, height and base offset are cloned from the donor wall — a bridge with
  * a guessed 3000 mm height reads as a mistake on the plan even when the door is right.
  */
+/** Extra host length past each jamb so Revit can actually cut the opening into the bridge. */
+const BRIDGE_MARGIN_MM = 60;
+
+/** Extends a segment by `marginMm` at both ends, along its own direction. */
+export function bridgeWithMargin(
+  startMm: PointMm,
+  endMm: PointMm,
+  marginMm: number
+): { startMm: PointMm; endMm: PointMm } {
+  const dx = endMm.x - startMm.x;
+  const dy = endMm.y - startMm.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-6) return { startMm, endMm };
+  const ux = dx / len;
+  const uy = dy / len;
+  return {
+    startMm: { x: startMm.x - ux * marginMm, y: startMm.y - uy * marginMm, z: startMm.z ?? 0 },
+    endMm: { x: endMm.x + ux * marginMm, y: endMm.y + uy * marginMm, z: endMm.z ?? 0 },
+  };
+}
+
 async function materializeBridgeWalls(
   revitClient: { sendCommand: (cmd: string, params: unknown) => Promise<unknown> },
   planned: PlannedOpening[],
@@ -198,22 +223,20 @@ async function materializeBridgeWalls(
       continue;
     }
 
+    // REV-152: the gap in the DWG is the clear opening, so a bridge built exactly to it is
+    // 2 mm shorter than the door traced from the swing arc and Revit refuses to host it
+    // ("opening 917 mm does not fit on wall (915 mm)"). Grow it past both jambs — the ends
+    // land inside the neighbouring walls, which is how walls join anyway.
+    const span = bridgeWithMargin(p.bridge.startMm, p.bridge.endMm, BRIDGE_MARGIN_MM);
+
     const createResp = (await revitClient.sendCommand("create_line_based_element", {
       data: [
         {
           category: "OST_Walls",
           typeId,
           locationLine: {
-            p0: {
-              x: p.bridge.startMm.x,
-              y: p.bridge.startMm.y,
-              z: p.bridge.startMm.z ?? 0,
-            },
-            p1: {
-              x: p.bridge.endMm.x,
-              y: p.bridge.endMm.y,
-              z: p.bridge.endMm.z ?? 0,
-            },
+            p0: { x: span.startMm.x, y: span.startMm.y, z: p.bridge.startMm.z ?? 0 },
+            p1: { x: span.endMm.x, y: span.endMm.y, z: p.bridge.endMm.z ?? 0 },
           },
           // thickness is informational — the real value comes from typeId (WallType).
           thickness: donor?.widthMm ?? 90,
@@ -305,23 +328,30 @@ export async function verifyPlacedOpenings(
     const p = planned[i];
     // Items that were never created are counted by createdCount, not here.
     if (!p || elementId == null) continue;
+    // REV-152: compare against the point on the wall centreline, not the raw CAD centre.
+    // A door swing arc is centred on the wall *face*, so measuring to it reported every
+    // arc-traced door as half a wall thickness out of place — 107 mm on a 200 mm wall, six
+    // doors out of six, all of them actually correct. A verify that cries wolf is worse than
+    // none. `locationMm` is the point placement was asked for, which is what strictLocation
+    // holds Revit to.
+    const reference = p.locationMm ?? p.centerMm;
     const actual = actualById.get(elementId) ?? null;
     if (!actual) {
       unreadable++;
       items.push({
         elementId,
-        plannedCenterMm: p.centerMm,
+        plannedCenterMm: reference,
         actualMm: null,
         deviationMm: null,
         ok: false,
       });
       continue;
     }
-    const dev = Math.hypot(actual.x - p.centerMm.x, actual.y - p.centerMm.y);
+    const dev = Math.hypot(actual.x - reference.x, actual.y - reference.y);
     maxDev = Math.max(maxDev, dev);
     items.push({
       elementId,
-      plannedCenterMm: p.centerMm,
+      plannedCenterMm: reference,
       actualMm: actual,
       deviationMm: Math.round(dev * 10) / 10,
       ok: dev <= toleranceMm,
@@ -344,12 +374,37 @@ function extractErrors(resp: CreatePointResponse): string[] {
   const msg = resp.Message ?? resp.message ?? "";
   const marker = "Errors:";
   const idx = msg.indexOf(marker);
-  if (idx < 0) return msg ? [msg] : [];
+  // REV-152: a clean run answers "Successfully created 6 element(s)." — echoing that back
+  // as an error made every good result read like a failure.
+  if (idx < 0) return msg && !isSuccess(resp) ? [msg] : [];
   return msg
     .slice(idx + marker.length)
     .split("\n")
     .map((line) => line.replace(/^\s*•\s*/, "").trim())
     .filter((line) => line.length > 0);
+}
+
+/**
+ * The plugin folds warnings into Message under a "Warnings:" marker, same as errors.
+ * REV-152: without parsing them, "door swing still does not match the CAD" never reached
+ * the user and the tool reported a clean run over mirrored doors.
+ */
+function extractWarnings(resp: CreatePointResponse): string[] {
+  if (resp.warnings && resp.warnings.length > 0) return resp.warnings;
+  const msg = resp.Message ?? resp.message ?? "";
+  const marker = "Warnings:";
+  const idx = msg.indexOf(marker);
+  if (idx < 0) return [];
+  return msg
+    .slice(idx + marker.length)
+    .split("\n")
+    .map((line) => line.replace(/^\s*•\s*/, "").trim())
+    .filter((line) => line.length > 0);
+}
+
+/** Warnings that mean a door came out mirrored against the underlay — never a clean run. */
+function swingWarnings(warnings: string[]): string[] {
+  return warnings.filter((w) => /swing|hinge/i.test(w));
 }
 
 /** Parse "x,y,z" with either "." or "," decimals from get_current_view_elements. */
@@ -433,7 +488,24 @@ async function loadOpeningTypeCandidates(
     .filter((t) => t.typeId > 0);
 }
 
-const CREATE_BATCH_SIZE = 1; // one-per-call: same-host batch auto-spaces and ignores XY
+// REV-152: strictLocation now suppresses the handler's same-host auto-spacing, so openings
+// batch like walls. Was 1 — that cost 35 Revit round trips for one flat.
+const CREATE_BATCH_SIZE = 15;
+
+/**
+ * Slots inside one create batch that the handler reported as failed.
+ * Handler errors look like "[3] strictLocation: Revit placed the opening 120 mm…".
+ */
+function failedSlotsInChunk(errors: string[], chunkLength: number): Set<number> {
+  const failed = new Set<number>();
+  for (const err of errors) {
+    const m = /^\s*\[(\d+)\]/.exec(err);
+    if (!m) continue;
+    const slot = Number(m[1]);
+    if (Number.isInteger(slot) && slot >= 0 && slot < chunkLength) failed.add(slot);
+  }
+  return failed;
+}
 
 async function createOpeningsInBatches(
   revitClient: { sendCommand: (cmd: string, params: unknown) => Promise<unknown> },
@@ -461,13 +533,29 @@ async function createOpeningsInBatches(
 
     const ids = extractElementIds(createResp);
     elementIds.push(...ids);
-    // One-per-call, so the mapping back to the plan index is unambiguous.
-    for (let k = 0; k < ids.length && i + k < data.length; k++) {
-      createdIds[i + k] = ids[k];
+
+    // The handler returns ids only for the items that succeeded, in request order, and
+    // prefixes each error with the failing slot. Skipping those slots keeps every later
+    // opening mapped to its own element — otherwise one failure shifts the whole batch
+    // and placement gets verified against the wrong doors.
+    const chunkErrors = extractErrors(createResp);
+    const failedSlots = failedSlotsInChunk(chunkErrors, chunk.length);
+    let cursor = 0;
+    for (let k = 0; k < chunk.length && cursor < ids.length; k++) {
+      if (failedSlots.has(k)) continue;
+      createdIds[i + k] = ids[cursor++];
+    }
+    if (cursor < ids.length) {
+      // More ids than slots we believed succeeded — the mapping is no longer trustworthy.
+      warnings.push(
+        `create_point_based_element returned ${ids.length} ids for ${
+          chunk.length - failedSlots.size
+        } expected successes; placement check for this batch may be misaligned.`
+      );
     }
 
-    errors.push(...extractErrors(createResp));
-    if (createResp.warnings) warnings.push(...createResp.warnings);
+    errors.push(...chunkErrors);
+    warnings.push(...extractWarnings(createResp));
     if (!isSuccess(createResp) && ids.length === 0) {
       const msg = createResp.Message ?? createResp.message;
       if (msg && !errors.includes(msg)) errors.push(msg);
@@ -496,15 +584,105 @@ function assignTypes(
   return planned.map((p) => {
     let typeId = fallbackTypeId;
     let matchedTypeName: string | undefined;
+    let matchedTypeWidthMm: number | undefined;
     if (autoMatch && types.length > 0) {
       const m = matchOpeningTypeByWidth(p.widthMm, types, 80);
       if (m) {
         typeId = m.typeId;
         matchedTypeName = m.name;
+        matchedTypeWidthMm = m.widthMm;
       }
     }
-    return { ...p, typeId, matchedTypeName };
+    return { ...p, typeId, matchedTypeName, matchedTypeWidthMm };
   });
+}
+
+type EnsureTypeResponse = {
+  success?: boolean;
+  Success?: boolean;
+  typeId?: number;
+  typeName?: string;
+  widthMm?: number;
+  created?: boolean;
+  message?: string;
+};
+
+/**
+ * REV-153: gives every opening a type of its traced size, creating one when the project has
+ * none.
+ *
+ * A DWG has real dimensions — 789 mm windows, 917 mm doors — and a template rarely stocks
+ * them. Falling back to the nearest stock size (a 915 window for a 789 opening) writes a
+ * dimensional error into the model that nothing downstream flags. Duplicating the type and
+ * setting its width is exactly what a person does by hand.
+ *
+ * One call per distinct width, not per opening, so a flat costs two or three round trips.
+ */
+async function ensureExactTypes(
+  revitClient: { sendCommand: (cmd: string, params: unknown) => Promise<unknown> },
+  planned: PlannedOpening[],
+  fallbackTypeId: number,
+  heightMm: number,
+  toleranceMm: number
+): Promise<{ planned: PlannedOpening[]; created: string[]; warnings: string[] }> {
+  const created: string[] = [];
+  const warnings: string[] = [];
+  if (planned.length === 0) return { planned, created, warnings };
+
+  // Widths that already landed on a type of the right size need nothing.
+  const needed = new Map<number, PlannedOpening[]>();
+  for (const p of planned) {
+    const matched = p.matchedTypeWidthMm;
+    if (matched != null && Math.abs(matched - p.widthMm) <= toleranceMm) continue;
+    const key = Math.round(p.widthMm);
+    const bucket = needed.get(key);
+    if (bucket) bucket.push(p);
+    else needed.set(key, [p]);
+  }
+  if (needed.size === 0) return { planned, created, warnings };
+
+  const typeIdByWidth = new Map<number, number>();
+  for (const [widthMm, group] of needed) {
+    const groupTypeId = group[0].typeId ?? 0;
+    const sourceTypeId = groupTypeId > 0 ? groupTypeId : fallbackTypeId;
+    try {
+      const resp = (await revitClient.sendCommand("ensure_opening_type", {
+        widthMm,
+        heightMm,
+        sourceTypeId,
+        toleranceMm,
+      })) as EnsureTypeResponse;
+
+      const ok = resp.success ?? resp.Success ?? false;
+      if (!ok || !resp.typeId) {
+        warnings.push(
+          `Тип шириной ${widthMm} мм не создан: ${resp.message ?? "нет ответа"}. ` +
+            `Проёмы этой ширины встанут ближайшим существующим типом.`
+        );
+        continue;
+      }
+
+      typeIdByWidth.set(widthMm, resp.typeId);
+      if (resp.created) {
+        created.push(`${resp.typeName ?? widthMm} (${widthMm} мм)`);
+      }
+    } catch (err) {
+      warnings.push(
+        `ensure_opening_type для ${widthMm} мм не отработал: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+  }
+
+  return {
+    planned: planned.map((p) => {
+      const typeId = typeIdByWidth.get(Math.round(p.widthMm));
+      return typeId ? { ...p, typeId, matchedTypeWidthMm: p.widthMm } : p;
+    }),
+    created,
+    warnings,
+  };
 }
 
 function plannedSummaryItems(planned: PlannedOpening[]) {
@@ -674,6 +852,35 @@ export function registerTraceOpeningsFromCadTool(server: McpServer) {
         .optional()
         .default(true)
         .describe("Match door/window type by mm width in type name (fallback = doorTypeId/windowTypeId)."),
+      exactTypes: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe(
+          "Create a type of the traced width when the project has none (REV-153). A DWG gives " +
+            "real sizes (789 mm windows, 917 mm doors) that a template rarely stocks; without " +
+            "this the nearest stock size is placed and the model is silently the wrong size. " +
+            "Duplicates the matched type and sets its width, as you would by hand. " +
+            "Created types are listed in createdTypes."
+        ),
+      exactTypeToleranceMm: z
+        .number()
+        .min(0)
+        .optional()
+        .default(5)
+        .describe("How far an existing type may be from the traced width before a new one is made."),
+      doorHeightMm: z
+        .number()
+        .positive()
+        .optional()
+        .default(2100)
+        .describe("Door height in mm — used for placement and for any type created by exactTypes."),
+      windowHeightMm: z
+        .number()
+        .positive()
+        .optional()
+        .default(1500)
+        .describe("Window height in mm — used for placement and for any type created by exactTypes."),
       dryRun: z
         .boolean()
         .optional()
@@ -740,6 +947,10 @@ export function registerTraceOpeningsFromCadTool(server: McpServer) {
       const useArcs = args.useArcs ?? true;
       const autoMatch = args.autoMatchTypesByWidth ?? true;
       const sillHeightMm = args.sillHeightMm ?? 900;
+      const exactTypes = args.exactTypes ?? true;
+      const exactTypeToleranceMm = args.exactTypeToleranceMm ?? 5;
+      const doorHeightMm = args.doorHeightMm ?? 2100;
+      const windowHeightMm = args.windowHeightMm ?? 1500;
       const excludeLayers = args.excludeLayers ?? DEFAULT_EXCLUDE_OPENING_LAYERS;
       const matchOpts = {
         maxHostDistanceMm,
@@ -763,10 +974,18 @@ export function registerTraceOpeningsFromCadTool(server: McpServer) {
           };
 
           // Broad read — filter by opening layers in TS (door+window may differ).
-          const cadRaw = (await revitClient.sendCommand(
-            "get_cad_link_geometry",
-            cadParams
-          )) as CadGeometryResponse;
+          // REV-155: Revit truncates at `limit` before that filter runs, so on a large DWG
+          // the openings in the unread half are missing without a word. Escalate first.
+          const read = await readWithLimitEscalation(
+            (limit) =>
+              revitClient.sendCommand("get_cad_link_geometry", {
+                ...cadParams,
+                limit,
+              }) as Promise<CadGeometryResponse>,
+            args.limit ?? 5000
+          );
+          const cadRaw = read.response;
+          const readWarning = truncationWarning(read);
 
           if (!isSuccess(cadRaw) && cadRaw.ok !== true) {
             return {
@@ -998,6 +1217,34 @@ export function registerTraceOpeningsFromCadTool(server: McpServer) {
           )) as ViewInfoResponse;
           const baseLevel = args.baseLevelMm ?? readElevation(viewInfo);
 
+          // REV-153: before anything is built, make sure each opening has a type of its own
+          // traced width — creating one if the project has nothing that size.
+          const createdTypeNames: string[] = [];
+          const typeWarnings: string[] = [];
+          if (exactTypes) {
+            const doorTypesEnsured = await ensureExactTypes(
+              revitClient,
+              doorPlanned,
+              args.doorTypeId ?? 0,
+              doorHeightMm,
+              exactTypeToleranceMm
+            );
+            doorPlanned = doorTypesEnsured.planned;
+            createdTypeNames.push(...doorTypesEnsured.created);
+            typeWarnings.push(...doorTypesEnsured.warnings);
+
+            const windowTypesEnsured = await ensureExactTypes(
+              revitClient,
+              windowPlanned,
+              args.windowTypeId ?? 0,
+              windowHeightMm,
+              exactTypeToleranceMm
+            );
+            windowPlanned = windowTypesEnsured.planned;
+            createdTypeNames.push(...windowTypesEnsured.created);
+            typeWarnings.push(...windowTypesEnsured.warnings);
+          }
+
           const doorBridges = await materializeBridgeWalls(
             revitClient,
             doorPlanned,
@@ -1022,11 +1269,17 @@ export function registerTraceOpeningsFromCadTool(server: McpServer) {
             kind: OpeningKind
           ): Record<string, unknown>[] =>
             planned.map((p) => {
-              // Offset into CAD swing side. create_point_based_element must keep this
-              // off-wall point for auto-facing (REV-147); centerline snap alone loses the side.
+              // REV-152: the facing side travels in its own field. Nudging locationPoint by
+              // 120 mm to encode it put every opening off the wall centreline, and
+              // strictLocation — which measures exactly that distance — rejected all of them.
               const sn = p.swingNormal;
-              const ox = sn ? sn.x * 120 : 0;
-              const oy = sn ? sn.y * 120 : 0;
+              const facingHintPoint = sn
+                ? {
+                    x: p.locationMm.x + sn.x * 120,
+                    y: p.locationMm.y + sn.y * 120,
+                    z: p.locationMm.z ?? 0,
+                  }
+                : undefined;
 
               // REV-149: hinge side along the wall, so Revit can un-mirror the hand.
               const hd = p.hingeDir;
@@ -1042,12 +1295,13 @@ export function registerTraceOpeningsFromCadTool(server: McpServer) {
                 name: kind === "door" ? "door from CAD" : "window from CAD",
                 typeId: p.typeId,
                 locationPoint: {
-                  x: p.locationMm.x + ox,
-                  y: p.locationMm.y + oy,
+                  x: p.locationMm.x,
+                  y: p.locationMm.y,
                   z: p.locationMm.z ?? 0,
                 },
+                facingHintPoint,
                 width: p.widthMm,
-                height: kind === "door" ? 2100 : 1500,
+                height: kind === "door" ? doorHeightMm : windowHeightMm,
                 baseLevel,
                 baseOffset: kind === "window" ? sillHeightMm : 0,
                 hostWallId: p.hostWallId,
@@ -1056,6 +1310,10 @@ export function registerTraceOpeningsFromCadTool(server: McpServer) {
                 strictLocation,
                 strictToleranceMm,
                 handHintPoint,
+                // REV-152: the open side, stated outright. The handler measures the placed
+                // door's own plan swing arc against this instead of guessing from the
+                // family's HandOrientation convention (which mirrored whole runs of doors).
+                swingNormal: sn ? { x: sn.x, y: sn.y, z: 0 } : undefined,
               };
             });
 
@@ -1086,7 +1344,12 @@ export function registerTraceOpeningsFromCadTool(server: McpServer) {
             ...doorCreate.errors,
             ...windowCreate.errors,
           ];
-          const warnings = [...doorCreate.warnings, ...windowCreate.warnings];
+          const warnings = [
+            ...(readWarning ? [readWarning] : []),
+            ...typeWarnings,
+            ...doorCreate.warnings,
+            ...windowCreate.warnings,
+          ];
           const elementIds = [
             ...doorCreate.elementIds,
             ...windowCreate.elementIds,
@@ -1137,10 +1400,15 @@ export function registerTraceOpeningsFromCadTool(server: McpServer) {
             windowPlacement.items.filter((it) => it.deviationMm != null && !it.ok).length;
           const unreadableCount = doorPlacement.unreadable + windowPlacement.unreadable;
 
+          // REV-152: a door in the right spot that opens the wrong way is still wrong, and
+          // the XY check above cannot see it. These come from the handler, which measures
+          // each door's own plan swing arc against the DWG arc after placing it.
+          const swingIssues = swingWarnings(warnings);
+
           return {
             // Openings that landed off the underlay are not a success, even though the
             // elements exist — that is exactly what hid the REV-147 misplacements.
-            ok: createdCount > 0 && misplacedCount === 0,
+            ok: createdCount > 0 && misplacedCount === 0 && swingIssues.length === 0,
             summary:
               createdCount > 0
                 ? `Создано дверей ${doorCreated}/${doorPlanned.length}, окон ${windowCreated}/${windowPlanned.length}` +
@@ -1154,6 +1422,9 @@ export function registerTraceOpeningsFromCadTool(server: McpServer) {
                     : "") +
                   (unreadableCount > 0
                     ? `; не удалось перепроверить ${unreadableCount}`
+                    : "") +
+                  (swingIssues.length > 0
+                    ? `; СТОРОНА ОТКРЫВАНИЯ не совпала с DWG у ${swingIssues.length}`
                     : "")
                 : `Создано 0/${plannedCount} проёмов` +
                   (errors.length ? `: ${errors[0]}` : ""),
@@ -1171,12 +1442,21 @@ export function registerTraceOpeningsFromCadTool(server: McpServer) {
             viewName: cadRaw.viewName ?? viewInfo.name ?? viewInfo.Name,
             errors,
             warnings,
+            // REV-153: types created to match the DWG exactly. Worth reporting — they are
+            // new types in the project, not just placed instances.
+            createdTypes: createdTypeNames,
             misplacedCount,
             unreadableCount,
+            // Empty means every door's measured swing matched the DWG arc. Non-empty lists
+            // the doors to look at — report it, do not place them again on top.
+            swingIssues,
+            swingMismatchCount: swingIssues.length,
             strictLocation,
             truncated: createdCount < plannedCount,
             message:
-              misplacedCount > 0
+              swingIssues.length > 0
+                ? `${swingIssues.length} двер(и) открываются не в ту сторону относительно DWG — см. swingIssues.`
+                : misplacedCount > 0
                 ? `${misplacedCount} проём(ов) стоят дальше ${toleranceMm} мм от DWG — см. doors.placement / windows.placement.`
                 : createdCount < plannedCount
                   ? `Частичный успех: создано ${createdCount}/${plannedCount}. Проверьте errors.`

@@ -33,7 +33,7 @@
 2. **Схема врёт:** `thickness`/`width`/`height` не меняют геометрию типа.
 3. **Много round-trip:** walls → floor → door/window → room; внутри — отдельный `Transaction` на каждый элемент.
 4. **Нет joins / location line / structural** — углы и чистота хуже ручного.
-5. **Узлы РД** не реализованы (отдельный трек REV-40).
+5. **Узлы РД** — ~~не реализованы~~ **устарело (2026-08):** есть `create_node_detail` + примитивы деталировки (`create_detail_view` section, `create_detail_regions`, `load_family`). См. [detailing-automation-scope.md](detailing-automation-scope.md).
 
 ## Связанные тикеты
 

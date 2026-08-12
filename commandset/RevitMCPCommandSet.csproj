@@ -65,6 +65,12 @@
       <Reference Include="System.Net.Http" />
     </ItemGroup>
 
+    <!-- The norm handlers keep their decision helpers internal on purpose; the tests assert on
+         those helpers directly instead of driving a running Revit. -->
+    <ItemGroup>
+      <InternalsVisibleTo Include="RevitMCPCommandSet.Tests" />
+    </ItemGroup>
+
     <Target Name="DeployCommandSet" AfterTargets="Build">
         <PropertyGroup>
             <PluginAddInRoot>$(ProjectDir)..\plugin\bin\AddIn $(RevitVersion) $(Configuration)\revit_mcp_plugin\</PluginAddInRoot>

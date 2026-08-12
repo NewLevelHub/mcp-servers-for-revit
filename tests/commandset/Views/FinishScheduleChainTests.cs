@@ -124,7 +124,8 @@ public class FinishScheduleChainTests : RevitApiTest
         await Assert.That(dataItem.ScheduleName).IsEqualTo("Ведомость отделки (тест)_02_Заполнение данных");
 
         var dataDuplicate = _doc.GetElement(dataItem.ScheduleUniqueId) as ViewSchedule;
-        var dataTemplate = _doc.GetElement(ElementIdExtensions.FromLong(dataItem.TemplateId)) as ViewSchedule;
+        var dataTemplate = _doc.GetElement(
+            RevitMCPCommandSet.Utils.ElementIdExtensions.FromLong(dataItem.TemplateId)) as ViewSchedule;
         await Assert.That(dataDuplicate).IsNotNull();
         await Assert.That(dataDuplicate!.Definition.IsKeySchedule).IsFalse();
         await Assert.That(dataDuplicate.Definition.GetFieldCount())

@@ -11,9 +11,50 @@ import {
   DEFAULT_EXCLUDE_CAD_LINK_PATTERNS,
   type CadSegment,
   type BboxMm,
+  type WallAxis,
   type WallTypeCandidate,
   type PointMm,
 } from "../cad/cadWallTracing.js";
+import {
+  traceArcWallAxesFromCad,
+  buildArcTraceHints,
+  type ArcWallAxis,
+} from "../cad/cadArcWallTracing.js";
+import { traceOpeningsFromCad } from "../cad/cadOpeningTracing.js";
+import {
+  readWithLimitEscalation,
+  truncationWarning,
+} from "../cad/cadReadEscalation.js";
+import { traceWallBandsFromCad } from "../cad/cadBandWallTracing.js";
+
+/** A segment carrying arc metadata belongs to the curved-wall tracer, not the straight one. */
+function isArcSegment(seg: CadSegment): boolean {
+  return !!seg.arcCenterMm && !!seg.arcRadiusMm && seg.arcRadiusMm > 0;
+}
+
+/** Straight and curved axes travel together from here on; `arc` marks the curved ones. */
+type TracedAxis = WallAxis & { arc?: ArcWallAxis };
+
+/**
+ * REV-153: centres of every door and window drawn on the CAD.
+ *
+ * Used to decide which wall gaps are openings. Judging a gap by width alone bridged an open
+ * doorway on «Проект1» and produced an axis 192.9 mm off the underlay; and keeping the gaps
+ * unbridged left the doors without a host, so each one got its own stub wall butted into the
+ * run — visible as a seam either side of every door.
+ */
+function detectOpeningCentres(segments: CadSegment[]): PointMm[] {
+  const centres: PointMm[] = [];
+  for (const kind of ["door", "window"] as const) {
+    try {
+      const traced = traceOpeningsFromCad(segments, { kind });
+      for (const o of traced.openings) centres.push(o.centerMm);
+    } catch {
+      // Opening detection is an optimisation here — wall tracing still works without it.
+    }
+  }
+  return centres;
+}
 
 const bboxSchema = z.object({
   minX: z.number(),
@@ -237,6 +278,39 @@ async function loadWallTypeCandidates(
     .filter((t) => t.typeId > 0);
 }
 
+/**
+ * REV-154: get a wall type of exactly this thickness, creating it if the project has none.
+ * Returns null on any failure — a missing type is a reason to fall back, not to abort tracing.
+ */
+async function ensureWallType(
+  revitClient: { sendCommand: (cmd: string, params: unknown) => Promise<unknown> },
+  thicknessMm: number,
+  sourceTypeId: number,
+  toleranceMm: number
+): Promise<{ thicknessMm: number; typeId: number; typeName: string } | null> {
+  if (!sourceTypeId || sourceTypeId <= 0) return null;
+
+  try {
+    const raw = (await revitClient.sendCommand("ensure_wall_type", {
+      thicknessMm,
+      sourceTypeId,
+      toleranceMm,
+    })) as Record<string, unknown>;
+
+    const body = (raw?.Response ?? raw?.response ?? raw) as Record<string, unknown>;
+    const typeId = Number(body?.typeId ?? body?.TypeId ?? 0);
+    if (!Number.isFinite(typeId) || typeId <= 0) return null;
+
+    return {
+      thicknessMm: Number(body?.thicknessMm ?? body?.ThicknessMm ?? thicknessMm),
+      typeId,
+      typeName: String(body?.typeName ?? body?.TypeName ?? `${thicknessMm}мм`),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function registerTraceWallsFromCadTool(server: McpServer) {
   server.tool(
     "trace_walls_from_cad",
@@ -274,6 +348,18 @@ export function registerTraceWallsFromCadTool(server: McpServer) {
         .number()
         .optional()
         .describe("Max gap to merge collinear axes (default = toleranceMm)."),
+      openingGapMm: z
+        .number()
+        .min(0)
+        .optional()
+        .default(0)
+        .describe(
+          "Join collinear axes across gaps up to this width when both sides are paired and " +
+            "equally thick — the breaks DWG leaves for doors, windows and curtain mullions. " +
+            "Revit wants one continuous wall with openings cut into it, so ~2500 suits a flat " +
+            "and removes most bridge walls in trace_openings_from_cad. 0 (default) keeps runs " +
+            "split. Reported as stats.bridgedOpeningGaps."
+        ),
       minPairGapMm: z
         .number()
         .optional()
@@ -306,10 +392,17 @@ export function registerTraceWallsFromCadTool(server: McpServer) {
         .optional()
         .describe("Base level elevation mm; default from active view."),
       pairingMode: z
-        .enum(["centerline", "raw"])
+        .enum(["centerline", "raw", "band"])
         .optional()
         .default("centerline")
-        .describe("centerline = merge double DWG lines; raw = use segments as-is."),
+        .describe(
+          "centerline = pair each DWG face line with its nearest parallel neighbour (default; " +
+            "right when a wall is drawn as two lines). band = group parallel lines into face " +
+            "clusters and measure across the OUTER faces — use it when the DWG draws the " +
+            "build-up (finish layers 12–25 mm apart), where centerline measures the gap " +
+            "between two finish layers and invents thicknesses like 62.5 or 93.8 mm. " +
+            "raw = use segments as-is."
+        ),
       requirePair: z
         .boolean()
         .optional()
@@ -381,6 +474,20 @@ export function registerTraceWallsFromCadTool(server: McpServer) {
         .describe(
           "Match wall type per axis by measured thickness vs mm in type name (fallback = wallTypeId)."
         ),
+      createMissingWallTypes: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "REV-154: when the project stocks no type within exactThicknessToleranceMm of a traced thickness, duplicate the nearest one at the exact mm (ensure_wall_type) instead of snapping to it. Needs autoMatchWallTypes."
+        ),
+      exactThicknessToleranceMm: z
+        .number()
+        .optional()
+        .default(10)
+        .describe(
+          "How far a stock type may be from the traced thickness before createMissingWallTypes makes a new one (default 10 mm)."
+        ),
     },
     async (args) => {
       if (!args.wallTypeId || args.wallTypeId <= 0) {
@@ -406,6 +513,11 @@ export function registerTraceWallsFromCadTool(server: McpServer) {
               limit: args.limit ?? 5000,
               includeHiddenLayers: args.includeHiddenLayers ?? true,
               includeModelLines: withModelLines,
+              // REV-154: one chord per arc instead of a tessellated fan. A curved wall's
+              // chords run ~100 mm each, so minLengthMm dropped them inside Revit and the
+              // tracer never learned the arc existed — no wall, no warning, and the doors
+              // on that wall silently lost their host.
+              arcMode: "single",
             };
             if (args.layerFilter !== undefined) {
               cadParams.layerFilter = args.layerFilter;
@@ -413,10 +525,20 @@ export function registerTraceWallsFromCadTool(server: McpServer) {
             return cadParams;
           };
 
-          let cadRaw = (await revitClient.sendCommand(
-            "get_cad_link_geometry",
-            buildCadParams(includeModelLinesArg === true)
-          )) as CadGeometryResponse;
+          // REV-155: Revit truncates at `limit` before the layer filter runs, so on a large
+          // DWG whole wall layers never arrive and the trace silently covers part of the plan.
+          const readCad = (withModelLines: boolean) =>
+            readWithLimitEscalation(
+              (limit) =>
+                revitClient.sendCommand("get_cad_link_geometry", {
+                  ...buildCadParams(withModelLines),
+                  limit,
+                }) as Promise<CadGeometryResponse>,
+              args.limit ?? 5000
+            );
+
+          let read = await readCad(includeModelLinesArg === true);
+          let cadRaw = read.response;
 
           // auto: if ImportInstance-only read is too thin for walls, re-read with model lines.
           if (includeModelLinesArg === "auto") {
@@ -434,10 +556,8 @@ export function registerTraceWallsFromCadTool(server: McpServer) {
               includeModelLines = true;
               // Prefer native includeModelLines (needs rebuilt commandset). If the
               // running Revit DLL ignores the flag, fall back to OST_Lines.
-              cadRaw = (await revitClient.sendCommand(
-                "get_cad_link_geometry",
-                buildCadParams(true)
-              )) as CadGeometryResponse;
+              read = await readCad(true);
+              cadRaw = read.response;
               const afterNative = countModelLineSources(cadRaw.items ?? []);
               if (afterNative === 0) {
                 try {
@@ -494,7 +614,12 @@ export function registerTraceWallsFromCadTool(server: McpServer) {
           const excludePatterns =
             args.excludeCadLinkPatterns ?? DEFAULT_EXCLUDE_CAD_LINK_PATTERNS;
 
-          const preFiltered = filterSegmentsForWallTracing(cadItemsRaw, {
+          // REV-154: arcs go to the curved-wall tracer. Left in the straight pipeline they are
+          // either dropped (orthoOnly) or turned into a chord-shaped wall that cuts the corner.
+          const arcSegmentsRaw = cadItemsRaw.filter(isArcSegment);
+          const lineSegmentsRaw = cadItemsRaw.filter((s) => !isArcSegment(s));
+
+          const preFiltered = filterSegmentsForWallTracing(lineSegmentsRaw, {
             excludeCadLinkPatterns: excludePatterns,
             excludeLayers: args.excludeLayers,
             hatchMinLengthMm: 1500,
@@ -502,10 +627,19 @@ export function registerTraceWallsFromCadTool(server: McpServer) {
             orthoOnly,
           });
 
+          // Same exclusions, but never by length or angle: an arc is measured by its sweep.
+          const arcPreFiltered = filterSegmentsForWallTracing(arcSegmentsRaw, {
+            excludeCadLinkPatterns: excludePatterns,
+            excludeLayers: args.excludeLayers,
+            hatchMinLengthMm: 0,
+            minLengthMm: 0,
+            orthoOnly: false,
+          });
+
           let effectiveBbox = args.bboxMm;
           if (!effectiveBbox && (args.autoBbox ?? true)) {
             effectiveBbox = computeSegmentsBbox(
-              preFiltered.segments,
+              [...preFiltered.segments, ...arcPreFiltered.segments],
               args.bboxMarginMm ?? 500
             );
           }
@@ -521,7 +655,12 @@ export function registerTraceWallsFromCadTool(server: McpServer) {
               })
             : {
                 segments: preFiltered.segments,
-                stats: { input: preFiltered.segments.length, excluded: 0 },
+                stats: {
+                  input: preFiltered.segments.length,
+                  excluded: 0,
+                  nonOrthogonalDropped: 0,
+                  arcsDropped: 0,
+                },
               };
 
           const cadItems = filtered.segments;
@@ -534,7 +673,31 @@ export function registerTraceWallsFromCadTool(server: McpServer) {
             bboxMm: effectiveBbox,
             modelLineSegments: countModelLineSources(cadItemsRaw),
             includeModelLines,
+            // REV-154: geometry the tracer cannot represent yet, or excluded by orthoOnly.
+            // Silent loss here is what left two doors without a host on «Проект1».
+            nonOrthogonalDropped: preFiltered.stats.nonOrthogonalDropped,
+            arcsDropped: preFiltered.stats.arcsDropped,
+            arcSegments: arcPreFiltered.segments.length,
           };
+
+          const geometryHints: string[] = [];
+          const readWarning = truncationWarning(read);
+          if (readWarning) {
+            geometryHints.push(readWarning);
+          }
+          if (filterStats.nonOrthogonalDropped > 0) {
+            geometryHints.push(
+              `${filterStats.nonOrthogonalDropped} линий(и) под углом отброшено фильтром ` +
+                `orthoOnly. Если на плане есть диагональные стены — повторите с ` +
+                `orthoOnly: false.`
+            );
+          }
+          if (filterStats.arcsDropped > 0) {
+            geometryHints.push(
+              `${filterStats.arcsDropped} дуг(и) отброшено до трассировки — проверьте ` +
+                `minLengthMm и excludeLayers.`
+            );
+          }
 
           if (cadItems.length === 0) {
             return {
@@ -551,16 +714,64 @@ export function registerTraceWallsFromCadTool(server: McpServer) {
             };
           }
 
-          const traced = traceWallAxesFromCad(cadItems, {
-            toleranceMm,
-            mergeGapMm,
-            minPairGapMm: args.minPairGapMm ?? 55,
-            maxPairGapMm: args.maxPairGapMm ?? 280,
-            minWallLengthMm: args.minWallLengthMm ?? 300,
-            bboxMm: effectiveBbox,
-            pairingMode: args.pairingMode ?? "centerline",
-            requirePair,
-          });
+          // REV-153: find the door and window symbols on the *unfiltered* CAD, so a gap can
+          // be bridged only where the drawing actually shows an opening. Wall layers are
+          // filtered out of cadItems by then, and the openings live on their own layers.
+          const openingCentres = args.openingGapMm
+            ? detectOpeningCentres(cadItemsRaw)
+            : undefined;
+
+          // REV-156: band mode measures across the outer faces of a stack of parallel lines.
+          // It replaces pairing wholesale, so it produces the same shape with the
+          // pairing-specific counters left at zero — there is no "unpaired line" in a band.
+          const traced =
+            (args.pairingMode ?? "centerline") === "band"
+              ? (() => {
+                  const band = traceWallBandsFromCad(cadItems, {
+                    minThicknessMm: args.minPairGapMm ?? 60,
+                    maxThicknessMm: args.maxPairGapMm ?? 420,
+                    minWallLengthMm: args.minWallLengthMm ?? 300,
+                    bridgeGapMm: args.openingGapMm || 2600,
+                  });
+                  return {
+                    axes: band.axes,
+                    stats: {
+                      inputSegments: band.stats.inputSegments,
+                      afterBbox: band.stats.inputSegments,
+                      afterPairing: band.axes.length,
+                      afterMerge: band.axes.length,
+                      pairedCount: band.axes.length,
+                      unpairedSkipped: 0,
+                      skippedShort: 0,
+                      thicknessOutliersDropped: 0,
+                      bridgedOpeningGaps: 0,
+                      endCapsIgnored: 0,
+                    },
+                    thicknessClusters: band.thicknessClusters.map((c) => ({
+                      thicknessMm: c.thicknessMm,
+                      count: c.count,
+                    })),
+                    skipped: [],
+                    hints: band.stats.skewed
+                      ? [
+                          `${band.stats.skewed} наклонных линий band-режим не трассирует — ` +
+                            "для диагональных стен используйте pairingMode: centerline.",
+                        ]
+                      : [],
+                  };
+                })()
+              : traceWallAxesFromCad(cadItems, {
+                  toleranceMm,
+                  mergeGapMm,
+                  minPairGapMm: args.minPairGapMm ?? 55,
+                  maxPairGapMm: args.maxPairGapMm ?? 280,
+                  minWallLengthMm: args.minWallLengthMm ?? 300,
+                  bboxMm: effectiveBbox,
+                  pairingMode: args.pairingMode === "raw" ? "raw" : "centerline",
+                  requirePair,
+                  openingGapMm: args.openingGapMm ?? 0,
+                  openingPointsMm: openingCentres,
+                });
 
           const verify = verifyAxesAgainstCad(
             traced.axes,
@@ -568,12 +779,41 @@ export function registerTraceWallsFromCadTool(server: McpServer) {
             toleranceMm
           );
 
-          const axesForCreate =
+          const straightAxes: TracedAxis[] =
             verify.failedAxes.length > 0
               ? traced.axes.filter(
                   (_, i) => !verify.failedAxes.some((f) => f.index === i)
                 )
               : traced.axes;
+
+          // REV-154: curved walls. Two concentric DWG arcs whose radii differ by the wall
+          // thickness are the two faces of one wall; the centreline arc goes to Revit as
+          // p0 / pointOnCurve / p1.
+          const arcTrace = traceArcWallAxesFromCad(arcPreFiltered.segments, {
+            minPairGapMm: args.minPairGapMm ?? 55,
+            maxPairGapMm: args.maxPairGapMm ?? 280,
+            minWallLengthMm: args.minWallLengthMm ?? 300,
+            centerToleranceMm: toleranceMm,
+            mergeGapMm,
+            bboxMm: effectiveBbox,
+          });
+          const arcAxes: TracedAxis[] = arcTrace.axes.map((arc) => ({
+            startMm: arc.startMm,
+            endMm: arc.endMm,
+            lengthMm: arc.lengthMm,
+            sourceCadIds: arc.sourceCadIds,
+            thicknessMm: arc.thicknessMm,
+            paired: true,
+            arc,
+          }));
+
+          const axesForCreate: TracedAxis[] = [...straightAxes, ...arcAxes];
+          const arcHints = buildArcTraceHints(arcTrace, {
+            minPairGapMm: args.minPairGapMm ?? 55,
+            maxPairGapMm: args.maxPairGapMm ?? 280,
+          });
+          const curvedNote =
+            arcAxes.length > 0 ? `; из них криволинейных: ${arcAxes.length}` : "";
 
           let wallTypes: WallTypeCandidate[] = [];
           if (autoMatchWallTypes) {
@@ -581,6 +821,47 @@ export function registerTraceWallsFromCadTool(server: McpServer) {
               wallTypes = await loadWallTypeCandidates(revitClient);
             } catch {
               wallTypes = [];
+            }
+          }
+
+          // REV-154: a DWG measures 193 or 147 mm and the template stocks neither. Snapping to
+          // the nearest stock type redraws the building at the wrong thickness, so make the type.
+          const createdWallTypes: {
+            thicknessMm: number;
+            typeId: number;
+            typeName: string;
+          }[] = [];
+          // dryRun previews; it must not leave new types behind in the project.
+          if (autoMatchWallTypes && args.createMissingWallTypes && !args.dryRun) {
+            const exactTol = args.exactThicknessToleranceMm ?? 10;
+            const wanted = new Set<number>();
+            for (const axis of axesForCreate) {
+              const t = args.wallThicknessMm ?? axis.thicknessMm;
+              if (t != null && t > 0) wanted.add(Math.round(t));
+            }
+
+            for (const thicknessMm of wanted) {
+              if (matchWallTypeByThickness(thicknessMm, wallTypes, exactTol)) continue;
+
+              const nearest = matchWallTypeByThickness(
+                thicknessMm,
+                wallTypes,
+                Number.MAX_SAFE_INTEGER
+              );
+              const ensured = await ensureWallType(
+                revitClient,
+                thicknessMm,
+                nearest?.typeId ?? args.wallTypeId,
+                exactTol
+              );
+              if (!ensured) continue;
+
+              wallTypes.push({
+                typeId: ensured.typeId,
+                name: ensured.typeName,
+                thicknessMm: ensured.thicknessMm,
+              });
+              createdWallTypes.push(ensured);
             }
           }
 
@@ -635,10 +916,11 @@ export function registerTraceWallsFromCadTool(server: McpServer) {
               createdCount: 0,
               plannedCount: 0,
               stats: traced.stats,
+              arcStats: arcTrace.stats,
               verify,
               filterStats,
               thicknessClusters: traced.thicknessClusters,
-              hints: traced.hints,
+              hints: [...geometryHints, ...arcHints, ...traced.hints],
               skippedByReason,
               skippedSegments,
               skippedTruncated,
@@ -651,7 +933,7 @@ export function registerTraceWallsFromCadTool(server: McpServer) {
               ok: true,
               dryRun: true,
               summary:
-                `Dry-run: ${axesForCreate.length} осей стен; толщины [${thicknessHint}] мм` +
+                `Dry-run: ${axesForCreate.length} осей стен${curvedNote}; толщины [${thicknessHint}] мм` +
                 (verify.failedAxes.length > 0
                   ? ` (отброшено verify: ${verify.failedAxes.length})`
                   : "") +
@@ -665,10 +947,11 @@ export function registerTraceWallsFromCadTool(server: McpServer) {
               typeAssignments,
               droppedAxes: traced.axes.length - axesForCreate.length,
               stats: traced.stats,
+              arcStats: arcTrace.stats,
               verify,
               filterStats,
               thicknessClusters: traced.thicknessClusters,
-              hints: traced.hints,
+              hints: [...geometryHints, ...arcHints, ...traced.hints],
               skippedByReason,
               skippedSegments,
               skippedTruncated,
@@ -710,6 +993,16 @@ export function registerTraceWallsFromCadTool(server: McpServer) {
                   y: axis.endMm.y,
                   z: axis.endMm.z ?? 0,
                 },
+                // Curved wall: Revit rebuilds the DWG arc from three points.
+                ...(axis.arc
+                  ? {
+                      pointOnCurve: {
+                        x: axis.arc.midMm.x,
+                        y: axis.arc.midMm.y,
+                        z: axis.arc.midMm.z ?? 0,
+                      },
+                    }
+                  : {}),
               },
               thickness: thicknessMm,
               height: heightMm,
@@ -731,7 +1024,7 @@ export function registerTraceWallsFromCadTool(server: McpServer) {
           return {
             ok: createOk && createdCount > 0,
             summary: createOk
-              ? `Создано ${createdCount}/${plannedCount} стен по CAD; толщины [${thicknessHint}] мм` +
+              ? `Создано ${createdCount}/${plannedCount} стен по CAD${curvedNote}; толщины [${thicknessHint}] мм` +
                 (verify.failedAxes.length > 0
                   ? `; verify: max отклонение ${verify.maxDeviationMm} мм`
                   : `; verify OK (max ${verify.maxDeviationMm} мм)`) +
@@ -747,12 +1040,14 @@ export function registerTraceWallsFromCadTool(server: McpServer) {
             elementIds,
             axes: axesForCreate,
             typeAssignments,
+            createdWallTypes,
             droppedAxes: traced.axes.length - axesForCreate.length,
             stats: traced.stats,
+            arcStats: arcTrace.stats,
             verify,
             filterStats,
             thicknessClusters: traced.thicknessClusters,
-            hints: traced.hints,
+            hints: [...geometryHints, ...arcHints, ...traced.hints],
             skippedByReason,
             skippedSegments,
             skippedTruncated,

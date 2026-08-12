@@ -397,11 +397,20 @@ namespace RevitMCPCommandSet.Services.DataExtraction
         {
             try
             {
-#pragma warning disable CS0612 // GeometryInstance.Symbol is the only block-name source for imports.
-                var symbolName = gi.Symbol?.Name;
-#pragma warning restore CS0612
-                if (!string.IsNullOrWhiteSpace(symbolName))
-                    return symbolName;
+                // Revit 2025 dropped GeometryInstance.Symbol; the block element is now reached
+                // through the id of its symbol geometry.
+                using var symbolGeometryId = gi.GetSymbolGeometryId();
+                var symbolId = symbolGeometryId?.SymbolId;
+
+                if (symbolId != null && symbolId != ElementId.InvalidElementId)
+                {
+                    // Blocks nested in a linked DWG belong to the link's document, not the host.
+                    var owner = gi.GetDocument() ?? doc;
+                    var symbolName = owner?.GetElement(symbolId)?.Name;
+
+                    if (!string.IsNullOrWhiteSpace(symbolName))
+                        return symbolName;
+                }
             }
             catch
             {

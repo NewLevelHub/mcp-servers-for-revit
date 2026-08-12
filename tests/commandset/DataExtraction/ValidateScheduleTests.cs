@@ -68,7 +68,7 @@ public class ValidateScheduleTests : RevitApiTest
 #if REVIT2024_OR_GREATER
             .Select(id => id.Value)
 #else
-            .Select(id => (long)id.IntegerValue)
+            .Select(id => (long)id.GetIntValue())
 #endif
             .OrderBy(id => id)
             .ToList();
@@ -165,7 +165,7 @@ public class ValidateScheduleTests : RevitApiTest
 #if REVIT2024_OR_GREATER
             targetLevel.Id.Value;
 #else
-            targetLevel.Id.IntegerValue;
+            targetLevel.Id.GetIntValue();
 #endif
         return elements
             .Where(element => GetElementLevelId(element) == targetLevelId)
@@ -183,7 +183,7 @@ public class ValidateScheduleTests : RevitApiTest
 #if REVIT2024_OR_GREATER
                 return levelParam.AsElementId().Value;
 #else
-                return levelParam.AsElementId().IntegerValue;
+                return levelParam.AsElementId().GetIntValue();
 #endif
             }
         }

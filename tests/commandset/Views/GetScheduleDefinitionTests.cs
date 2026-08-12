@@ -2,6 +2,7 @@ using Autodesk.Revit.DB;
 using Nice3point.TUnit.Revit;
 using Nice3point.TUnit.Revit.Executors;
 using RevitMCPCommandSet.Services.Views;
+using RevitMCPCommandSet.Utils;
 using TUnit.Core;
 using TUnit.Core.Executors;
 
@@ -102,7 +103,7 @@ public class GetScheduleDefinitionTests : RevitApiTest
 #if REVIT2024_OR_GREATER
         var scheduleId = _schedule.Id.Value;
 #else
-        var scheduleId = (long)_schedule.Id.IntegerValue;
+        var scheduleId = (long)_schedule.Id.GetIntValue();
 #endif
 
         var result = GetScheduleDefinitionEventHandler.Compute(_doc, scheduleId: scheduleId);

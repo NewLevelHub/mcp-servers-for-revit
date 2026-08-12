@@ -66,6 +66,14 @@ public class JZLine
     public JZPoint P1 { get; set; }
 
     /// <summary>
+    ///     Optional third point the location curve has to pass through (mm).
+    ///     Set by the CAD tracer for curved walls: a DWG arc arrives tessellated into chords,
+    ///     and Revit needs three points to rebuild the original arc (REV-154).
+    /// </summary>
+    [JsonProperty("pointOnCurve")]
+    public JZPoint PointOnCurve { get; set; }
+
+    /// <summary>
     ///     获取线段的长度
     /// </summary>
     public double GetLength()
@@ -122,5 +130,29 @@ public class JZLine
             throw new ArgumentException("locationLine length is zero — p0 and p1 must differ.");
 
         return Line.CreateBound(p0, p1);
+    }
+
+    /// <summary>
+    ///     转换为Revit的Curve：有 pointOnCurve 时得到圆弧，否则直线
+    ///     单位转换：mm -> ft
+    /// </summary>
+    public static Curve ToCurve(JZLine jzLine)
+    {
+        var line = ToLine(jzLine);
+        if (jzLine.PointOnCurve == null)
+            return line;
+
+        var p0 = JZPoint.ToXYZ(jzLine.P0);
+        var p1 = JZPoint.ToXYZ(jzLine.P1);
+        var onArc = JZPoint.ToXYZ(jzLine.PointOnCurve);
+
+        // A point that sits on the chord makes Arc.Create throw. Traced arcs get flat when the
+        // DWG sweep is tiny, so degrade to the straight segment instead of failing the batch.
+        var chord = p1 - p0;
+        var sagitta = (onArc - p0).CrossProduct(chord.Normalize()).GetLength();
+        if (sagitta < 1.0 / 304.8)
+            return line;
+
+        return Arc.Create(p0, p1, onArc);
     }
 }

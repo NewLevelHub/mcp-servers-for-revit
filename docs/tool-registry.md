@@ -49,11 +49,11 @@ request instead of the full ~70.
 | Layer | Contents |
 |-------|----------|
 | **core** (always) | `get_current_view_info`, `get_current_view_elements`, `get_selected_elements`, `get_available_family_types`, `get_element_parameters`, `set_element_parameter`, `export_room_data`, `operate_element`, `delete_element`, `query_norm_rules` |
-| **modeling** | `get_cad_link_geometry` (DWG lines mm), `trace_walls_from_cad` (CAD→walls), `trace_openings_from_cad` (CAD→doors/windows on hosts), `trace_columns_from_cad` (CAD→columns), `create_line/point/surface_based_element`, `create_room`, `create_level`, `create_stair`, `create_railing`, `create_floor_opening`, `create_structural_framing_system` |
-| **annotation** | grids, dimensions, `tag_rooms` / `tag_walls`, text notes, detail lines/views, `color_splash` |
+| **modeling** | CAD tracing (`get_cad_link_geometry`, `trace_*_from_cad`), create_* elements, rooms/levels/stairs/railings/openings, **`ensure_wall_type`**, `ensure_opening_type` |
+| **annotation** | grids, dimensions, `tag_rooms` / `tag_walls`, text notes, detail lines/views/regions, **`create_node_detail`**, `place_detail_component`, `load_family`, `get_document_styles`, `color_splash` |
 | **schedules** | door/window/floor schedules, floor explication, TEP (`render_tep_table` / `export_tep_data`), schedule configure/validate |
 | **sheets** | `create_sheet`, `place_view_on_sheet`, `auto_layout_sheet`, `fit_schedule_to_sheet` |
-| **norms** | `run_norm_audit`, `check_*`, filled regions, annotate findings, geometry helpers (no `export_egress_graph`) |
+| **norms** | `run_norm_audit`, `check_*`, filled regions (`create_filled_regions` — room/plan only), annotate findings, geometry helpers (no `export_egress_graph`) |
 | **data** | other `export_*`, materials, `analyze_model_statistics`, `ai_element_filter`, `batch_execute`, `send_code_to_revit` |
 
 **How profiles are chosen**
@@ -95,8 +95,16 @@ These are **intentional**. MCP / Cursor may send the stable AI-facing name; Revi
 | `annotate_norm_findings` | `server-only` (+ plugin helper for in-Revit chat) | Composes `create_text_notes` / leaders |
 | `extract_norm_rules_from_pdf` / `query_norm_rules` / `save_norm_rule` | `server-only` | SQLite / PDF; no Revit call |
 | `fill_title_block` / `number_rooms` | `server-only` | Cursor MCP only; not in assistant `Definitions` — soft-error if invented |
-| `trace_walls_from_cad` | `server-only` | Orchestrates `get_cad_link_geometry` + geometry merge + `create_line_based_element` + verify (REV-140) |
-| `trace_openings_from_cad` | `server-only` | Orchestrates CAD opening detection + host match + `create_point_based_element` + verify (REV-147/148/149); category door\|window\|both. REV-149: doors come from DWG swing arcs (hinge = arc centre → exact centre, width, swing side and hand); `strictLocation` defaults on; verify reads the placed elements back instead of comparing the plan with itself |
+| `trace_walls_from_cad` | `server-only` | Orchestrates `get_cad_link_geometry` + geometry merge + `create_line_based_element` + verify (REV-140). REV-152/153: `openingGapMm` joins a run across a gap **only where the CAD shows a door or window**, so walls stay continuous and Revit cuts the openings instead of every door getting a stub host; verify samples along the axis instead of judging it by its midpoint |
+| `trace_openings_from_cad` | `server-only` | Orchestrates CAD opening detection + host match + `create_point_based_element` + verify (REV-147/148/149); category door\|window\|both. REV-149: doors come from DWG swing arcs (hinge = arc centre → exact centre, width, swing side and hand); `strictLocation` defaults on; verify reads the placed elements back instead of comparing the plan with itself. REV-152: the placed door's own plan swing arc is measured against the DWG arc — `swingMismatchCount` / `swingIssues`. REV-153: `exactTypes` calls `ensure_opening_type` so an opening is built at its traced width, not the nearest stock size |
+| `ensure_opening_type` | `command.json` | Returns a door/window `FamilySymbol` of a requested width/height, duplicating the source type and setting its size when the project has nothing that close (REV-153) |
+| `ensure_wall_type` | `command.json` | Duplicate a wall type and set core thickness (REV-154); also in assistant modeling profile |
+| `create_node_detail` | `commandset` | Drafting node from wall/floor CompoundStructure (junction/single); hatches, dimensions, labels |
+| `create_detail_regions` | `commandset` | Hatch arbitrary contours on drafting/detail/section/plan (`MCP-DR`); not room-based `create_filled_regions` |
+| `load_family` | `commandset` | `doc.LoadFamily` for `.rfa` paths on the Revit machine; returns loaded types for `place_detail_component` |
+| `create_detail_view` | `commandset` | Modes: `callout`, `drafting`, **`section`** (live cut; Fine draws compound layers) |
+| `create_detail_lines` | `commandset` | Polylines + arcs + `lineStyleName` (OST_Lines subcategories) |
+| `get_document_styles` | `commandset` | Also returns `lineStyles`, `filledRegionTypes`, `fillPatterns` (not only dimensions/grids/text) |
 | `trace_columns_from_cad` | `server-only` | Orchestrates `get_cad_link_geometry` + column symbol grouping + `create_point_based_element` with rotation (REV-149); rectangular and round columns. Columns must **not** go through `trace_walls_from_cad` — they come out as four stubs |
 | `check_door_width`, `check_tambour_size`, `check_room_norms`, `check_window_openings`, `check_vertical_circulation`, `check_accessibility`, `check_evacuation_distance` | `server-only` (or hybrid) | Often compose geometry/export commands + norm library; may not have a matching `check_*` in `command.json` |
 | `highlight_room_tags` | **removed / not implemented** | Do not advertise; do not add to `PRIORITY_TOOL_FILES` without a tool file |

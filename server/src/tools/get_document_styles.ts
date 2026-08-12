@@ -5,7 +5,7 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerGetDocumentStylesTool(server: McpServer) {
   server.tool(
     "get_document_styles",
-    "Return project annotation styles for AI-assisted drafting: dimension types, grid types, text note types (text height in mm), line patterns, and title block types. Graphics line styles are omitted by default (large); pass includeGraphicsStyles=true to include them.",
+    "Return project annotation and detailing styles: dimension types, grid types, text note types (text height in mm), line patterns, line styles (OST_Lines subcategories with weight, pattern and colour), filled region types, fill patterns (drafting/model hatches), and title block types. Call this before create_detail_lines (lineStyleName), create_detail_regions (filledRegionTypeName / fillPatternName) and create_node_detail. Raw GraphicsStyle entries are omitted by default (can be thousands); lineStyles is the short list you normally want.",
     {
       includeGraphicsStyles: z
         .boolean()

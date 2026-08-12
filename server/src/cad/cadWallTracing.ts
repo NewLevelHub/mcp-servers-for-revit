@@ -126,7 +126,17 @@ export function computeSegmentsBbox(
 export function filterSegmentsForWallTracing(
   segments: CadSegment[],
   options?: WallTracingFilterOptions
-): { segments: CadSegment[]; stats: { input: number; excluded: number } } {
+): {
+  segments: CadSegment[];
+  stats: {
+    input: number;
+    excluded: number;
+    /** REV-154: wall-length lines dropped only for running at an angle. */
+    nonOrthogonalDropped: number;
+    /** REV-154: distinct arcs dropped — curved walls the tracer cannot yet follow. */
+    arcsDropped: number;
+  };
+} {
   const patterns =
     options?.excludeCadLinkPatterns ?? DEFAULT_EXCLUDE_CAD_LINK_PATTERNS;
   const excludeLayers = options?.excludeLayers ?? [];
@@ -137,6 +147,8 @@ export function filterSegmentsForWallTracing(
   const orthoTol = options?.orthoTolDeg ?? 3;
 
   let excluded = 0;
+  let nonOrthogonalDropped = 0;
+  const droppedArcIds = new Set<string>();
   const kept: CadSegment[] = [];
 
   for (const seg of segments) {
@@ -163,11 +175,19 @@ export function filterSegmentsForWallTracing(
 
     if (minLen > 0 && segmentLength(seg) < minLen) {
       excluded++;
+      // A tessellated arc arrives as chords far shorter than any wall, so a curved wall is
+      // normally lost here rather than at the ortho check. Count the arc either way.
+      if (seg.arcId) droppedArcIds.add(seg.arcId);
       continue;
     }
 
     if (orthoOnly && !isOrthogonal(seg, orthoTol)) {
       excluded++;
+      // REV-154: count them separately. A diagonal wall is a wall — on «Проект1» this
+      // filter removed four of them (and left two doors without a host) without leaving a
+      // single trace in skippedByReason, because the drop happens before pairing.
+      if (seg.arcId) droppedArcIds.add(seg.arcId);
+      else nonOrthogonalDropped++;
       continue;
     }
 
@@ -179,7 +199,15 @@ export function filterSegmentsForWallTracing(
     kept.push(seg);
   }
 
-  return { segments: kept, stats: { input: segments.length, excluded } };
+  return {
+    segments: kept,
+    stats: {
+      input: segments.length,
+      excluded,
+      nonOrthogonalDropped,
+      arcsDropped: droppedArcIds.size,
+    },
+  };
 }
 
 export type BboxMm = {
@@ -219,6 +247,21 @@ export type TraceOptions = {
   dropThicknessOutliers?: boolean;
   /** Max ratio vs primary cluster thickness before an axis is an outlier. */
   maxThicknessRatio?: number;
+  /**
+   * REV-152: merge collinear axes across a gap this wide when both sides are paired and of
+   * equal thickness — the gaps DWG leaves for doors, windows and curtain mullions. Revit
+   * needs one continuous wall with the openings cut into it. 0 (default) keeps the old
+   * behaviour: only `mergeGapMm` is bridged.
+   */
+  openingGapMm?: number;
+  /**
+   * REV-153: centres of the openings found on the CAD (door swings, window leaves). When
+   * given, a gap is only bridged if an opening sits in it — so `openingGapMm` can be set
+   * wide enough for any door without also walling up a real passage. Without this list the
+   * tracer has to judge a gap by width alone, which walled over an open doorway on one plan
+   * and cost a verified axis (192.9 mm deviation).
+   */
+  openingPointsMm?: PointMm[];
 };
 
 export type TraceStats = {
@@ -230,6 +273,10 @@ export type TraceStats = {
   unpairedSkipped: number;
   skippedShort: number;
   thicknessOutliersDropped: number;
+  /** REV-152: collinear runs joined across a door/window/mullion gap (openingGapMm). */
+  bridgedOpeningGaps: number;
+  /** REV-152: jamb / outline caps recognised and left out of pairing — not missing walls. */
+  endCapsIgnored: number;
 };
 
 /**
@@ -282,6 +329,8 @@ type InternalSeg = {
   tMax: number;
   length: number;
   used: boolean;
+  /** REV-152: a jamb / outline cap, not a wall face — never paired, never reported. */
+  endCap?: boolean;
 };
 
 const DEG = Math.PI / 180;
@@ -444,6 +493,61 @@ function pairToCenterline(a: InternalSeg, b: InternalSeg): WallAxis {
   return axisFromParams(angle, offset, tMin, tMax, [a.cadId, b.cadId], thickness, true);
 }
 
+/**
+ * REV-152: marks the short segments that cap a wall outline — the jamb at every door and
+ * window, and the ends of a curtain-glazing rectangle.
+ *
+ * A DWG exported from Revit closes each wall's outline at every opening with a segment the
+ * thickness of the wall, running across it. The pairing pass has no partner for these (their
+ * true opposite is metres away), so all 27 of them on one flat surfaced as `gapTooWide` skips
+ * — and the hint they produced read "these are thick walls, retry with maxPairGapMm: 1120",
+ * which would have paired real walls across a metre of air. They are not missing walls; they
+ * are the drawing closing itself.
+ *
+ * Recognised by shape, not by layer: short, and both endpoints meet a roughly perpendicular
+ * neighbour — which is what a cap between two parallel faces looks like.
+ */
+function markEndCaps(
+  segments: InternalSeg[],
+  toleranceMm: number,
+  maxCapLengthMm: number
+): number {
+  const near = (ax: number, ay: number, bx: number, by: number) =>
+    Math.hypot(ax - bx, ay - by) <= toleranceMm;
+
+  let marked = 0;
+  for (const cap of segments) {
+    if (cap.length > maxCapLengthMm) continue;
+
+    let touchesStart = false;
+    let touchesEnd = false;
+    for (const other of segments) {
+      if (other === cap) continue;
+      // Perpendicular within the same tolerance the pairing pass uses for angles.
+      if (anglesMatch(cap.angle, other.angle, 3)) continue;
+      const perpendicular =
+        Math.abs(Math.abs(normalizeAngle(cap.angle - other.angle)) - Math.PI / 2) <
+        10 * DEG;
+      if (!perpendicular) continue;
+
+      for (const [px, py] of [
+        [other.x0, other.y0],
+        [other.x1, other.y1],
+      ] as const) {
+        if (near(cap.x0, cap.y0, px, py)) touchesStart = true;
+        if (near(cap.x1, cap.y1, px, py)) touchesEnd = true;
+      }
+      if (touchesStart && touchesEnd) break;
+    }
+
+    if (touchesStart && touchesEnd) {
+      cap.endCap = true;
+      marked++;
+    }
+  }
+  return marked;
+}
+
 function pairDoubleLines(
   segments: InternalSeg[],
   opts: Required<
@@ -473,6 +577,9 @@ function pairDoubleLines(
   for (let i = 0; i < sorted.length; i++) {
     const a = sorted[i];
     if (a.used) continue;
+    // Outline caps are not walls and have no partner by design — pairing them produces
+    // a phantom skip and a hint that would wreck the real walls.
+    if (a.endCap) continue;
 
     let bestJ = -1;
     let bestGap = Infinity;
@@ -481,7 +588,7 @@ function pairDoubleLines(
 
     const consider = (j: number) => {
       const b = sorted[j];
-      if (b.used) return;
+      if (b.used || b.endCap) return;
       if (!anglesMatch(a.angle, b.angle, angleTolDeg)) return;
 
       const gap = Math.abs(b.offset - a.offset);
@@ -662,11 +769,71 @@ export function filterThicknessOutliers(
   return { axes: kept, dropped, primaryThicknessMm };
 }
 
+/**
+ * REV-152: DWG breaks a wall run at every door and window, and at every curtain mullion.
+ * Revit wants the opposite — one continuous wall with the openings cut into it. Merging only
+ * across `mergeGapMm` (50 mm by default) therefore leaves a row of stubs with holes between
+ * them, which is why openings then had to invent bridge walls and why curtain runs came out
+ * in pieces. `openingGapMm` allows a wider jump, but only between two paired axes of the same
+ * thickness, so line noise never chains into a wall that is not there.
+ */
+function canBridgeOpening(
+  a: { thicknessMm?: number; paired?: boolean },
+  b: { thicknessMm?: number; paired?: boolean },
+  toleranceMm: number
+): boolean {
+  if (!a.paired || !b.paired) return false;
+  if (a.thicknessMm == null || b.thicknessMm == null) return false;
+  return Math.abs(a.thicknessMm - b.thicknessMm) <= Math.max(25, toleranceMm);
+}
+
+/**
+ * REV-153: is there an opening inside this gap? The gap runs along the shared axis from
+ * `gapFromT` to `gapToT` at perpendicular `offset`; an opening counts when its projection
+ * lands inside that stretch and it sits on this wall line rather than a parallel one.
+ */
+function openingInGap(
+  openings: Array<{ t: number; offset: number }> | undefined,
+  angle: number,
+  offset: number,
+  gapFromT: number,
+  gapToT: number,
+  offsetToleranceMm: number
+): boolean {
+  if (!openings || openings.length === 0) return false;
+  const lo = Math.min(gapFromT, gapToT);
+  const hi = Math.max(gapFromT, gapToT);
+  for (const o of openings) {
+    if (Math.abs(o.offset - offset) > offsetToleranceMm) continue;
+    if (o.t >= lo && o.t <= hi) return true;
+  }
+  return false;
+}
+
+/** Projects opening centres onto one axis direction so they can be tested against gaps. */
+function projectOpenings(
+  points: PointMm[] | undefined,
+  angle: number
+): Array<{ t: number; offset: number }> | undefined {
+  if (!points || points.length === 0) return undefined;
+  const dx = Math.cos(angle);
+  const dy = Math.sin(angle);
+  const nx = -dy;
+  const ny = dx;
+  return points.map((p) => ({
+    t: p.x * dx + p.y * dy,
+    offset: p.x * nx + p.y * ny,
+  }));
+}
+
 function mergeCollinearAxes(
   axes: WallAxis[],
   toleranceMm: number,
   mergeGapMm: number,
-  minWallLengthMm: number
+  minWallLengthMm: number,
+  openingGapMm = 0,
+  stats?: { bridgedOpeningGaps: number },
+  openingPointsMm?: PointMm[]
 ): WallAxis[] {
   if (axes.length <= 1) return axes;
 
@@ -715,6 +882,9 @@ function mergeCollinearAxes(
     let cur = { ...internals[i], cadIds: [...internals[i].cadIds] };
     used[i] = true;
 
+    // Openings are projected onto this run's direction once, not per candidate pair.
+    const projectedOpenings = projectOpenings(openingPointsMm, cur.angle);
+
     let changed = true;
     while (changed) {
       changed = false;
@@ -737,13 +907,35 @@ function mergeCollinearAxes(
           Math.abs(other.tMin - cur.tMax),
           Math.abs(cur.tMin - other.tMax)
         );
+
+        // A door-sized hole is still the same wall — but only across two confirmed
+        // double-line axes of equal thickness, and (when the caller knows where the
+        // openings are) only where one actually sits.
+        const gapLo = other.tMin > cur.tMax ? cur.tMax : other.tMax;
+        const gapHi = other.tMin > cur.tMax ? other.tMin : cur.tMin;
+        const bridgeable =
+          openingGapMm > mergeGapMm &&
+          canBridgeOpening(cur, other, toleranceMm) &&
+          (projectedOpenings === undefined ||
+            openingInGap(
+              projectedOpenings,
+              cur.angle,
+              cur.offset,
+              gapLo,
+              gapHi,
+              Math.max(toleranceMm, (cur.thicknessMm ?? 0) / 2 + toleranceMm)
+            ));
+        const allowedGap = bridgeable ? openingGapMm : mergeGapMm;
+
         const overlaps = !(
-          other.tMax < cur.tMin - mergeGapMm || other.tMin > cur.tMax + mergeGapMm
+          other.tMax < cur.tMin - allowedGap || other.tMin > cur.tMax + allowedGap
         );
         if (!overlaps) continue;
 
-        if (gap > mergeGapMm && other.tMin > cur.tMax) continue;
-        if (gap > mergeGapMm && cur.tMin > other.tMax) continue;
+        if (gap > allowedGap && other.tMin > cur.tMax) continue;
+        if (gap > allowedGap && cur.tMin > other.tMax) continue;
+
+        if (stats && gap > mergeGapMm) stats.bridgedOpeningGaps++;
 
         cur.tMin = Math.min(cur.tMin, other.tMin);
         cur.tMax = Math.max(cur.tMax, other.tMax);
@@ -875,6 +1067,12 @@ export function traceWallAxesFromCad(
   let unpairedSkipped = 0;
   const skipped: SkippedSegment[] = [];
 
+  // Caps are sized by the wall they close, so allow up to the widest pair we would accept.
+  const endCapsIgnored =
+    pairingMode === "centerline"
+      ? markEndCaps(internal, toleranceMm, maxPairGapMm)
+      : 0;
+
   if (pairingMode === "raw") {
     axes = internal
       .filter((s) => s.length >= minWallLengthMm)
@@ -894,7 +1092,16 @@ export function traceWallAxesFromCad(
   }
 
   const afterPairing = axes.length;
-  axes = mergeCollinearAxes(axes, toleranceMm, mergeGapMm, minWallLengthMm);
+  const mergeStats = { bridgedOpeningGaps: 0 };
+  axes = mergeCollinearAxes(
+    axes,
+    toleranceMm,
+    mergeGapMm,
+    minWallLengthMm,
+    options.openingGapMm ?? 0,
+    mergeStats,
+    options.openingPointsMm
+  );
   const afterMerge = axes.length;
 
   let thicknessOutliersDropped = 0;
@@ -931,6 +1138,8 @@ export function traceWallAxesFromCad(
       unpairedSkipped,
       skippedShort,
       thicknessOutliersDropped,
+      bridgedOpeningGaps: mergeStats.bridgedOpeningGaps,
+      endCapsIgnored,
     },
     thicknessClusters,
     skipped,
@@ -964,10 +1173,29 @@ export function buildTraceHints(
 
   const narrow = by("gapTooNarrow");
   if (narrow.length > 0) {
-    hints.push(
-      `${narrow.length} линий(и) ближе minPairGapMm=${opts.minPairGapMm} мм — ` +
-        "обычно это штриховка или обводка, а не грани стены. Проверьте слой."
-    );
+    // REV-152: consistent thin pairs over a long run are glazing, not hatching. Curtain
+    // walls on A-GLAZ-CURT come out ~25 mm apart and the blanket "проверьте слой" sent
+    // every витраж to the bin — the whole layer traced to zero axes.
+    const gaps = narrow
+      .map((s) => s.nearestParallelGapMm)
+      .filter((g): g is number => g != null)
+      .sort((a, b) => a - b);
+    const consistent =
+      gaps.length >= 2 && gaps[gaps.length - 1] - gaps[0] <= 10;
+
+    if (consistent) {
+      const suggested = Math.max(5, Math.floor(gaps[0]) - 5);
+      hints.push(
+        `${narrow.length} линий(и) идут парами на ${Math.round(gaps[0])} мм — это тонкое ` +
+          `остекление (витраж / светопрозрачная стена), а не штриховка. Повторите с ` +
+          `minPairGapMm: ${suggested} и типом «Витраж».`
+      );
+    } else {
+      hints.push(
+        `${narrow.length} линий(и) ближе minPairGapMm=${opts.minPairGapMm} мм — ` +
+          "обычно это штриховка или обводка, а не грани стены. Проверьте слой."
+      );
+    }
   }
 
   const taken = by("partnerTaken");
@@ -1028,6 +1256,48 @@ export type VerifyResult = {
  * For paired walls, expected distance to nearest face ≈ thickness/2 —
  * do not fail thick walls just because default tolerance is 50 mm.
  */
+/**
+ * Distance from points along the axis to the nearest CAD line. Endpoints are left out —
+ * a wall's ends sit in junctions where the nearest line is a corner, not a face.
+ */
+function sampleDistancesToCad(
+  axis: WallAxis,
+  cadSegments: CadSegment[]
+): number[] {
+  const SAMPLE_STEP_MM = 300;
+  const MIN_SAMPLES = 5;
+  const MAX_SAMPLES = 25;
+
+  const count = Math.min(
+    MAX_SAMPLES,
+    Math.max(MIN_SAMPLES, Math.round(axis.lengthMm / SAMPLE_STEP_MM))
+  );
+
+  const out: number[] = [];
+  for (let s = 0; s < count; s++) {
+    // (s + 0.5) / count keeps every sample strictly inside the axis.
+    const t = (s + 0.5) / count;
+    const px = axis.startMm.x + (axis.endMm.x - axis.startMm.x) * t;
+    const py = axis.startMm.y + (axis.endMm.y - axis.startMm.y) * t;
+
+    let minDist = Infinity;
+    for (const seg of cadSegments) {
+      const d = pointToSegmentDist(
+        px,
+        py,
+        seg.startMm.x,
+        seg.startMm.y,
+        seg.endMm.x,
+        seg.endMm.y
+      );
+      if (d < minDist) minDist = d;
+    }
+    if (Number.isFinite(minDist)) out.push(minDist);
+  }
+
+  return out;
+}
+
 export function verifyAxesAgainstCad(
   axes: WallAxis[],
   cadSegments: CadSegment[],
@@ -1039,38 +1309,38 @@ export function verifyAxesAgainstCad(
 
   for (let i = 0; i < axes.length; i++) {
     const axis = axes[i];
-    const mx = (axis.startMm.x + axis.endMm.x) / 2;
-    const my = (axis.startMm.y + axis.endMm.y) / 2;
 
-    let minDist = Infinity;
-    for (const seg of cadSegments) {
-      const d = pointToSegmentDist(
-        mx,
-        my,
-        seg.startMm.x,
-        seg.startMm.y,
-        seg.endMm.x,
-        seg.endMm.y
-      );
-      if (d < minDist) minDist = d;
-    }
+    // REV-153: sample along the axis instead of trusting its midpoint. A 4.8 m wall used to
+    // be judged by one point: land that point on a jamb or a T-junction and a perfectly good
+    // wall was condemned (192.9 mm on «Проект1»), taking the door hosted on it with it.
+    // Conversely a single good midpoint hid axes that drifted off the underlay at one end.
+    const samples = sampleDistancesToCad(axis, cadSegments);
+    if (samples.length === 0) continue;
 
-    if (!Number.isFinite(minDist)) minDist = 0;
-    maxDev = Math.max(maxDev, minDist);
-    sumDev += minDist;
+    const sorted = [...samples].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    const worst = sorted[sorted.length - 1];
+
+    maxDev = Math.max(maxDev, worst);
+    sumDev += median;
 
     const expectedHalf =
       axis.thicknessMm != null && axis.thicknessMm > 0
         ? axis.thicknessMm / 2
         : 0;
-    const allowed = Math.max(toleranceMm, expectedHalf + toleranceMm * 0.5);
-    // Distance from centerline to face should be near half-thickness.
-    const residual = Math.abs(minDist - expectedHalf);
-    const failBy =
-      expectedHalf > 0 ? residual > toleranceMm && minDist > allowed : minDist > toleranceMm;
 
-    if (failBy) {
-      failedAxes.push({ index: i, deviationMm: round1(minDist) });
+    // A sample is good when the centreline sits about half a thickness off the nearest face.
+    const isOff = (d: number) =>
+      expectedHalf > 0
+        ? Math.abs(d - expectedHalf) > toleranceMm &&
+          d > Math.max(toleranceMm, expectedHalf + toleranceMm * 0.5)
+        : d > toleranceMm;
+
+    const offCount = samples.filter(isOff).length;
+    // One bad sample out of a dozen is a junction, not a misplaced wall. A quarter of them
+    // off means the axis really does not follow the drawing.
+    if (offCount > Math.max(1, Math.floor(samples.length * 0.25))) {
+      failedAxes.push({ index: i, deviationMm: round1(median) });
     }
   }
 

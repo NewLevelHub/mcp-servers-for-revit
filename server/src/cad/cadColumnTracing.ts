@@ -148,29 +148,30 @@ export function filterSegmentsForColumns(
 }
 
 /**
- * Group segments into column symbols.
- * Prefers DWG block instances (exact); falls back to proximity clustering.
+ * Group segments into column symbols by proximity, never joining segments that came from
+ * different DWG blocks.
+ *
+ * REV-154: this used to take one block instance to mean one column, and only fell back to
+ * proximity for segments outside any block. That holds when each column symbol is its own
+ * block — but a DWG exported whole (as Revit does) is a single nested block, so all twelve
+ * segments of three separate 800×800 columns landed in one group whose extent then failed
+ * the size check. Three columns became none. Proximity decides the grouping; the block id
+ * only keeps distinct blocks apart.
  */
 export function groupColumnSegments(
   segments: CadSegment[],
   clusterGapMm = 120
 ): CadSegment[][] {
-  const byBlock = new Map<number, CadSegment[]>();
-  const loose: CadSegment[] = [];
-  for (const seg of segments) {
-    if (seg.blockIndex != null && seg.blockIndex >= 0) {
-      const list = byBlock.get(seg.blockIndex) ?? [];
-      list.push(seg);
-      byBlock.set(seg.blockIndex, list);
-    } else {
-      loose.push(seg);
-    }
-  }
+  const loose = segments;
+  if (loose.length === 0) return [];
 
-  const groups = [...byBlock.values()];
-  if (loose.length === 0) return groups;
+  const sameBlock = (a: CadSegment, b: CadSegment) => {
+    const ba = a.blockIndex ?? -1;
+    const bb = b.blockIndex ?? -1;
+    // Loose geometry (-1) may join anything; two named blocks must match.
+    return ba < 0 || bb < 0 || ba === bb;
+  };
 
-  // Union-find on endpoint proximity for DWGs without block instances.
   const parent = loose.map((_, i) => i);
   const find = (i: number): number => {
     let r = i;
@@ -193,6 +194,7 @@ export function groupColumnSegments(
     for (let j = i + 1; j < loose.length; j++) {
       const a = loose[i];
       const b = loose[j];
+      if (!sameBlock(a, b)) continue;
       const pairs: Array<[PointMm, PointMm]> = [
         [a.startMm, b.startMm],
         [a.startMm, b.endMm],
@@ -213,7 +215,7 @@ export function groupColumnSegments(
     looseGroups.set(r, list);
   }
 
-  return [...groups, ...looseGroups.values()];
+  return [...looseGroups.values()];
 }
 
 /** Normalise a rectangle rotation: a square/rect repeats every 90°. */

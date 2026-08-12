@@ -25,6 +25,16 @@ public class DocumentStylesResult
     [JsonProperty("graphicsStyles")]
     public List<GraphicsStyleInfo> GraphicsStyles { get; set; } = new();
 
+    /// <summary>Subcategories of OST_Lines — what "line style" means in the Revit UI.</summary>
+    [JsonProperty("lineStyles")]
+    public List<LineStyleInfo> LineStyles { get; set; } = new();
+
+    [JsonProperty("filledRegionTypes")]
+    public List<FilledRegionTypeStyleInfo> FilledRegionTypes { get; set; } = new();
+
+    [JsonProperty("fillPatterns")]
+    public List<FillPatternStyleInfo> FillPatterns { get; set; } = new();
+
     [JsonProperty("titleBlocks")]
     public List<TitleBlockStyleInfo> TitleBlocks { get; set; } = new();
 }
@@ -63,6 +73,45 @@ public class GraphicsStyleInfo : NamedStyleInfo
 
     [JsonProperty("category")]
     public string Category { get; set; } = string.Empty;
+}
+
+public class LineStyleInfo : NamedStyleInfo
+{
+    /// <summary>Line weight 1..16, null when the style does not define one.</summary>
+    [JsonProperty("lineWeight")]
+    public int? LineWeight { get; set; }
+
+    [JsonProperty("linePatternName")]
+    public string LinePatternName { get; set; } = string.Empty;
+
+    /// <summary>Colour as #RRGGBB.</summary>
+    [JsonProperty("color")]
+    public string Color { get; set; } = string.Empty;
+}
+
+public class FilledRegionTypeStyleInfo : NamedStyleInfo
+{
+    [JsonProperty("foregroundPatternName")]
+    public string ForegroundPatternName { get; set; } = string.Empty;
+
+    [JsonProperty("backgroundPatternName")]
+    public string BackgroundPatternName { get; set; } = string.Empty;
+
+    [JsonProperty("foregroundColor")]
+    public string ForegroundColor { get; set; } = string.Empty;
+
+    [JsonProperty("isMasking")]
+    public bool IsMasking { get; set; }
+}
+
+public class FillPatternStyleInfo : NamedStyleInfo
+{
+    /// <summary>Drafting patterns scale with the view, model patterns stay fixed in the model.</summary>
+    [JsonProperty("target")]
+    public string Target { get; set; } = string.Empty;
+
+    [JsonProperty("isSolidFill")]
+    public bool IsSolidFill { get; set; }
 }
 
 public class TitleBlockStyleInfo

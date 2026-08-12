@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI-ассистент в Revit — коротко</title>
+  <style>
+    :root {
+      --navy: #1a2744;
+      --steel: #2f5d8a;
+      --accent: #3d7ea6;
+      --soft: #eef3f8;
+      --line: #d5dee8;
+      --muted: #5b6b7c;
+      --bg: #f6f8fb;
+      --ph: #dce6f0;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--navy);
+      line-height: 1.45;
+    }
+    .wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 28px 20px 56px;
+    }
+    header {
+      background: linear-gradient(145deg, #1a2744 0%, #2f5d8a 70%, #3d7ea6 100%);
+      color: #fff;
+      border-radius: 18px;
+      padding: 28px 26px;
+      margin-bottom: 22px;
+    }
+    header h1 {
+      margin: 0 0 8px;
+      font-size: 1.55rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    header p {
+      margin: 0;
+      opacity: 0.9;
+      font-size: 1rem;
+      max-width: 34em;
+    }
+    .badge {
+      display: inline-block;
+      background: rgba(255,255,255,0.16);
+      border: 1px solid rgba(255,255,255,0.28);
+      border-radius: 999px;
+      padding: 4px 12px;
+      font-size: 0.78rem;
+      margin-bottom: 12px;
+    }
+    section {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 22px 22px 18px;
+      margin-bottom: 16px;
+    }
+    h2 {
+      margin: 0 0 10px;
+      font-size: 1.15rem;
+    }
+    h3 {
+      margin: 16px 0 8px;
+      font-size: 0.98rem;
+      color: var(--steel);
+    }
+    p, li { color: #2a3648; font-size: 0.97rem; }
+    ul { padding-left: 1.2em; margin: 8px 0 0; }
+    li { margin: 4px 0; }
+    .lead { font-size: 1.05rem; color: var(--navy); }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 12px;
+    }
+    @media (max-width: 640px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+    .ph {
+      background: var(--ph);
+      border: 2px dashed #a8b8c9;
+      border-radius: 12px;
+      min-height: 160px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 6px;
+    }
+    .ph.wide { min-height: 200px; }
+    .ph img {
+      width: 100%;
+      height: auto;
+      border-radius: 8px;
+      display: block;
+    }
+    .ph-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--accent);
+    }
+    .ph-title {
+      font-weight: 650;
+      font-size: 0.92rem;
+      color: var(--navy);
+    }
+    .ph-hint {
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 10px 0 4px;
+    }
+    .chip {
+      background: var(--soft);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--navy);
+    }
+    .steps {
+      counter-reset: step;
+      list-style: none;
+      padding: 0;
+      margin: 10px 0 0;
+    }
+    .steps li {
+      counter-increment: step;
+      position: relative;
+      padding: 10px 12px 10px 48px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      margin-bottom: 8px;
+      background: #fafcfe;
+    }
+    .steps li::before {
+      content: counter(step);
+      position: absolute;
+      left: 12px;
+      top: 10px;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: var(--navy);
+      color: #fff;
+      font-size: 0.8rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .note {
+      background: #fff8e8;
+      border: 1px solid #e8c96a;
+      border-radius: 12px;
+      padding: 12px 14px;
+      font-size: 0.9rem;
+      color: #5a4a18;
+      margin-top: 12px;
+    }
+    footer {
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.82rem;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="badge">Revit · внутри программы · без Cursor</div>
+      <h1>AI-ассистент в Revit</h1>
+      <p>Маленький чат справа в окне Revit. Пишешь обычными словами — он сам делает работу в модели: оси, размеры, помещения, проверку норм.</p>
+    </header>
+
+    <!-- 1. Что это -->
+    <section>
+      <h2>1. Что это такое?</h2>
+      <p class="lead">Это не отдельная программа. Это <strong>чат внутри Revit</strong>, как мессенджер рядом с чертежом.</p>
+      <ul>
+        <li>Открывается кнопкой <strong>«AI-ассистент»</strong> на ленте.</li>
+        <li>Пишешь запрос по-русски — «проставь оси», «проверь нормы».</li>
+        <li>Ассистент сам нажимает нужные команды в модели и отвечает коротко, что сделал.</li>
+      </ul>
+
+      <div class="grid" style="margin-top:14px">
+        <div class="ph">
+          <!-- ВСТАВИТЬ ФОТО: photo-01-ribbon.png -->
+          <div class="ph-label">Фото 1</div>
+          <div class="ph-title">Кнопка на ленте</div>
+          <div class="ph-hint">Скрин вкладки «Надстройки»: кнопки AI-ассистент, Revit MCP Switch, Настройки. Обведи «AI-ассистент».</div>
+        </div>
+        <div class="ph">
+          <!-- ВСТАВИТЬ ФОТО: photo-02-chat-pane.png -->
+          <div class="ph-label">Фото 2</div>
+          <div class="ph-title">Открытый чат</div>
+          <div class="ph-hint">Скрин панели чата справа: поле ввода, чипы-кнопки снизу, пустой или с приветствием.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. Что сделали -->
+    <section>
+      <h2>2. Какая работа уже сделана</h2>
+      <p>Собрали рабочий пилот ассистента прямо в Revit:</p>
+      <ul>
+        <li>Панель чата (dockable) — открывается и закрывается с ленты.</li>
+        <li>Подключение к ИИ-модели через ключ организации (настраивает IT один раз).</li>
+        <li>Готовые сценарии одной кнопкой — «чипы».</li>
+        <li>Ассистент умеет <strong>менять модель</strong>, а не только писать текст: создаёт элементы, ставит размеры, красит нарушения.</li>
+        <li>Можно прикреплять файлы / скрины к сообщению.</li>
+      </ul>
+    </section>
+
+    <!-- 3. Что умеет сейчас -->
+    <section>
+      <h2>3. Что можно делать прямо сейчас</h2>
+      <p>Три готовых сценария (кнопки внизу чата):</p>
+      <div class="chips">
+        <span class="chip">▦ Оси и размеры</span>
+        <span class="chip">⌂ Rooms и марки</span>
+        <span class="chip">✓ Проверить нормы</span>
+      </div>
+
+      <h3>Оси и размеры</h3>
+      <p>На активном плане: ставит координационные оси по несущим стенам и внешние размеры по габариту здания.</p>
+
+      <h3>Rooms и марки</h3>
+      <p>Проверяет границы помещений у стен, создаёт недостающие комнаты и ставит марки с площадью.</p>
+
+      <h3>Проверить нормы</h3>
+      <p>Смотрит этаж по нормам (СП РК), подсвечивает нарушения красным и подписывает, почему это нарушение.</p>
+
+      <p style="margin-top:12px">Можно и <strong>без кнопок</strong> — просто написать свой запрос своими словами.</p>
+
+      <div class="grid">
+        <div class="ph">
+          <!-- ВСТАВИТЬ ФОТО: photo-03-chips.png -->
+          <div class="ph-label">Фото 3</div>
+          <div class="ph-title">Три чипа в чате</div>
+          <div class="ph-hint">Крупный скрин нижней части чата с тремя кнопками-сценариями.</div>
+        </div>
+        <div class="ph">
+          <!-- ВСТАВИТЬ ФОТО: photo-04-dialog.png -->
+          <div class="ph-label">Фото 4</div>
+          <div class="ph-title">Пример диалога</div>
+          <div class="ph-hint">Чат: твой запрос + короткий ответ ассистента («сделал оси 1–N / А–Д, размеры…»).</div>
+        </div>
+      </div>
+
+      <div class="ph wide" style="margin-top:12px">
+        <!-- ВСТАВИТЬ ФОТО: photo-05-result-plan.png -->
+        <div class="ph-label">Фото 5</div>
+        <div class="ph-title">Результат на плане</div>
+        <div class="ph-hint">План этажа после сценария: оси + размеры <em>или</em> помещения с марками <em>или</em> красные заливки нарушений. Лучше один понятный «до/после» не нужен — достаточно «после».</div>
+      </div>
+    </section>
+
+    <!-- 4. Как помогает -->
+    <section>
+      <h2>4. Как ИИ помогает в работе</h2>
+      <ul>
+        <li><strong>Меньше кликов.</strong> Вместо десятков ручных действий — одна фраза или одна кнопка.</li>
+        <li><strong>Рядом с чертежом.</strong> Не нужно уходить в другой чат или программу.</li>
+        <li><strong>По правилам проекта.</strong> Оси, размеры, марки — в стиле, который уже заложен в шаблоне.</li>
+        <li><strong>Нормы наглядно.</strong> Не только «список в тексте», а цвет и выноски прямо на плане.</li>
+        <li><strong>Понятный отчёт.</strong> В конце пишет коротко: что сделал и сколько получилось.</li>
+      </ul>
+
+      <div class="ph wide" style="margin-top:12px">
+        <!-- ВСТАВИТЬ ФОТО: photo-06-norms.png -->
+        <div class="ph-label">Фото 6 (по желанию)</div>
+        <div class="ph-title">Нормы — красные зоны</div>
+        <div class="ph-hint">План с красной заливкой помещений / выносками после «Проверить нормы». Самый «вау»-скрин для руководства.</div>
+      </div>
+    </section>
+
+    <!-- 5. Как пользоваться -->
+    <section>
+      <h2>5. Как пользоваться (30 секунд)</h2>
+      <ol class="steps">
+        <li>Открой проект и нужный <strong>план этажа</strong>.</li>
+        <li>На ленте нажми <strong>AI-ассистент</strong>.</li>
+        <li>Если сервер выключен — нажми <strong>«Включить»</strong> в чате (или Open Server).</li>
+        <li>Нажми готовый чип <em>или</em> напиши запрос своими словами.</li>
+        <li>Подожди ответ и посмотри результат на плане.</li>
+      </ol>
+      <div class="note">
+        Важно: при первом запуске Revit может спросить про add-in — выбирай <strong>«Всегда загружать»</strong>, иначе кнопки на ленте не появятся.
+      </div>
+    </section>
+
+    <!-- 6. Итог -->
+    <section>
+      <h2>6. Одной фразой</h2>
+      <p class="lead">Архитектор говорит по-русски → ИИ делает типовые действия в Revit за него → на плане сразу видно результат.</p>
+    </section>
+
+    <footer>
+      Внутренняя мини-презентация · AI-чат в Revit · вставь фото вместо серых блоков
+    </footer>
+  </div>
+
+  <!--
+  ============================================================
+  ЧТО ВСТАВИТЬ (скопируй файлы рядом с этим HTML или замени src)
+
+  photo-01-ribbon.png
+    Лента «Надстройки» с панелью Revit MCP Plugin.
+    Обязательно видно кнопку «AI-ассистент».
+
+  photo-02-chat-pane.png
+    Открытая панель чата справа в Revit (весь виджет).
+
+  photo-03-chips.png
+    Крупно три чипа: «Оси и размеры», «Rooms и марки», «Проверить нормы».
+
+  photo-04-dialog.png
+    2–4 пузыря чата: запрос пользователя + короткий ответ ассистента.
+
+  photo-05-result-plan.png
+    План этажа с результатом (оси+размеры ИЛИ rooms+марки).
+
+  photo-06-norms.png  (опционально)
+    План с красными заливками / выносками после проверки норм.
+
+  Как вставить: замени серый блок на, например:
+    <img src="photo-01-ribbon.png" alt="Кнопка AI-ассистент на ленте" />
+  ============================================================
+  -->
+</body>
+</html>

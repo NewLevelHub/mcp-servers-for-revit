@@ -39,6 +39,16 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "ensure_opening_type",
+      "description": "Подобрать типоразмер двери/окна по ширине, создав его дублированием при отсутствии",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "ensure_wall_type",
+      "description": "Подобрать тип стены по толщине, создав его дублированием при отсутствии",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "create_line_based_element",
       "description": "Создать линейные элементы (стены, балки)",
       "assemblyPath": "RevitMCPCommandSet.dll"
@@ -290,7 +300,22 @@
     },
     {
       "commandName": "create_detail_view",
-      "description": "Создать узел: вырез с плана или чертёжный вид с масштабом и детализацией",
+      "description": "Создать узел: вырез с плана, разрез или чертёжный вид с масштабом и детализацией",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "create_detail_regions",
+      "description": "Штриховка по произвольному контуру на чертёжном виде/узле (слои пирога)",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "create_node_detail",
+      "description": "Сгенерировать узел по слоям типа стены/пола: контуры, штриховки, размеры, подписи",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "load_family",
+      "description": "Загрузить семейства .rfa в проект и активировать типоразмеры",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {

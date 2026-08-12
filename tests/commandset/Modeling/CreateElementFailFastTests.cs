@@ -1,8 +1,12 @@
 using Autodesk.Revit.DB;
+// RevitAPIUI also carries an internal UIApplication in the global namespace, which an
+// unqualified name binds to first, so the public one has to be brought in explicitly.
+using Autodesk.Revit.UI;
 using Nice3point.TUnit.Revit;
 using Nice3point.TUnit.Revit.Executors;
 using RevitMCPCommandSet.Models.Common;
 using RevitMCPCommandSet.Services;
+using RevitMCPCommandSet.Utils;
 using TUnit.Core;
 using TUnit.Core.Executors;
 
@@ -81,7 +85,7 @@ public class CreateElementFailFastTests : RevitApiTest
 
     private static UIApplication RequireUiApp()
     {
-        return Application.ActiveUIDocument?.Application
+        return Nice3point.Revit.Toolkit.Context.UiApplication
                ?? throw new InvalidOperationException("No UIApplication");
     }
 
@@ -163,7 +167,7 @@ public class CreateElementFailFastTests : RevitApiTest
             new()
             {
                 Category = "OST_Doors",
-                TypeId = _doorType.Id.IntegerValue,
+                TypeId = _doorType.Id.GetIntValue(),
                 LocationPoint = new JZPoint(X0 + 1000, Y0 - 40000, _levelMm),
                 Width = 900,
                 Height = 2100,
@@ -185,7 +189,7 @@ public class CreateElementFailFastTests : RevitApiTest
         await Assert.That(_basicWallType).IsNotNull();
         if (_basicWallType == null) return;
 
-        var typeId = _basicWallType.Id.IntegerValue;
+        var typeId = _basicWallType.Id.GetIntValue();
         var y = Y0 - 50000;
         var handler = new CreateLineElementEventHandler();
         handler.SetParameters(new List<LineElement>
@@ -209,7 +213,7 @@ public class CreateElementFailFastTests : RevitApiTest
         await Assert.That(_floorType).IsNotNull();
         if (_basicWallType == null || _floorType == null) return;
 
-        var wallTypeId = _basicWallType.Id.IntegerValue;
+        var wallTypeId = _basicWallType.Id.GetIntValue();
         var x1 = X0 + Width;
         var y1 = Y0 + Depth;
         var z = _levelMm;
@@ -235,7 +239,7 @@ public class CreateElementFailFastTests : RevitApiTest
         {
             var wall = _doc.GetElement(new ElementId(id)) as Wall;
             await Assert.That(wall).IsNotNull();
-            await Assert.That(wall!.WallType.Id.IntegerValue).IsEqualTo(wallTypeId);
+            await Assert.That(wall!.WallType.Id.GetIntValue()).IsEqualTo(wallTypeId);
             await Assert.That(wall.WallType.Kind).IsNotEqualTo(WallKind.Curtain);
         }
 
@@ -245,7 +249,7 @@ public class CreateElementFailFastTests : RevitApiTest
             new()
             {
                 Category = "OST_Floors",
-                TypeId = _floorType.Id.IntegerValue,
+                TypeId = _floorType.Id.GetIntValue(),
                 Boundary = new JZFace
                 {
                     OuterLoop = new List<JZLine>
@@ -274,7 +278,7 @@ public class CreateElementFailFastTests : RevitApiTest
                 new()
                 {
                     Category = "OST_Doors",
-                    TypeId = _doorType.Id.IntegerValue,
+                    TypeId = _doorType.Id.GetIntValue(),
                     LocationPoint = new JZPoint(X0 + Width / 2, Y0, z),
                     Width = 900,
                     Height = 2100,
@@ -288,7 +292,7 @@ public class CreateElementFailFastTests : RevitApiTest
             await Assert.That(doorHandler.Result.Success).IsTrue();
             var door = _doc.GetElement(new ElementId(doorHandler.Result.Response![0])) as FamilyInstance;
             await Assert.That(door).IsNotNull();
-            await Assert.That(door!.Host?.Id.IntegerValue).IsEqualTo(southWallId);
+            await Assert.That(door!.Host?.Id.GetIntValue()).IsEqualTo(southWallId);
         }
 
         if (_windowType != null)
@@ -300,7 +304,7 @@ public class CreateElementFailFastTests : RevitApiTest
                 new()
                 {
                     Category = "OST_Windows",
-                    TypeId = _windowType.Id.IntegerValue,
+                    TypeId = _windowType.Id.GetIntValue(),
                     LocationPoint = new JZPoint(x1, Y0 + Depth / 2, z),
                     Width = 900,
                     Height = 1500,
@@ -314,7 +318,7 @@ public class CreateElementFailFastTests : RevitApiTest
             await Assert.That(windowHandler.Result.Success).IsTrue();
             var window = _doc.GetElement(new ElementId(windowHandler.Result.Response![0])) as FamilyInstance;
             await Assert.That(window).IsNotNull();
-            await Assert.That(window!.Host?.Id.IntegerValue).IsEqualTo(eastWallId);
+            await Assert.That(window!.Host?.Id.GetIntValue()).IsEqualTo(eastWallId);
         }
     }
 }

@@ -30,8 +30,20 @@ export function registerCreateLineBasedElementTool(server: McpServer) {
                   y: z.number().describe("Y coordinate of end point"),
                   z: z.number().describe("Z coordinate of end point"),
                 }),
+                pointOnCurve: z
+                  .object({
+                    x: z.number(),
+                    y: z.number(),
+                    z: z.number(),
+                  })
+                  .optional()
+                  .describe(
+                    "Optional third point (mm) the location curve passes through. Set it to create a curved wall — Revit builds an arc through p0, pointOnCurve and p1. Walls only; ignored for ducts and family instances."
+                  ),
               })
-              .describe("The line defining the element's location"),
+              .describe(
+                "The line defining the element's location. Add pointOnCurve for an arc (curved wall)."
+              ),
             thickness: z
               .number()
               .describe(

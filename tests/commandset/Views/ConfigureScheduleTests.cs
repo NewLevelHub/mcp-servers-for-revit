@@ -3,6 +3,7 @@ using Nice3point.TUnit.Revit;
 using Nice3point.TUnit.Revit.Executors;
 using RevitMCPCommandSet.Models.Views;
 using RevitMCPCommandSet.Services.Views;
+using RevitMCPCommandSet.Utils;
 using TUnit.Core;
 using TUnit.Core.Executors;
 
@@ -53,13 +54,13 @@ public class ConfigureScheduleTests : RevitApiTest
 
         var info = new ConfigureScheduleInfo
         {
-            ScheduleId = schedule.Id.IntegerValue,
+            ScheduleId = schedule.Id.GetIntValue(),
             ShowTitle = false
         };
 
         var handler = new ConfigureScheduleEventHandler();
         handler.SetParameters(info);
-        handler.Execute(Application.ActiveUIDocument?.Application
+        handler.Execute(Nice3point.Revit.Toolkit.Context.UiApplication
                         ?? throw new InvalidOperationException("No UIApplication"));
 
         await Assert.That(handler.ResultInfo.Success).IsTrue();
@@ -80,7 +81,7 @@ public class ConfigureScheduleTests : RevitApiTest
 
         var handler = new ConfigureScheduleEventHandler();
         handler.SetParameters(info);
-        handler.Execute(Application.ActiveUIDocument?.Application
+        handler.Execute(Nice3point.Revit.Toolkit.Context.UiApplication
                         ?? throw new InvalidOperationException("No UIApplication"));
 
         await Assert.That(handler.ResultInfo.Success).IsTrue();
@@ -95,7 +96,7 @@ public class ConfigureScheduleTests : RevitApiTest
 
         var handler = new ConfigureScheduleEventHandler();
         handler.SetParameters(info);
-        handler.Execute(Application.ActiveUIDocument?.Application
+        handler.Execute(Nice3point.Revit.Toolkit.Context.UiApplication
                         ?? throw new InvalidOperationException("No UIApplication"));
 
         await Assert.That(handler.ResultInfo.Success).IsFalse();
@@ -124,7 +125,7 @@ public class ConfigureScheduleTests : RevitApiTest
 
         var info = new FitScheduleToSheetInfo
         {
-            ScheduleId = schedule.Id.IntegerValue,
+            ScheduleId = schedule.Id.GetIntValue(),
             MaxWidthMm = 277,
             AllowHideColumns = false,
             AllowNarrowColumns = true,
@@ -133,7 +134,7 @@ public class ConfigureScheduleTests : RevitApiTest
 
         var handler = new FitScheduleToSheetEventHandler();
         handler.SetParameters(info);
-        handler.Execute(Application.ActiveUIDocument?.Application
+        handler.Execute(Nice3point.Revit.Toolkit.Context.UiApplication
                         ?? throw new InvalidOperationException("No UIApplication"));
 
         await Assert.That(handler.ResultInfo.Success).IsTrue();
@@ -162,13 +163,13 @@ public class ConfigureScheduleTests : RevitApiTest
 
         var info = new FitScheduleToSheetInfo
         {
-            ScheduleId = schedule.Id.IntegerValue,
+            ScheduleId = schedule.Id.GetIntValue(),
             MaxWidthMm = 277
         };
 
         var handler = new FitScheduleToSheetEventHandler();
         handler.SetParameters(info);
-        handler.Execute(Application.ActiveUIDocument?.Application
+        handler.Execute(Nice3point.Revit.Toolkit.Context.UiApplication
                         ?? throw new InvalidOperationException("No UIApplication"));
 
         await Assert.That(handler.ResultInfo.Success).IsTrue();

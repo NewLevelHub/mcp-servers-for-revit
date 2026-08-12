@@ -114,6 +114,8 @@ namespace RevitMCPCommandSet.Services
                         bool isHostedOpening = builtInCategory == BuiltInCategory.OST_Doors
                             || builtInCategory == BuiltInCategory.OST_Windows;
                         Element explicitHost = null;
+                        // Also read after creation, to size the swing arc we look for (REV-152).
+                        double doorWidthFt = data.Width > 0 ? data.Width / 304.8 : 900.0 / 304.8;
 
                         if (isHostedOpening)
                         {
@@ -135,7 +137,6 @@ namespace RevitMCPCommandSet.Services
                             // overwrite LocationPoint first, auto-flip always sees side≈0.
                             XYZ requestedLocPt = JZPoint.ToXYZ(data.LocationPoint);
                             XYZ locPt = requestedLocPt;
-                            double doorWidthFt = data.Width > 0 ? data.Width / 304.8 : 900.0 / 304.8;
 
                             // REV-149: in strict mode the caller traced the point off a DWG
                             // underlay — never re-host it onto a neighbouring wall.
@@ -167,10 +168,13 @@ namespace RevitMCPCommandSet.Services
                             // Honor explicit locationPoint. Only auto-space (1/3, 2/3…) when
                             // several openings share one host in the same request — never force
                             // mid-wall for a single door (that put doors on partition T-junctions).
-                            double spanFraction = totalOnWall <= 1
+                            // REV-152: strictLocation means the caller traced the point off a DWG
+                            // and auto-spacing would move it. Without this the CAD tools had to
+                            // send one opening per call to dodge the reshuffle.
+                            bool preferRequested = totalOnWall <= 1 || data.StrictLocation;
+                            double spanFraction = preferRequested
                                 ? 0.5
                                 : (slot + 1.0) / (totalOnWall + 1.0);
-                            bool preferRequested = totalOnWall <= 1;
 
                             double strictTolFt = data.StrictToleranceMm > 0
                                 ? data.StrictToleranceMm / 304.8
@@ -199,7 +203,12 @@ namespace RevitMCPCommandSet.Services
 
                             data.LocationPoint = new JZPoint(
                                 locPt.X * 304.8, locPt.Y * 304.8, locPt.Z * 304.8);
-                            _requestedFacingHints[index] = requestedLocPt;
+                            // REV-152: prefer the explicit off-wall hint. Falling back to the
+                            // requested point keeps older callers working, but a strict caller
+                            // sends the exact point, so on its own it yields side≈0 and no flip.
+                            _requestedFacingHints[index] = data.FacingHintPoint != null
+                                ? JZPoint.ToXYZ(data.FacingHintPoint)
+                                : requestedLocPt;
                         }
                         else if (data.HostWallId > 0)
                         {
@@ -237,8 +246,20 @@ namespace RevitMCPCommandSet.Services
                         {
                             doc.Regenerate();
 
-                            bool shouldFlip = data.FacingFlipped;
-                            if (!shouldFlip)
+                            // REV-152: for doors, measure the swing that actually landed in the
+                            // model and correct against the DWG. Family HandOrientation
+                            // conventions differ, so the old dot-product mirrored whole runs of
+                            // doors at once. Falls back to the heuristic when the family draws no
+                            // plan swing arc — and says so.
+                            bool swingResolvedByMeasurement = false;
+                            if (builtInCategory == BuiltInCategory.OST_Doors)
+                            {
+                                swingResolvedByMeasurement = AlignDoorSwingToCad(
+                                    doc, instance, explicitHost as Wall, data, doorWidthFt, index);
+                            }
+
+                            bool shouldFlip = !swingResolvedByMeasurement && data.FacingFlipped;
+                            if (!swingResolvedByMeasurement && !shouldFlip)
                             {
                                 Wall hostWall = instance.Host as Wall;
                                 if (hostWall != null)
@@ -283,8 +304,8 @@ namespace RevitMCPCommandSet.Services
                             // REV-149: hand (hinge side) is independent of facing. Without it a
                             // door reads as mirrored against the DWG swing even when the side
                             // it opens toward is right.
-                            bool flipHandNow = data.HandFlipped;
-                            if (!flipHandNow && data.HandHintPoint != null)
+                            bool flipHandNow = !swingResolvedByMeasurement && data.HandFlipped;
+                            if (!swingResolvedByMeasurement && !flipHandNow && data.HandHintPoint != null)
                             {
                                 XYZ hingePt = JZPoint.ToXYZ(data.HandHintPoint);
                                 XYZ centerPt = JZPoint.ToXYZ(data.LocationPoint);
@@ -405,5 +426,116 @@ namespace RevitMCPCommandSet.Services
             return "创建点状构件";
         }
 
+        /// <summary>
+        /// REV-152: flips the placed door until its own plan swing arc matches the CAD swing.
+        /// </summary>
+        /// <remarks>
+        /// Reading the arc back is what makes this family-agnostic: facing mirrors the swing side,
+        /// hand mirrors the hinge side, and both are decided from the measured geometry rather than
+        /// from what HandOrientation is assumed to mean. A second round catches families where the
+        /// two flips are not independent. Returns false when nothing could be measured, so the
+        /// caller falls back to the old heuristic instead of silently leaving the door mirrored.
+        /// </remarks>
+        private bool AlignDoorSwingToCad(
+            Document doc,
+            FamilyInstance instance,
+            Wall hostWall,
+            PointElement data,
+            double doorWidthFt,
+            int index)
+        {
+            XYZ targetSwing = FlattenDirection(data.SwingNormal);
+            if (targetSwing == null || hostWall == null)
+                return false;
+
+            if (!(uiDoc.ActiveView is ViewPlan planView))
+            {
+                _warnings.Add(
+                    $"[{index}] Active view is not a plan — door swing not verified against CAD.");
+                return false;
+            }
+
+            if (!(hostWall.Location is LocationCurve hostCurve))
+                return false;
+
+            XYZ wallDir = FlattenDirection(
+                hostCurve.Curve.GetEndPoint(1) - hostCurve.Curve.GetEndPoint(0));
+            if (wallDir == null)
+                return false;
+
+            // Opening centre → hinge jamb, as traced from the DWG arc.
+            XYZ targetHingeDir = null;
+            if (data.HandHintPoint != null && data.LocationPoint != null)
+                targetHingeDir = FlattenDirection(
+                    JZPoint.ToXYZ(data.HandHintPoint) - JZPoint.ToXYZ(data.LocationPoint));
+
+            var measured = DoorSwingReader.TryRead(instance, planView, wallDir, doorWidthFt);
+            if (measured == null)
+            {
+                _warnings.Add(
+                    $"[{index}] No plan swing arc on this door family — swing side falls back to a heuristic and is unverified.");
+                return false;
+            }
+
+            for (int round = 0; round < 2; round++)
+            {
+                bool swingWrong = measured.SwingNormal.DotProduct(targetSwing) < 0;
+                bool hingeWrong = targetHingeDir != null
+                    && measured.HingeDir.DotProduct(targetHingeDir) < 0;
+
+                if (!swingWrong && !hingeWrong)
+                    return true;
+
+                try
+                {
+                    if (swingWrong)
+                        instance.flipFacing();
+                    if (hingeWrong)
+                        instance.flipHand();
+                }
+                catch (Exception flipEx)
+                {
+                    _warnings.Add($"[{index}] Door swing flip failed: {flipEx.Message}");
+                    return false;
+                }
+
+                doc.Regenerate();
+
+                measured = DoorSwingReader.TryRead(instance, planView, wallDir, doorWidthFt);
+                if (measured == null)
+                {
+                    _warnings.Add($"[{index}] Door swing became unreadable after flipping.");
+                    return false;
+                }
+            }
+
+            bool swingStillWrong = measured.SwingNormal.DotProduct(targetSwing) < 0;
+            bool hingeStillWrong = targetHingeDir != null
+                && measured.HingeDir.DotProduct(targetHingeDir) < 0;
+            if (swingStillWrong || hingeStillWrong)
+            {
+                string what = swingStillWrong && hingeStillWrong ? "swing side and hinge"
+                    : swingStillWrong ? "swing side"
+                    : "hinge";
+                _warnings.Add(
+                    $"[{index}] Door {what} still does not match the CAD after flipping — check this door manually.");
+            }
+
+            return true;
+        }
+
+        /// <summary>Unit XY direction from a JZPoint vector, or null when degenerate.</summary>
+        private static XYZ FlattenDirection(JZPoint vector)
+        {
+            return vector == null ? null : FlattenDirection(JZPoint.ToXYZ(vector));
+        }
+
+        private static XYZ FlattenDirection(XYZ vector)
+        {
+            if (vector == null)
+                return null;
+            var flat = new XYZ(vector.X, vector.Y, 0);
+            return flat.GetLength() < 1e-9 ? null : flat.Normalize();
+        }
     }
 }
