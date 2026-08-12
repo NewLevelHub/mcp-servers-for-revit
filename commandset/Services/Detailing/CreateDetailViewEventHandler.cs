@@ -3,6 +3,7 @@ using Autodesk.Revit.UI;
 using RevitMCPCommandSet.Models.Common;
 using RevitMCPCommandSet.Models.Detailing;
 using RevitMCPCommandSet.Utils;
+using RevitMCPCommandSet.Utils.Detailing;
 using RevitMCPSDK.API.Interfaces;
 
 namespace RevitMCPCommandSet.Services.Detailing;
@@ -72,6 +73,7 @@ public class CreateDetailViewEventHandler : IExternalEventHandler, IWaitableExte
         var warnings = new List<string>();
         var mode = (info.Mode ?? "callout").Trim().ToLowerInvariant();
         View created;
+        SectionFrame frame = null;
 
         using (var tx = new Transaction(doc, "Create Detail View"))
         {
@@ -81,7 +83,9 @@ public class CreateDetailViewEventHandler : IExternalEventHandler, IWaitableExte
             {
                 "drafting" => CreateDraftingView(doc),
                 "callout" => CreateCalloutView(doc, info, warnings),
-                _ => throw new ArgumentException($"Unknown mode '{info.Mode}'. Use 'callout' or 'drafting'.")
+                "section" => CreateSectionView(doc, info, warnings, out frame),
+                _ => throw new ArgumentException(
+                    $"Unknown mode '{info.Mode}'. Use 'callout', 'drafting' or 'section'.")
             };
 
             ApplyName(doc, created, info.Name, mode, warnings);
@@ -100,9 +104,91 @@ public class CreateDetailViewEventHandler : IExternalEventHandler, IWaitableExte
             ViewName = created.Name,
             Mode = mode,
             Scale = created.Scale,
+            LookDirection = frame?.LookDirection.ToList(),
             Warnings = warnings
         };
     }
+
+    /// <summary>
+    ///     A real cut through the model. At Fine detail Revit draws the compound layers of every
+    ///     wall and floor it crosses, with their material hatches — no geometry has to be generated.
+    /// </summary>
+    private static View CreateSectionView(
+        Document doc,
+        DetailViewCreationInfo info,
+        List<string> warnings,
+        out SectionFrame frame)
+    {
+        var sectionType = FindViewFamilyType(doc, ViewFamily.Section)
+            ?? throw new InvalidOperationException("The project has no section view type.");
+
+        frame = BuildFrame(doc, info, warnings);
+
+        var transform = Transform.Identity;
+        transform.Origin = ToXYZ(frame.Origin);
+        transform.BasisX = ToXYZ(frame.BasisX);
+        transform.BasisY = ToXYZ(frame.BasisY);
+        transform.BasisZ = ToXYZ(frame.BasisZ);
+
+        var box = new BoundingBoxXYZ
+        {
+            Transform = transform,
+            Min = new XYZ(frame.MinU, frame.MinV, frame.MinW),
+            Max = new XYZ(frame.MaxU, frame.MaxV, frame.MaxW)
+        };
+
+        return ViewSection.CreateSection(doc, sectionType.Id, box);
+    }
+
+    private static SectionFrame BuildFrame(
+        Document doc,
+        DetailViewCreationInfo info,
+        List<string> warnings)
+    {
+        var depth = MmToFeet(info.SectionDepthMm > 0 ? info.SectionDepthMm : 2000);
+
+        if (info.SectionStart != null && info.SectionEnd != null)
+        {
+            var bottom = MmToFeet(info.SectionBottomMm);
+            var top = info.SectionTopMm > info.SectionBottomMm
+                ? MmToFeet(info.SectionTopMm)
+                : bottom + MmToFeet(3000);
+
+            if (info.SectionTopMm <= info.SectionBottomMm)
+                warnings.Add("sectionTopMm was not above sectionBottomMm; a 3000 mm tall cut is used.");
+
+            return SectionBoxBuilder.FromLine(
+                new[] { MmToFeet(info.SectionStart.X), MmToFeet(info.SectionStart.Y), 0.0 },
+                new[] { MmToFeet(info.SectionEnd.X), MmToFeet(info.SectionEnd.Y), 0.0 },
+                bottom,
+                top,
+                depth,
+                info.Flip);
+        }
+
+        if (info.ElementId <= 0)
+        {
+            throw new ArgumentException(
+                "Section mode needs either sectionStart and sectionEnd (mm), or elementId to cut across.");
+        }
+
+        var element = doc.GetElement(RevitMCPCommandSet.Utils.ElementIdExtensions.FromLong(info.ElementId))
+            ?? throw new ArgumentException($"Element with id {info.ElementId} was not found.");
+
+        var bbox = element.get_BoundingBox(null)
+            ?? throw new InvalidOperationException(
+                $"Element {info.ElementId} has no bounding box to build the section from.");
+
+        return SectionBoxBuilder.FromBoundingBox(
+            new[] { bbox.Min.X, bbox.Min.Y, bbox.Min.Z },
+            new[] { bbox.Max.X, bbox.Max.Y, bbox.Max.Z },
+            info.SectionAlongX,
+            MmToFeet(info.Padding > 0 ? info.Padding : 300),
+            depth,
+            info.Flip);
+    }
+
+    private static XYZ ToXYZ(double[] vector) => new XYZ(vector[0], vector[1], vector[2]);
 
     private static View CreateDraftingView(Document doc)
     {

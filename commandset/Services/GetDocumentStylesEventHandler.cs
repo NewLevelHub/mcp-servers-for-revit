@@ -40,7 +40,8 @@ public class GetDocumentStylesEventHandler : IExternalEventHandler, IWaitableExt
                 Success = true,
                 Message = IncludeGraphicsStyles
                     ? "Document styles collected successfully."
-                    : "Document styles collected successfully (graphicsStyles omitted; pass includeGraphicsStyles=true to include).",
+                    : "Document styles collected successfully (raw graphicsStyles omitted; " +
+                      "lineStyles holds the OST_Lines subcategories — pass includeGraphicsStyles=true for the full dump).",
                 DimensionTypes = CollectDimensionTypes(doc),
                 GridTypes = CollectGridTypes(doc),
                 TextNoteTypes = CollectTextNoteTypes(doc),
@@ -48,6 +49,9 @@ public class GetDocumentStylesEventHandler : IExternalEventHandler, IWaitableExt
                 GraphicsStyles = IncludeGraphicsStyles
                     ? CollectGraphicsStyles(doc)
                     : new List<GraphicsStyleInfo>(),
+                LineStyles = CollectLineStyles(doc),
+                FilledRegionTypes = CollectFilledRegionTypes(doc),
+                FillPatterns = CollectFillPatterns(doc),
                 TitleBlocks = CollectTitleBlocks(doc)
             };
         }
@@ -158,6 +162,106 @@ public class GetDocumentStylesEventHandler : IExternalEventHandler, IWaitableExt
                 Category = style.GraphicsStyleCategory?.Name ?? string.Empty
             })
             .ToList();
+    }
+
+    /// <summary>
+    ///     Line styles are subcategories of OST_Lines. graphicsStyles dumps every GraphicsStyle in
+    ///     the document (thousands of them); this is the short list a detail actually draws with.
+    /// </summary>
+    private static List<LineStyleInfo> CollectLineStyles(Document doc)
+    {
+        var styles = new List<LineStyleInfo>();
+        var lines = doc.Settings.Categories.get_Item(BuiltInCategory.OST_Lines);
+        if (lines == null)
+            return styles;
+
+        foreach (Category subCategory in lines.SubCategories)
+        {
+            if (string.IsNullOrWhiteSpace(subCategory.Name))
+                continue;
+
+            var graphicsStyle = subCategory.GetGraphicsStyle(GraphicsStyleType.Projection);
+
+            styles.Add(new LineStyleInfo
+            {
+                Id = graphicsStyle?.Id.GetValue() ?? subCategory.Id.GetValue(),
+                UniqueId = graphicsStyle?.UniqueId ?? string.Empty,
+                Name = subCategory.Name,
+                LineWeight = subCategory.GetLineWeight(GraphicsStyleType.Projection),
+                LinePatternName = ResolveLinePatternName(doc, subCategory),
+                Color = FormatColor(subCategory.LineColor)
+            });
+        }
+
+        return styles.OrderBy(style => style.Name).ToList();
+    }
+
+    private static string ResolveLinePatternName(Document doc, Category category)
+    {
+        var patternId = category.GetLinePatternId(GraphicsStyleType.Projection);
+        if (patternId == null || patternId == ElementId.InvalidElementId)
+            return string.Empty;
+
+        // Solid is a built-in pattern with a negative id and no element behind it.
+        if (patternId == LinePatternElement.GetSolidPatternId())
+            return "Solid";
+
+        return doc.GetElement(patternId) is LinePatternElement pattern ? pattern.Name : string.Empty;
+    }
+
+    private static List<FilledRegionTypeStyleInfo> CollectFilledRegionTypes(Document doc)
+    {
+        return new FilteredElementCollector(doc)
+            .OfClass(typeof(FilledRegionType))
+            .Cast<FilledRegionType>()
+            .OrderBy(type => type.Name)
+            .Select(type => new FilledRegionTypeStyleInfo
+            {
+                Id = type.Id.GetValue(),
+                UniqueId = type.UniqueId,
+                Name = type.Name,
+                ForegroundPatternName = ResolveFillPatternName(doc, type.ForegroundPatternId),
+                BackgroundPatternName = ResolveFillPatternName(doc, type.BackgroundPatternId),
+                ForegroundColor = FormatColor(type.ForegroundPatternColor),
+                IsMasking = type.IsMasking
+            })
+            .ToList();
+    }
+
+    private static List<FillPatternStyleInfo> CollectFillPatterns(Document doc)
+    {
+        return new FilteredElementCollector(doc)
+            .OfClass(typeof(FillPatternElement))
+            .Cast<FillPatternElement>()
+            .Select(element =>
+            {
+                var pattern = element.GetFillPattern();
+                return new FillPatternStyleInfo
+                {
+                    Id = element.Id.GetValue(),
+                    UniqueId = element.UniqueId,
+                    Name = element.Name,
+                    Target = pattern?.Target.ToString() ?? string.Empty,
+                    IsSolidFill = pattern?.IsSolidFill ?? false
+                };
+            })
+            .OrderBy(pattern => pattern.Name)
+            .ToList();
+    }
+
+    private static string ResolveFillPatternName(Document doc, ElementId patternId)
+    {
+        if (patternId == null || patternId == ElementId.InvalidElementId)
+            return string.Empty;
+
+        return doc.GetElement(patternId) is FillPatternElement pattern ? pattern.Name : string.Empty;
+    }
+
+    private static string FormatColor(Color color)
+    {
+        return color != null && color.IsValid
+            ? $"#{color.Red:X2}{color.Green:X2}{color.Blue:X2}"
+            : string.Empty;
     }
 
     private static List<TitleBlockStyleInfo> CollectTitleBlocks(Document doc)

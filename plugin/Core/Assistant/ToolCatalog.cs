@@ -67,6 +67,8 @@ namespace revit_mcp_plugin.Core.Assistant
                     "create_railing",
                     "create_floor_opening",
                     "create_structural_framing_system",
+                    "ensure_wall_type",
+                    "ensure_opening_type",
                 },
                 [Profiles.Annotation] = new[]
                 {
@@ -81,7 +83,10 @@ namespace revit_mcp_plugin.Core.Assistant
                     "create_text_note",
                     "create_detail_lines",
                     "create_detail_view",
+                    "create_detail_regions",
+                    "create_node_detail",
                     "place_detail_component",
+                    "load_family",
                     "get_document_styles",
                     "color_splash",
                 },
@@ -773,8 +778,13 @@ namespace revit_mcp_plugin.Core.Assistant
                 ["trace_columns_from_cad"] = "колонны по DWG/CAD",
                 ["get_vertical_circulation_info"] = "лестницы / пандусы",
                 ["create_detail_lines"] = "линии деталировки",
-                ["create_detail_view"] = "вид детали",
+                ["create_detail_view"] = "вид детали / разрез",
+                ["create_detail_regions"] = "штриховка по контуру",
+                ["create_node_detail"] = "генератор узлов",
                 ["place_detail_component"] = "узел деталировки",
+                ["load_family"] = "загрузка семейств",
+                ["ensure_wall_type"] = "типоразмер стены",
+                ["ensure_opening_type"] = "типоразмер проёма",
                 ["create_structural_framing_system"] = "балочная система",
             };
 
@@ -1239,12 +1249,39 @@ namespace revit_mcp_plugin.Core.Assistant
                         ("dryRun", B(), "preview detected columns"))),
                 T("get_vertical_circulation_info", "Stair/ramp/railing geometry for norms (mm).", P(
                     ("levelName", S(), null))),
-                T("create_detail_lines", "Detail polylines on plan/detail view (mm).", P(
-                    ("points", A("object"), "points in mm"), ("viewId", N(), null))),
-                T("create_detail_view", "Detail callout or drafting view.", P(
+                T("create_detail_lines", "Detail polylines and arcs on plan/detail view (mm).", P(
+                    ("polylines", A("object"), "polylines with points in mm"),
+                    ("arcs", A("object"), "arcs through start/end/pointOnArc"),
+                    ("lineStyleName", S(), "OST_Lines subcategory"),
+                    ("viewId", N(), null))),
+                T("create_detail_view", "Detail callout, drafting view or real section.", P(
+                    ("mode", S(), "callout | drafting | section"),
                     ("name", S(), null), ("parentViewId", N(), null), ("scale", N(), null))),
+                T("create_detail_regions", "Hatch arbitrary contours on a detail/drafting view (mm).", P(
+                    R("regions"),
+                    ("regions", A("object"), "contours with points, optional holes and hatch"),
+                    ("viewId", N(), null))),
+                T("create_node_detail", "Generate a node from the layers of a wall/floor type.", P(
+                    ("mode", S(), "junction | single"),
+                    ("wallTypeId", N(), "wall type or placed wall id"),
+                    ("floorTypeId", N(), "floor type or placed floor id"),
+                    ("scale", N(), "default 10"),
+                    ("gapMm", N(), "expansion gap at the wall"))),
                 T("place_detail_component", "Place 2D detail component on detail view.", P(
                     ("data", A("object"), null))),
+                T("load_family", "Load .rfa families into the project.", P(
+                    ("paths", A("string"), "full paths on the Revit machine"),
+                    ("directory", S(), null),
+                    ("names", A("string"), null))),
+                T("ensure_wall_type", "Duplicate a wall type and set its core thickness (mm).", P(
+                    R("thicknessMm"),
+                    ("thicknessMm", N(), "target thickness"),
+                    ("sourceTypeId", N(), "type to duplicate from"),
+                    ("toleranceMm", N(), null))),
+                T("ensure_opening_type", "Duplicate a door/window type and set width/height (mm).", P(
+                    ("widthMm", N(), null),
+                    ("heightMm", N(), null),
+                    ("sourceTypeId", N(), "type to duplicate from"))),
                 T("create_text_note", "Single text note with optional leader.", P(
                     R("text"),
                     ("text", S(), "note text"),

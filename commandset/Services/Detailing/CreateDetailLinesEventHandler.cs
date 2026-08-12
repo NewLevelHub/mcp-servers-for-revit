@@ -3,6 +3,7 @@ using Autodesk.Revit.UI;
 using Newtonsoft.Json;
 using RevitMCPCommandSet.Models.Detailing;
 using RevitMCPCommandSet.Utils;
+using RevitMCPCommandSet.Utils.Detailing;
 using RevitMCPSDK.API.Interfaces;
 
 namespace RevitMCPCommandSet.Services.Detailing;
@@ -27,6 +28,10 @@ public class CreateDetailLinesResult
     [JsonProperty("viewName")]
     public string ViewName { get; set; } = string.Empty;
 
+    /// <summary>Filled in when a requested line style could not be resolved.</summary>
+    [JsonProperty("availableLineStyles")]
+    public List<string> AvailableLineStyles { get; set; } = new List<string>();
+
     [JsonProperty("warnings")]
     public List<string> Warnings { get; set; } = new List<string>();
 }
@@ -36,8 +41,6 @@ public class CreateDetailLinesResult
 /// </summary>
 public class CreateDetailLinesEventHandler : IExternalEventHandler, IWaitableExternalEventHandler
 {
-    private const double MinSegmentLengthMm = 1.0;
-
     private DetailLinesCreationInfo _info;
 
     public CreateDetailLinesResult ResultInfo { get; private set; } = new CreateDetailLinesResult();
@@ -97,8 +100,7 @@ public class CreateDetailLinesEventHandler : IExternalEventHandler, IWaitableExt
                 "Target view was not found. Provide viewId, viewUniqueId, or viewName, " +
                 "or open a floor plan, detail callout, or drafting view.");
 
-        if (!(view is ViewPlan || view is ViewDrafting ||
-              view.ViewType == ViewType.Detail || view.ViewType == ViewType.DraftingView))
+        if (!DetailDrawing.SupportsDetailing(view))
         {
             throw new InvalidOperationException(
                 $"View '{view.Name}' ({view.ViewType}) does not support detail curves. " +
@@ -106,16 +108,18 @@ public class CreateDetailLinesEventHandler : IExternalEventHandler, IWaitableExt
         }
 
         var polylines = info.Polylines ?? new List<DetailPolylineInfo>();
-        if (polylines.Count == 0)
-            warnings.Add("No polylines provided.");
+        var arcs = info.Arcs ?? new List<DetailArcInfo>();
+        if (polylines.Count == 0 && arcs.Count == 0)
+            warnings.Add("No polylines or arcs provided.");
 
-        double z = view is ViewPlan plan && plan.GenLevel != null
-            ? plan.GenLevel.Elevation
-            : 0;
+        double z = DetailDrawing.ViewPlaneZ(view);
+        var unresolvedStyles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         using (var tx = new Transaction(doc, "Create Detail Lines"))
         {
             tx.Start();
+
+            var defaultStyle = ResolveStyle(doc, info.LineStyleName, unresolvedStyles);
 
             foreach (var polyline in polylines)
             {
@@ -126,38 +130,90 @@ public class CreateDetailLinesEventHandler : IExternalEventHandler, IWaitableExt
                     continue;
                 }
 
-                for (var i = 0; i < points.Count - 1; i++)
+                var style = ResolveStyle(doc, polyline.LineStyleName, unresolvedStyles) ?? defaultStyle;
+
+                var viewPoints = points
+                    .Select(point => DetailDrawing.ToViewPoint(point.X, point.Y, z))
+                    .ToList();
+
+                foreach (var curve in DetailDrawing.DrawPolyline(doc, view, viewPoints, polyline.Closed))
                 {
-                    var start = new XYZ(
-                        RevitUnitConversion.FromMillimeters(points[i].X),
-                        RevitUnitConversion.FromMillimeters(points[i].Y),
-                        z);
-                    var end = new XYZ(
-                        RevitUnitConversion.FromMillimeters(points[i + 1].X),
-                        RevitUnitConversion.FromMillimeters(points[i + 1].Y),
-                        z);
+                    createdIds.Add(curve.Id.GetValue());
+                    ApplyStyle(curve, style, warnings);
+                }
+            }
 
-                    if (start.DistanceTo(end) < RevitUnitConversion.FromMillimeters(MinSegmentLengthMm))
-                        continue;
+            foreach (var arc in arcs)
+            {
+                if (arc?.Start == null || arc.End == null || arc.PointOnArc == null)
+                {
+                    warnings.Add("Arc without start, end, or pointOnArc skipped.");
+                    continue;
+                }
 
-                    var line = doc.Create.NewDetailCurve(view, Line.CreateBound(start, end));
-                    createdIds.Add(line.Id.GetValue());
+                try
+                {
+                    var curve = DetailDrawing.DrawArc(
+                        doc,
+                        view,
+                        DetailDrawing.ToViewPoint(arc.Start.X, arc.Start.Y, z),
+                        DetailDrawing.ToViewPoint(arc.End.X, arc.End.Y, z),
+                        DetailDrawing.ToViewPoint(arc.PointOnArc.X, arc.PointOnArc.Y, z));
+
+                    createdIds.Add(curve.Id.GetValue());
+                    ApplyStyle(curve, ResolveStyle(doc, arc.LineStyleName, unresolvedStyles) ?? defaultStyle, warnings);
+                }
+                catch (Exception ex)
+                {
+                    // Collinear three points cannot form an arc — Revit throws rather than degrade to a line.
+                    warnings.Add($"Arc skipped: {ex.Message}");
                 }
             }
 
             tx.Commit();
         }
 
-        return new CreateDetailLinesResult
+        var result = new CreateDetailLinesResult
         {
             Success = true,
-            Message = $"Created {createdIds.Count} detail line segments on view '{view.Name}'.",
+            Message = $"Created {createdIds.Count} detail curves on view '{view.Name}'.",
             CreatedCount = createdIds.Count,
             DetailLineIds = createdIds,
             ViewId = view.Id.GetValue(),
             ViewName = view.Name,
             Warnings = warnings
         };
+
+        if (unresolvedStyles.Count > 0)
+        {
+            foreach (var name in unresolvedStyles)
+                warnings.Add($"Line style '{name}' was not found; the view default was used.");
+
+            result.AvailableLineStyles = DetailDrawing.CollectLineStyleNames(doc);
+        }
+
+        return result;
+    }
+
+    private static GraphicsStyle ResolveStyle(Document doc, string name, HashSet<string> unresolved)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return null;
+
+        var style = DetailDrawing.ResolveLineStyle(doc, name);
+        if (style == null)
+            unresolved.Add(name.Trim());
+
+        return style;
+    }
+
+    private static void ApplyStyle(CurveElement curve, GraphicsStyle style, List<string> warnings)
+    {
+        if (style == null)
+            return;
+
+        if (!DetailDrawing.TryApplyLineStyle(curve, style, out var error) && error != null)
+            warnings.Add($"Could not apply line style '{style.Name}': {error}");
     }
 
     private static View ResolveView(Document doc, UIDocument uiDoc, DetailLinesCreationInfo info)

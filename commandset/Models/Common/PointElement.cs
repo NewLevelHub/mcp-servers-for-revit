@@ -96,6 +96,25 @@ public class PointElement
     public JZPoint HandHintPoint { get; set; }
 
     /// <summary>
+    ///     REV-152: a point on the side the opening should face, off the wall centreline.
+    ///     Callers used to encode this by nudging <see cref="LocationPoint" /> itself, which put
+    ///     the point 120 mm off the centreline and made <see cref="StrictLocation" /> reject every
+    ///     traced opening. Keep the location exact and state the facing side here instead.
+    ///     Used only for windows and for doors whose family draws no plan swing arc.
+    /// </summary>
+    [JsonProperty("facingHintPoint")]
+    public JZPoint FacingHintPoint { get; set; }
+
+    /// <summary>
+    ///     REV-152: unit vector (model XY) pointing to the side the CAD swing opens toward.
+    ///     The handler measures the placed door's own swing arc in the plan view and flips it
+    ///     to match this, instead of trusting a family's HandOrientation convention.
+    ///     Only the direction is used — magnitude is ignored.
+    /// </summary>
+    [JsonProperty("swingNormal")]
+    public JZPoint SwingNormal { get; set; }
+
+    /// <summary>
     ///     REV-149: place exactly at <see cref="LocationPoint" />. Disables end clamping,
     ///     junction nudging and batch auto-spacing; if the point cannot host the opening the
     ///     item fails loudly instead of being moved somewhere else.

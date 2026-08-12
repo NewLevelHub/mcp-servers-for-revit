@@ -116,6 +116,11 @@ export type PlannedOpening = DetectedOpening & {
   paramT: number;
   typeId?: number;
   matchedTypeName?: string;
+  /**
+   * REV-153: the width the assigned type actually is. When it differs from `widthMm`, the
+   * opening would be built at the wrong size — that is what triggers creating an exact type.
+   */
+  matchedTypeWidthMm?: number;
   /** Along-wall distance from CAD center to clamped point on existing segment. */
   alongOvershootMm?: number;
   /** When set, create this wall segment before create_point_based_element. */

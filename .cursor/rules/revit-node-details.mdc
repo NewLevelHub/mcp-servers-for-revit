@@ -1,0 +1,68 @@
+---
+description: Узлы РД (деталировка) — генератор из CompoundStructure, штриховка, стили линий, разрезы, загрузка .rfa
+alwaysApply: true
+---
+
+# Узлы РД (деталировка)
+
+**Канал:** Cursor + MCP. Не выдумывать конструктив — ИИ чертит уже принятое решение.
+
+Фразы: «создай узел», «набросай узел», «примыкание пола к стене», «деталировка»,
+«штриховка слоёв», «разрез по стене», «загрузи семейство detail».
+
+## Обязательный алгоритм (генератор)
+
+1. `get_current_view_info` — проект открыт (вид может быть любым; генератор сам создаёт drafting).
+2. Найти тип стены/пола: `get_available_family_types` или id экземпляра с вида
+   (`get_current_view_elements` OST_Walls / OST_Floors).
+3. **`create_node_detail`**:
+   - `mode: "junction"` — пол к стене (`wallTypeId` + `floorTypeId`, оба обязательны);
+   - `mode: "single"` — один пирог в разрезе (достаточно одного id).
+4. Id — **тип или экземпляр** (хендлер сам читает тип через CompoundStructure).
+5. В ответе смотреть честный факт: `layersRead`, `layersHatched`, `layersWithoutHatch`,
+   `dimensionCount`, `textNoteCount`, `warnings`, `createdFilledRegionTypes`.
+6. Слои пирога, которых нет в типе (доп. стяжка, подложка, звукоизоляция) — `extraLayers`;
+   каждый идёт **насквозь на всю длину сборки**. Плинтус, кромочную ленту в зазоре и мастику
+   так поставить нельзя — это локальные детали: `place_detail_component` / `create_detail_lines`.
+7. На лист: `sheetNumber` в том же вызове **или** `create_sheet` + `place_view_on_sheet`.
+
+## Когда не генератор, а примитивы
+
+| Нужно | Инструмент |
+|-------|------------|
+| Чертёжный вид / callout / **разрез** | `create_detail_view` (`drafting` / `callout` / `section`) |
+| Контуры / дуги / стили линий | `create_detail_lines` (`lineStyleName`, `arcs`) |
+| Штриховка по произвольному контуру | **`create_detail_regions`** (не `create_filled_regions`) |
+| Подписи | `create_text_note` |
+| Размеры | `create_dimensions` |
+| 2D-компонент (линия разрыва…) | `place_detail_component` |
+| Загрузить `.rfa` | **`load_family`** (пути на машине Revit) |
+| Список стилей / штриховок | `get_document_styles` → `lineStyles`, `filledRegionTypes`, `fillPatterns` |
+
+## `create_filled_regions` vs `create_detail_regions`
+
+- **`create_filled_regions`** — только план + контур **Room**, нормоконтроль («покажи нарушения»).
+- **`create_detail_regions`** — drafting/detail/section/plan, произвольный контур + holes,
+  штриховка материала узла. Тег Comments: `MCP-DR` (не путать с `MCP-FR`).
+
+## Разрез (`create_detail_view` mode=`section`)
+
+Живой разрез по модели: на Fine Revit сам рисует слои пирога со штриховками.
+Вход: `sectionStart`/`sectionEnd` (мм) **или** `elementId` (+ `sectionAlongX`, `flip`).
+В ответе смотреть `lookDirection` — неправильная сторона видна сразу, не молча.
+
+## Запрещено
+
+- Выдумывать конструктив узла «из головы» и выдавать за эталон заказчика.
+- Использовать `create_filled_regions` для штриховки слоёв на узле.
+- Отчитываться «узел готов», если `layersWithoutHatch` > 0 и это не сказано пользователю.
+- `send_code_to_revit` для деталировки при наличии `create_node_detail` / примитивов.
+
+## Ответ пользователю
+
+1. Режим (`junction` / `single`), имя вида, масштаб.
+2. Сколько слоёв прочитано / залито / без штриховки.
+3. Размеры и подписи (count).
+4. Что **не** делалось (выбор конструктива, нормы, 3D-узел).
+
+Таблица MCP-tools в конце (как в `revit-mcp.mdc`).

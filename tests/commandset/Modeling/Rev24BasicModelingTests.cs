@@ -1,5 +1,8 @@
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Architecture;
+// RevitAPI also carries an internal StructuralType in the global namespace, which an
+// unqualified name binds to first, so the public one has to be brought in explicitly.
+using Autodesk.Revit.DB.Structure;
 using Nice3point.TUnit.Revit;
 using Nice3point.TUnit.Revit.Executors;
 using RevitMCPCommandSet.Models.Structure;

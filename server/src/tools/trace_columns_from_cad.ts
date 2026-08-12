@@ -8,6 +8,10 @@ import {
   computeSegmentsBbox,
 } from "../cad/cadWallTracing.js";
 import {
+  readWithLimitEscalation,
+  truncationWarning,
+} from "../cad/cadReadEscalation.js";
+import {
   type ColumnTypeCandidate,
   type DetectedColumn,
   DEFAULT_COLUMN_LAYER_PATTERNS,
@@ -82,7 +86,9 @@ function extractErrors(resp: CreateResponse): string[] {
   const msg = resp.Message ?? resp.message ?? "";
   const marker = "Errors:";
   const idx = msg.indexOf(marker);
-  if (idx < 0) return msg ? [msg] : [];
+  // REV-154: a clean run answers "Successfully created 3 element(s)." — echoing that back
+  // as an error made every good result read as "создано 3/3; ошибок 1".
+  if (idx < 0) return msg && !isSuccess(resp) ? [msg] : [];
   return msg
     .slice(idx + marker.length)
     .split("\n")
@@ -271,15 +277,23 @@ export function registerTraceColumnsFromCadTool(server: McpServer) {
 
       try {
         const result = await withRevitConnection(async (revitClient) => {
-          const cadRaw = (await revitClient.sendCommand("get_cad_link_geometry", {
-            cadLinkName: args.cadLinkName ?? "",
-            minLengthMm: args.minLengthMm ?? 20,
-            limit: args.limit ?? 5000,
-            includeHiddenLayers: args.includeHiddenLayers ?? true,
-            includeModelLines: args.includeModelLines ?? false,
-            // Round columns are circles — keep the arc metadata intact.
-            arcMode: "single",
-          })) as CadGeometryResponse;
+          // REV-155: Revit truncates at `limit` and filters layers afterwards, so on a big
+          // DWG the columns in the unread half never arrive. Escalate until nothing is left.
+          const read = await readWithLimitEscalation(
+            (limit) =>
+              revitClient.sendCommand("get_cad_link_geometry", {
+                cadLinkName: args.cadLinkName ?? "",
+                minLengthMm: args.minLengthMm ?? 20,
+                limit,
+                includeHiddenLayers: args.includeHiddenLayers ?? true,
+                includeModelLines: args.includeModelLines ?? false,
+                // Round columns are circles — keep the arc metadata intact.
+                arcMode: "single",
+              }) as Promise<CadGeometryResponse>,
+            args.limit ?? 5000
+          );
+          const cadRaw = read.response;
+          const readWarning = truncationWarning(read);
 
           if (!isSuccess(cadRaw) && cadRaw.ok !== true) {
             return {
@@ -397,6 +411,7 @@ export function registerTraceColumnsFromCadTool(server: McpServer) {
               createdCount: 0,
               columns: items,
               stats: traced.stats,
+              warnings: readWarning ? [readWarning] : [],
               cadLinkName: cadRaw.cadLinkName,
               viewName: cadRaw.viewName,
             };
@@ -447,7 +462,10 @@ export function registerTraceColumnsFromCadTool(server: McpServer) {
             columns: items,
             stats: traced.stats,
             errors,
-            warnings: createResp.warnings ?? [],
+            warnings: [
+              ...(readWarning ? [readWarning] : []),
+              ...(createResp.warnings ?? []),
+            ],
             cadLinkName: cadRaw.cadLinkName,
             viewName: cadRaw.viewName ?? viewInfo.name ?? viewInfo.Name,
           };

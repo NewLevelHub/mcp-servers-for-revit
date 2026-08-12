@@ -45,8 +45,18 @@ namespace RevitMCPCommandSet.Services
                 _warnings.Clear();
                 int requestedCount = CreatedInfo?.Count ?? 0;
 
+                var warningRecorder = new RecordingWarningsPreprocessor();
+
                 using (Transaction transaction = new Transaction(doc, "Create line-based elements"))
                 {
+                    // Overlapping traced walls raise a modal warning on commit. Inside an
+                    // ExternalEvent nobody can click it: the batch hung ~41 s, and a "Cancel"
+                    // click rolled all 15 walls back so they never appeared (REV-151).
+                    var failOpts = transaction.GetFailureHandlingOptions();
+                    failOpts.SetFailuresPreprocessor(warningRecorder);
+                    failOpts.SetClearAfterRollback(true);
+                    transaction.SetFailureHandlingOptions(failOpts);
+
                     transaction.Start();
                     IList<Level> levels = doc.GetAllLevels();
 
@@ -117,7 +127,7 @@ namespace RevitMCPCommandSet.Services
                                 }
                                 Wall wall = Wall.Create(
                                     doc,
-                                    JZLine.ToLine(data.LocationLine),
+                                    JZLine.ToCurve(data.LocationLine),
                                     wallType.Id,
                                     baseLevel.Id,
                                     data.Height / 304.8,
@@ -183,6 +193,11 @@ namespace RevitMCPCommandSet.Services
 
                     transaction.Commit();
                 }
+
+                // Dismissed, not hidden: "walls overlap" means the traced axes doubled up and
+                // the caller has to see it.
+                if (warningRecorder.HasDismissals)
+                    _warnings.AddRange(warningRecorder.ToWarningLines("Revit warning (auto-dismissed)"));
 
                 bool success = errors.Count == 0 && elementIds.Count == requestedCount;
                 string message = success

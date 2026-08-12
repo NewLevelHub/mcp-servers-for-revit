@@ -11,13 +11,15 @@ const pointSchema = z.object({
 export function registerCreateDetailViewTool(server: McpServer) {
   server.tool(
     "create_detail_view",
-    "Create a detail view for construction nodes (узлы). Mode 'callout' cuts a detail callout from a parent plan/section view around an element (elementId + padding) or an explicit rectangle (areaMin/areaMax, model mm); mode 'drafting' creates an independent drafting view for drawing a node from scratch. Sets name, scale (e.g. 10 for 1:10), and detail level (Fine by default). By default activates the new view in the UI. Then use create_detail_lines, create_text_note, create_dimensions, and place_detail_component.",
+    "Create a detail view for construction nodes (узлы). Mode 'callout' cuts a detail callout from a parent plan/section view around an element (elementId + padding) or an explicit rectangle (areaMin/areaMax, model mm); mode 'drafting' creates an independent drafting view for drawing a node from scratch; mode 'section' cuts a real section through the model (sectionStart/sectionEnd in mm, or elementId to cut across), where Revit draws the compound layers and material hatches itself. Sets name, scale (e.g. 10 for 1:10), and detail level (Fine by default). By default activates the new view in the UI. Then use create_detail_lines, create_detail_regions, create_text_note, create_dimensions, and place_detail_component — or create_node_detail to generate a whole node from a wall/floor build-up.",
     {
       mode: z
-        .enum(["callout", "drafting"])
+        .enum(["callout", "drafting", "section"])
         .optional()
         .default("callout")
-        .describe("callout — detail callout of a model view; drafting — independent drafting view."),
+        .describe(
+          "callout — detail callout of a model view; drafting — independent drafting view; section — a real cut through the model."
+        ),
       name: z.string().optional().describe("View name, e.g. 'Узел 1. Примыкание кровли'."),
       scale: z
         .number()
@@ -58,6 +60,34 @@ export function registerCreateDetailViewTool(server: McpServer) {
       areaMax: pointSchema
         .optional()
         .describe("Opposite callout area corner, model coordinates in mm (callout mode)."),
+      sectionStart: pointSchema
+        .optional()
+        .describe("Start of the cutting line, model mm (section mode). Use with sectionEnd."),
+      sectionEnd: pointSchema
+        .optional()
+        .describe("End of the cutting line, model mm (section mode)."),
+      sectionBottomMm: z
+        .number()
+        .optional()
+        .describe("Bottom of the cut, model mm (section mode). Default 0."),
+      sectionTopMm: z
+        .number()
+        .optional()
+        .describe("Top of the cut, model mm (section mode). Defaults to 3000 above the bottom."),
+      sectionDepthMm: z
+        .number()
+        .optional()
+        .describe("How far in front of the cut plane stays visible, mm (section mode). Default 2000."),
+      sectionAlongX: z
+        .boolean()
+        .optional()
+        .describe("With elementId in section mode: cut along X (default) or along Y."),
+      flip: z
+        .boolean()
+        .optional()
+        .describe(
+          "Look at the other side of the cutting line (section mode). The resulting lookDirection is returned so a wrong side is visible."
+        ),
     },
     async (args) => {
       const params = {
@@ -73,6 +103,13 @@ export function registerCreateDetailViewTool(server: McpServer) {
         padding: args.padding ?? 300,
         areaMin: args.areaMin ?? null,
         areaMax: args.areaMax ?? null,
+        sectionStart: args.sectionStart ?? null,
+        sectionEnd: args.sectionEnd ?? null,
+        sectionBottomMm: args.sectionBottomMm ?? 0,
+        sectionTopMm: args.sectionTopMm ?? 0,
+        sectionDepthMm: args.sectionDepthMm ?? 2000,
+        sectionAlongX: args.sectionAlongX ?? true,
+        flip: args.flip ?? false,
       };
 
       try {

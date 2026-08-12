@@ -1,6 +1,7 @@
 using Autodesk.Revit.DB;
 using Nice3point.TUnit.Revit;
 using Nice3point.TUnit.Revit.Executors;
+using RevitMCPCommandSet.Utils;
 using TUnit.Core;
 using TUnit.Core.Executors;
 
@@ -38,7 +39,7 @@ public class CreateScheduleTests : RevitApiTest
         }
 
         await Assert.That(schedule).IsNotNull();
-        await Assert.That(schedule.Definition.CategoryId.IntegerValue)
+        await Assert.That(schedule.Definition.CategoryId.GetIntValue())
             .IsEqualTo((int)BuiltInCategory.OST_Doors);
     }
 
@@ -56,7 +57,7 @@ public class CreateScheduleTests : RevitApiTest
         }
 
         await Assert.That(schedule).IsNotNull();
-        await Assert.That(schedule.Definition.CategoryId.IntegerValue)
+        await Assert.That(schedule.Definition.CategoryId.GetIntValue())
             .IsEqualTo((int)BuiltInCategory.OST_Windows);
     }
 
@@ -74,7 +75,7 @@ public class CreateScheduleTests : RevitApiTest
         }
 
         await Assert.That(schedule).IsNotNull();
-        await Assert.That(schedule.Definition.CategoryId.IntegerValue)
+        await Assert.That(schedule.Definition.CategoryId.GetIntValue())
             .IsEqualTo((int)BuiltInCategory.OST_Rooms);
     }
 
@@ -135,7 +136,7 @@ public class CreateScheduleTests : RevitApiTest
         }
 
         await Assert.That(duplicate).IsNotNull();
-        await Assert.That(duplicate.Definition.CategoryId.IntegerValue)
-            .IsEqualTo(template.Definition.CategoryId.IntegerValue);
+        await Assert.That(duplicate.Definition.CategoryId.GetIntValue())
+            .IsEqualTo(template.Definition.CategoryId.GetIntValue());
     }
 }
