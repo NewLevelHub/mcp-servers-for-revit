@@ -1,6 +1,7 @@
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using RevitMCPCommandSet.Models.Views;
+using RevitMCPCommandSet.Utils;
 using RevitMCPSDK.API.Interfaces;
 
 namespace RevitMCPCommandSet.Services.Views;
@@ -104,13 +105,17 @@ public class PlaceViewOnSheetEventHandler : IExternalEventHandler, IWaitableExte
         if (alreadyPlaced)
             warnings.Add($"Schedule '{scheduleView.Name}' is already placed on this sheet.");
 
-        var sheetOutline = sheet.Outline
-            ?? throw new InvalidOperationException($"Sheet '{sheet.SheetNumber}' has no outline.");
-        var requestedLowerLeft = GetRequestedLowerLeftPoint(sheetOutline, info);
-        var origin = new XYZ(requestedLowerLeft.X, requestedLowerLeft.Y, 0);
-        var instance = ScheduleSheetInstance.Create(doc, sheet.Id, scheduleView.Id, origin);
+        var frame = SheetFrameGeometry.Resolve(doc, sheet);
+        WarnWhenFrameIsGuessed(frame, sheet, warnings);
+
+        var requestedLowerLeft = GetRequestedLowerLeftPoint(frame, info);
+        var instance = ScheduleSheetInstance.Create(
+            doc,
+            sheet.Id,
+            scheduleView.Id,
+            new XYZ(requestedLowerLeft.X, requestedLowerLeft.Y, 0));
         doc.Regenerate();
-        ClampScheduleToSheet(doc, sheet, instance, info, warnings);
+        FitScheduleIntoFrame(doc, sheet, frame, instance, scheduleView, requestedLowerLeft, warnings);
 
         if (Math.Abs(info.Rotation) > double.Epsilon)
             warnings.Add("Schedule rotation is not supported via API and was ignored.");
@@ -133,10 +138,17 @@ public class PlaceViewOnSheetEventHandler : IExternalEventHandler, IWaitableExte
         if (existingViewport)
             warnings.Add($"View '{view.Name}' is already placed on this sheet.");
 
+        var frame = SheetFrameGeometry.Resolve(doc, sheet);
+        WarnWhenFrameIsGuessed(frame, sheet, warnings);
+
         Viewport viewport;
         try
         {
-            viewport = Viewport.Create(doc, sheet.Id, view.Id, GetSheetCenter(sheet));
+            viewport = Viewport.Create(
+                doc,
+                sheet.Id,
+                view.Id,
+                new XYZ((frame.MinX + frame.MaxX) / 2.0, (frame.MinY + frame.MaxY) / 2.0, 0));
         }
         catch (Exception ex)
         {
@@ -170,164 +182,150 @@ public class PlaceViewOnSheetEventHandler : IExternalEventHandler, IWaitableExte
             warnings.Add("Viewport rotation is not supported in this command and was ignored.");
 
         doc.Regenerate();
-        MoveViewportToRequestedLocation(viewport, sheet, info, warnings);
+        FitViewportIntoFrame(viewport, frame, GetRequestedLowerLeftPoint(frame, info), warnings);
 
         return viewport;
     }
 
-    private static XYZ GetSheetCenter(ViewSheet sheet)
-    {
-        var outline = sheet.Outline
-            ?? throw new InvalidOperationException($"Sheet '{sheet.SheetNumber}' has no outline.");
-
-        var centerX = (outline.Min.U + outline.Max.U) / 2.0;
-        var centerY = (outline.Min.V + outline.Max.V) / 2.0;
-        return new XYZ(centerX, centerY, 0);
-    }
-
-    private static void MoveViewportToRequestedLocation(
+    private static void FitViewportIntoFrame(
         Viewport viewport,
-        ViewSheet sheet,
-        ViewportCreationInfo info,
+        SheetFrameGeometry frame,
+        XYZ requestedLowerLeft,
         List<string> warnings)
     {
-        var sheetOutline = sheet.Outline
-            ?? throw new InvalidOperationException($"Sheet '{sheet.SheetNumber}' has no outline.");
+        var outline = viewport.GetBoxOutline();
+        var width = outline.MaximumPoint.X - outline.MinimumPoint.X;
+        var height = outline.MaximumPoint.Y - outline.MinimumPoint.Y;
 
-        var requestedLowerLeft = GetRequestedLowerLeftPoint(sheetOutline, info);
-        var requestedCenter = GetCenterForLowerLeft(requestedLowerLeft, viewport.GetBoxOutline());
-        viewport.SetBoxCenter(requestedCenter);
+        var target = frame.FitInside(width, height, requestedLowerLeft.X, requestedLowerLeft.Y);
+        viewport.SetBoxCenter(new XYZ(target.X + width / 2.0, target.Y + height / 2.0, 0));
 
-        var movedOutline = viewport.GetBoxOutline();
-        var clampedLowerLeft = ClampLowerLeftToSheetBounds(movedOutline, sheetOutline, requestedLowerLeft);
-
-        if (HasPositionChanged(requestedLowerLeft, clampedLowerLeft))
+        if (frame.ExceedsPrintable(width, height))
         {
-            warnings.Add(BuildClampWarning(
-                "Viewport",
-                requestedLowerLeft,
-                clampedLowerLeft,
-                sheetOutline));
+            warnings.Add(
+                $"Viewport is {SheetFrameGeometry.FeetToMm(width):F0}×{SheetFrameGeometry.FeetToMm(height):F0} mm " +
+                "and does not fit the printable field " +
+                $"{PrintableWidthMm(frame):F0}×{PrintableHeightMm(frame):F0} mm — reduce the view scale or use a larger sheet.");
         }
 
-        viewport.SetBoxCenter(GetCenterForLowerLeft(clampedLowerLeft, movedOutline));
+        WarnWhenMoved(frame, "Viewport", requestedLowerLeft, target, warnings);
     }
 
-    private static void ClampScheduleToSheet(
+    /// <summary>
+    /// <see cref="ScheduleSheetInstance.Create"/> treats the origin as the table's TOP-left and
+    /// the table grows downwards, so the requested point never matches what the instance ends up
+    /// occupying. Measure the placed instance and move it so its lower-left lands where the caller
+    /// asked — inside the frame and clear of the stamp.
+    /// </summary>
+    private static void FitScheduleIntoFrame(
         Document doc,
         ViewSheet sheet,
+        SheetFrameGeometry frame,
         ScheduleSheetInstance instance,
-        ViewportCreationInfo info,
+        ViewSchedule scheduleView,
+        XYZ requestedLowerLeft,
         List<string> warnings)
     {
-        var sheetOutline = sheet.Outline
-            ?? throw new InvalidOperationException($"Sheet '{sheet.SheetNumber}' has no outline.");
-        var requestedLowerLeft = GetRequestedLowerLeftPoint(sheetOutline, info);
-        var scheduleOutline = GetElementOutlineOnSheet(instance, sheet);
-        if (scheduleOutline == null)
+        var bbox = instance.get_BoundingBox(sheet);
+        if (bbox == null)
             return;
 
-        var clampedLowerLeft = ClampLowerLeftToSheetBounds(scheduleOutline, sheetOutline, requestedLowerLeft);
-        if (!HasPositionChanged(requestedLowerLeft, clampedLowerLeft))
-            return;
+        var width = bbox.Max.X - bbox.Min.X;
+        var height = bbox.Max.Y - bbox.Min.Y;
+        var target = frame.FitInside(width, height, requestedLowerLeft.X, requestedLowerLeft.Y);
 
         ElementTransformUtils.MoveElement(
             doc,
             instance.Id,
-            new XYZ(
-                clampedLowerLeft.X - requestedLowerLeft.X,
-                clampedLowerLeft.Y - requestedLowerLeft.Y,
-                0));
+            new XYZ(target.X - bbox.Min.X, target.Y - bbox.Min.Y, 0));
 
-        warnings.Add(BuildClampWarning(
-            "Schedule",
-            requestedLowerLeft,
-            clampedLowerLeft,
-            sheetOutline));
+        WarnWhenScheduleExceedsFrame(frame, width, height, scheduleView, warnings);
+        WarnWhenMoved(frame, "Schedule", requestedLowerLeft, target, warnings);
     }
 
-    private static Outline GetElementOutlineOnSheet(Element element, ViewSheet sheet)
+    /// <summary>
+    /// A table wider or taller than the printable field cannot be rescued by moving it —
+    /// fitting only pins the overflow to a corner. Say so, so the caller narrows the schedule
+    /// or picks a larger format instead of shipping a sheet with rows past the frame.
+    /// </summary>
+    private static void WarnWhenScheduleExceedsFrame(
+        SheetFrameGeometry frame,
+        double width,
+        double height,
+        ViewSchedule scheduleView,
+        List<string> warnings)
     {
-        var bbox = element.get_BoundingBox(sheet);
-        if (bbox == null)
-            return null;
+        if (height > PrintableHeightFt(frame) + 1e-9)
+        {
+            warnings.Add(
+                $"Schedule '{scheduleView.Name}' is {SheetFrameGeometry.FeetToMm(height):F0} mm tall but the printable " +
+                $"field is only {PrintableHeightMm(frame):F0} mm — rows will run past the frame. " +
+                "Split the schedule («Разбить таблицу») or use a larger sheet format.");
+        }
 
-        return new Outline(
-            new XYZ(bbox.Min.X, bbox.Min.Y, 0),
-            new XYZ(bbox.Max.X, bbox.Max.Y, 0));
+        if (width > PrintableWidthFt(frame) + 1e-9)
+        {
+            warnings.Add(
+                $"Schedule '{scheduleView.Name}' is {SheetFrameGeometry.FeetToMm(width):F0} mm wide but the printable " +
+                $"field is only {PrintableWidthMm(frame):F0} mm — call fit_schedule_to_sheet to narrow it.");
+        }
     }
 
-    private static XYZ GetRequestedLowerLeftPoint(BoundingBoxUV sheetOutline, ViewportCreationInfo info)
+    private static void WarnWhenFrameIsGuessed(
+        SheetFrameGeometry frame,
+        ViewSheet sheet,
+        List<string> warnings)
     {
-        return new XYZ(
-            sheetOutline.Min.U + MmToFeet(info.PositionX),
-            sheetOutline.Min.V + MmToFeet(info.PositionY),
-            0);
+        if (frame.FromTitleBlock)
+            return;
+
+        warnings.Add(
+            $"Sheet '{sheet.SheetNumber}' has no title block, so the frame was taken from the sheet outline; " +
+            "positions may not match the printed border.");
     }
 
-    private static XYZ GetCenterForLowerLeft(XYZ lowerLeft, Outline elementOutline)
-    {
-        var width = elementOutline.MaximumPoint.X - elementOutline.MinimumPoint.X;
-        var height = elementOutline.MaximumPoint.Y - elementOutline.MinimumPoint.Y;
-        return new XYZ(lowerLeft.X + width / 2.0, lowerLeft.Y + height / 2.0, 0);
-    }
-
-    private static XYZ ClampLowerLeftToSheetBounds(Outline elementOutline, BoundingBoxUV sheetOutline, XYZ requestedLowerLeft)
-    {
-        var width = elementOutline.MaximumPoint.X - elementOutline.MinimumPoint.X;
-        var height = elementOutline.MaximumPoint.Y - elementOutline.MinimumPoint.Y;
-
-        var minX = sheetOutline.Min.U;
-        var maxX = sheetOutline.Max.U - width;
-        var minY = sheetOutline.Min.V;
-        var maxY = sheetOutline.Max.V - height;
-
-        var targetX = ClampOrCenter(requestedLowerLeft.X, minX, maxX, sheetOutline.Min.U, sheetOutline.Max.U - width);
-        var targetY = ClampOrCenter(requestedLowerLeft.Y, minY, maxY, sheetOutline.Min.V, sheetOutline.Max.V - height);
-        return new XYZ(targetX, targetY, 0);
-    }
-
-    private static bool HasPositionChanged(XYZ requested, XYZ actual)
-    {
-        return Math.Abs(requested.X - actual.X) > 1e-9 || Math.Abs(requested.Y - actual.Y) > 1e-9;
-    }
-
-    private static string BuildClampWarning(
+    private static void WarnWhenMoved(
+        SheetFrameGeometry frame,
         string elementType,
         XYZ requestedLowerLeft,
         XYZ finalLowerLeft,
-        BoundingBoxUV sheetOutline)
+        List<string> warnings)
     {
-        var requestedX = FeetToMm(requestedLowerLeft.X - sheetOutline.Min.U);
-        var requestedY = FeetToMm(requestedLowerLeft.Y - sheetOutline.Min.V);
-        var finalX = FeetToMm(finalLowerLeft.X - sheetOutline.Min.U);
-        var finalY = FeetToMm(finalLowerLeft.Y - sheetOutline.Min.V);
-        return $"{elementType} position was clamped to sheet bounds: requested=({requestedX:F1}, {requestedY:F1}) mm, actual=({finalX:F1}, {finalY:F1}) mm.";
+        if (Math.Abs(requestedLowerLeft.X - finalLowerLeft.X) <= 1e-9 &&
+            Math.Abs(requestedLowerLeft.Y - finalLowerLeft.Y) <= 1e-9)
+        {
+            return;
+        }
+
+        var requestedX = SheetFrameGeometry.FeetToMm(requestedLowerLeft.X - frame.MinX);
+        var requestedY = SheetFrameGeometry.FeetToMm(requestedLowerLeft.Y - frame.MinY);
+        var finalX = SheetFrameGeometry.FeetToMm(finalLowerLeft.X - frame.MinX);
+        var finalY = SheetFrameGeometry.FeetToMm(finalLowerLeft.Y - frame.MinY);
+        warnings.Add(
+            $"{elementType} was moved inside the frame and clear of the stamp: " +
+            $"requested=({requestedX:F1}, {requestedY:F1}) mm, actual=({finalX:F1}, {finalY:F1}) mm.");
     }
 
-    private static double ClampOrCenter(
-        double value,
-        double minValue,
-        double maxValue,
-        double fallbackMin,
-        double fallbackMax)
+    /// <summary>Lower-left of the requested box, measured from the paper frame corner.</summary>
+    private static XYZ GetRequestedLowerLeftPoint(SheetFrameGeometry frame, ViewportCreationInfo info)
     {
-        if (minValue > maxValue)
-            return (fallbackMin + fallbackMax) / 2.0;
-
-        return Clamp(value, minValue, maxValue);
+        return new XYZ(
+            frame.MinX + MmToFeet(info.PositionX),
+            frame.MinY + MmToFeet(info.PositionY),
+            0);
     }
 
-    private static double Clamp(double value, double min, double max)
-    {
-        if (value < min)
-            return min;
+    private static double PrintableWidthFt(SheetFrameGeometry frame) =>
+        frame.PrintableMaxX - frame.PrintableMinX;
 
-        if (value > max)
-            return max;
+    private static double PrintableHeightFt(SheetFrameGeometry frame) =>
+        frame.PrintableMaxY - frame.PrintableMinY;
 
-        return value;
-    }
+    private static double PrintableWidthMm(SheetFrameGeometry frame) =>
+        SheetFrameGeometry.FeetToMm(PrintableWidthFt(frame));
+
+    private static double PrintableHeightMm(SheetFrameGeometry frame) =>
+        SheetFrameGeometry.FeetToMm(PrintableHeightFt(frame));
 
     private static void ApplyViewportDisplayTitle(Viewport viewport, bool displayTitle, List<string> warnings)
     {
@@ -394,8 +392,7 @@ public class PlaceViewOnSheetEventHandler : IExternalEventHandler, IWaitableExte
         throw new ArgumentException("A valid viewId or viewUniqueId is required.");
     }
 
-    private static double MmToFeet(double millimeters) => millimeters / 304.8;
-    private static double FeetToMm(double feet) => feet * 304.8;
+    private static double MmToFeet(double millimeters) => SheetFrameGeometry.MmToFeet(millimeters);
 
     private static long GetElementIdValue(ElementId elementId)
     {

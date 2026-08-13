@@ -15,20 +15,27 @@ if (-not (Test-Path $Example)) {
     exit 1
 }
 
+# Пути в конфиге абсолютные, поэтому подставляем реальный корень репозитория,
+# а не копируем шаблон как есть — иначе MCP не стартует на чужой машине.
+$RepoRootForJson = $RepoRoot.Replace("\", "/")
+$Config = (Get-Content $Example -Raw).Replace("<REPO_ROOT>", $RepoRootForJson)
+
 if (Test-Path $Target) {
     Write-Host "Файл уже существует: $Target" -ForegroundColor Yellow
     $answer = Read-Host "Перезаписать? (y/n)"
     if ($answer -ne "y") {
         Write-Host "Пропуск копирования mcp.json"
     } else {
-        Copy-Item $Example $Target -Force
+        Set-Content -Path $Target -Value $Config -Encoding utf8
         Write-Host "Обновлён: $Target" -ForegroundColor Green
     }
 } else {
     New-Item -ItemType Directory -Force -Path (Split-Path $Target) | Out-Null
-    Copy-Item $Example $Target -Force
+    Set-Content -Path $Target -Value $Config -Encoding utf8
     Write-Host "Создан: $Target" -ForegroundColor Green
 }
+
+Write-Host "  путь к серверу: $RepoRootForJson/server/build/index.js" -ForegroundColor DarkGray
 
 Write-Host ""
 Write-Host "Дальше вручную:" -ForegroundColor Cyan

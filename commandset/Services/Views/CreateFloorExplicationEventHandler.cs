@@ -612,7 +612,8 @@ namespace RevitMCPCommandSet.Services.Views
                     : _info.TitleBlockFamilyName.Trim(),
                 TitleBlockTypeName = string.IsNullOrWhiteSpace(_info.TitleBlockTypeName)
                     ? "Форма 3"
-                    : _info.TitleBlockTypeName.Trim()
+                    : _info.TitleBlockTypeName.Trim(),
+                SheetFormat = _info.SheetFormat ?? string.Empty
             };
 
             var sheetHandler = new CreateSheetEventHandler();
@@ -629,75 +630,7 @@ namespace RevitMCPCommandSet.Services.Views
             if (sheetResult.Warnings != null && sheetResult.Warnings.Count > 0)
                 warnings.AddRange(sheetResult.Warnings);
 
-            ApplySheetFormat(doc, sheetResult.SheetId, _info.SheetFormat, warnings);
-
             return sheetResult;
-        }
-
-        /// <summary>
-        /// Set the paper format (A0..A4) on the sheet's title block instance. ADSK
-        /// «ОсновнаяНадпись» drives its frame size from the integer «Формат А» parameter
-        /// (2 = A2). Default A3 fits only one ~234 mm schedule column, so экспликация columns
-        /// overlapped; A2 fits two columns like the reference RD sheet.
-        /// </summary>
-        private static void ApplySheetFormat(
-            Document doc,
-            long sheetId,
-            string format,
-            List<string> warnings)
-        {
-            if (string.IsNullOrWhiteSpace(format))
-                return;
-
-            var digits = new string(format.Where(char.IsDigit).ToArray());
-            if (!int.TryParse(digits, out var formatNumber))
-            {
-                warnings.Add($"Unrecognized sheetFormat '{format}'; sheet left with default format.");
-                return;
-            }
-
-            var sheet = doc.GetElement(
-                RevitMCPCommandSet.Utils.ElementIdExtensions.FromLong(sheetId)) as ViewSheet;
-            if (sheet == null)
-                return;
-
-            var titleBlock = new FilteredElementCollector(doc, sheet.Id)
-                .OfCategory(BuiltInCategory.OST_TitleBlocks)
-                .WhereElementIsNotElementType()
-                .FirstElement();
-
-            if (titleBlock == null)
-            {
-                warnings.Add("Title block not found on the explication sheet; format left as default.");
-                return;
-            }
-
-            try
-            {
-                using (var tx = new Transaction(doc, "Set explication sheet format"))
-                {
-                    tx.Start();
-                    var formatParam = titleBlock.LookupParameter("Формат А");
-                    if (formatParam != null && !formatParam.IsReadOnly)
-                    {
-                        formatParam.Set(formatNumber);
-                    }
-                    else
-                    {
-                        warnings.Add(
-                            "Parameter 'Формат А' not found or read-only on the title block; " +
-                            "sheet format left as default. Set the sheet format manually if needed.");
-                    }
-
-                    tx.Commit();
-                }
-
-                doc.Regenerate();
-            }
-            catch (Exception ex)
-            {
-                warnings.Add($"Failed to set sheet format to {format}: {ex.Message}");
-            }
         }
 
         private void PlaceScheduleOnSheet(

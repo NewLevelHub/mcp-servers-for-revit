@@ -1,6 +1,6 @@
 ---
-description: Узлы РД (деталировка) — генератор из CompoundStructure, штриховка, стили линий, разрезы, загрузка .rfa
-alwaysApply: true
+description: Узлы РД (деталировка) — генератор из CompoundStructure, штриховка, стили линий, разрезы, загрузка .rfa. Читать перед create_node_detail, create_detail_view, create_detail_lines, create_filled_regions в узлах, place_detail_component.
+alwaysApply: false
 ---
 
 # Узлы РД (деталировка)

@@ -25,6 +25,11 @@ namespace revit_mcp_plugin.Core
         private int _port = 8080;
         private int _activeClients;
         private bool _hadClient;
+        private string _lastStartError;
+        /// <summary>Guards the Start/Stop transition and <see cref="_clients"/>.</summary>
+        private readonly object _sync = new object();
+        /// <summary>Accepted connections, so Stop can close them instead of leaking the port.</summary>
+        private readonly List<TcpClient> _clients = new List<TcpClient>();
         private UIApplication _uiApp;
         private ICommandRegistry _commandRegistry;
         private Logger _logger;
@@ -48,6 +53,9 @@ namespace revit_mcp_plugin.Core
         }
 
         public bool IsRunning => _isRunning;
+
+        /// <summary>Message from the last failed <see cref="Start"/>, or null after a good start.</summary>
+        public string LastStartError => _lastStartError;
 
         public int Port
         {
@@ -128,56 +136,109 @@ namespace revit_mcp_plugin.Core
             _logger.Info("Command metrics log: {0}", _logger.MetricsLogFilePath);
         }
 
+        /// <summary>
+        /// Opens the listener. Auto-start (Idling), the ribbon command and the assistant pane all
+        /// call this, so the whole transition is serialized: two overlapping Starts used to let the
+        /// loser's catch clear _isRunning and null _listener for the winner's live socket, leaving
+        /// port 8080 bound with no accept loop and no reference to close it.
+        /// </summary>
         public void Start()
         {
-            if (_isRunning) return;
+            lock (_sync)
+            {
+                if (_isRunning) return;
 
+                try
+                {
+                    _activeClients = 0;
+                    _hadClient = false;
+                    _listener = new TcpListener(IPAddress.Any, _port);
+                    _listener.Start();
+
+                    // Only now: ListenForClients loops on _isRunning, so raising the flag before
+                    // the bind succeeds leaves it on for a listener that never came up.
+                    _isRunning = true;
+                    _lastStartError = null;
+
+                    _listenerThread = new Thread(ListenForClients)
+                    {
+                        IsBackground = true
+                    };
+                    _listenerThread.Start();
+                    _logger.Info("Socket service listening on port {0}", _port);
+                }
+                catch (Exception ex)
+                {
+                    // Release the socket before giving up, otherwise the port stays taken and every
+                    // later Start() dies with "address already in use".
+                    _isRunning = false;
+                    try { _listener?.Stop(); } catch { }
+                    _listener = null;
+                    _lastStartError = ex.Message;
+                    _logger.Error("Socket service failed to start on port {0}: {1}", _port, ex.Message);
+                    RibbonStatusManager.UpdateStatus(McpLinkStatus.Offline, ex.Message);
+                    return;
+                }
+            }
+
+            // Outside the lock and the try: a ribbon hiccup must neither deadlock nor tear down a
+            // listener that is already up.
             try
             {
-                _isRunning = true;
-                _activeClients = 0;
-                _hadClient = false;
-                _listener = new TcpListener(IPAddress.Any, _port);
-                _listener.Start();
-
-                _listenerThread = new Thread(ListenForClients)
-                {
-                    IsBackground = true
-                };
-                _listenerThread.Start();
                 RefreshRibbonStatus();
             }
             catch (Exception ex)
             {
-                _isRunning = false;
-                RibbonStatusManager.UpdateStatus(McpLinkStatus.Offline, ex.Message);
+                _logger.Error("Ribbon status refresh failed after start: {0}", ex.Message);
             }
         }
 
+        /// <summary>
+        /// Closes the listener and every accepted connection. Idempotent on purpose.
+        /// </summary>
         public void Stop()
         {
-            if (!_isRunning) return;
+            Thread listenerThread;
 
-            try
+            lock (_sync)
             {
+                // No early return on !_isRunning. The flag and the socket can disagree (a failed
+                // Start, a client thread still parked in Read), and skipping the close on that
+                // mismatch is exactly what left the port bound with nobody accepting.
                 _isRunning = false;
                 _activeClients = 0;
                 _hadClient = false;
 
-                _listener?.Stop();
-                _listener = null;
-
-                if(_listenerThread!=null && _listenerThread.IsAlive)
+                // Accepted sockets keep local port 8080 occupied on their own, and their threads
+                // sit blocked in stream.Read - clearing _isRunning never wakes them. Closing the
+                // socket does: Read throws, the finally releases the client.
+                foreach (var client in _clients.ToArray())
                 {
-                    _listenerThread.Join(1000);
+                    try { client.Close(); } catch { }
+                }
+                _clients.Clear();
+
+                try
+                {
+                    _listener?.Stop();
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error("Socket service failed to release port {0}: {1}", _port, ex.Message);
                 }
 
-                RibbonStatusManager.UpdateStatus(McpLinkStatus.Offline);
+                _listener = null;
+                listenerThread = _listenerThread;
+                _listenerThread = null;
             }
-            catch (Exception)
+
+            if (listenerThread != null && listenerThread.IsAlive)
             {
-                // log error
+                listenerThread.Join(1000);
             }
+
+            _logger.Info("Socket service stopped, port {0} released", _port);
+            RibbonStatusManager.UpdateStatus(McpLinkStatus.Offline);
         }
 
         private void RefreshRibbonStatus(string lastError = null)
@@ -229,6 +290,11 @@ namespace revit_mcp_plugin.Core
         private void HandleClientCommunication(object clientObj)
         {
             TcpClient tcpClient = (TcpClient)clientObj;
+            lock (_sync)
+            {
+                _clients.Add(tcpClient);
+            }
+
             NetworkStream stream = tcpClient.GetStream();
             var readBuffer = new List<byte>();
             var chunk = new byte[8192];
@@ -276,6 +342,11 @@ namespace revit_mcp_plugin.Core
             }
             finally
             {
+                lock (_sync)
+                {
+                    _clients.Remove(tcpClient);
+                }
+
                 tcpClient.Close();
                 var remaining = Interlocked.Decrement(ref _activeClients);
                 if (remaining < 0)

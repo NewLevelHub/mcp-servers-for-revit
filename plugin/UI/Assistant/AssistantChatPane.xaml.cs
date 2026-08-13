@@ -22,8 +22,11 @@ namespace revit_mcp_plugin.UI.Assistant
 {
     public partial class AssistantChatPane : UserControl
     {
+        /// <summary>Turn count after which the meter suggests starting a new thread.</summary>
+        private const int LongThreadTurns = 20;
+
         private UIApplication _uiApp;
-        private readonly LocalAgentHost _agent = new LocalAgentHost();
+        private IAssistantHost _agent;
         private readonly List<ChatAttachment> _pendingAttachments = new List<ChatAttachment>();
         private ScenarioPreset _pendingPreset;
         private CancellationTokenSource _runCts;
@@ -44,6 +47,7 @@ namespace revit_mcp_plugin.UI.Assistant
         public AssistantChatPane()
         {
             InitializeComponent();
+            _agent = AssistantHostFactory.Create(PluginSettingsStore.LoadSettings());
             Loaded += OnLoaded;
             _agent.StatusChanged += OnAgentStatus;
             _agent.ConfirmationRequested += OnConfirmationRequested;
@@ -90,8 +94,8 @@ namespace revit_mcp_plugin.UI.Assistant
             ServerBanner.Visibility = running ? System.Windows.Visibility.Collapsed : System.Windows.Visibility.Visible;
 
             var settings = PluginSettingsStore.LoadSettings();
-            if (string.IsNullOrWhiteSpace(settings.AssistantApiKey))
-                SetStatus("Нужен ключ", StatusTone.Warn);
+            if (string.IsNullOrWhiteSpace(settings.AssistantCursorApiKey))
+                SetStatus("Нужен Cursor key", StatusTone.Warn);
             else if (!running)
                 SetStatus("Выключен", StatusTone.Warn);
             else if (!_busy)
@@ -100,8 +104,30 @@ namespace revit_mcp_plugin.UI.Assistant
 
         private enum StatusTone { Ok, Busy, Warn }
 
+        /// <summary>
+        /// Caption behind the running clock, so the timer can re-render it every second
+        /// without swallowing whatever phase the turn is in ("Думает…", "Проверка норм…").
+        /// </summary>
+        private string _busyStatusBase;
+
+        private DateTime _busyStartedAt;
+        private DispatcherTimer _busyTimer;
+
         private void SetStatus(string text, StatusTone tone)
         {
+            // A turn can sit 30+ seconds inside the model with no tool call to show for
+            // it, and a frozen caption reads as a hang. Keep a clock on it.
+            if (tone == StatusTone.Busy)
+            {
+                _busyStatusBase = text;
+                StartBusyClock();
+                text = ComposeBusyStatus();
+            }
+            else
+            {
+                StopBusyClock();
+            }
+
             StatusText.Text = text;
             System.Windows.Media.Color bg;
             switch (tone)
@@ -119,10 +145,60 @@ namespace revit_mcp_plugin.UI.Assistant
             StatusPill.Background = new SolidColorBrush(bg);
         }
 
+        private string ComposeBusyStatus()
+        {
+            var elapsed = DateTime.UtcNow - _busyStartedAt;
+            if (elapsed < TimeSpan.Zero) elapsed = TimeSpan.Zero;
+            return $"{_busyStatusBase} {(int)elapsed.TotalMinutes}:{elapsed.Seconds:00}";
+        }
+
+        /// <summary>Runs from the first busy phase of a turn to the end, not per phase.</summary>
+        private void StartBusyClock()
+        {
+            if (_busyTimer == null)
+            {
+                _busyTimer = new DispatcherTimer(DispatcherPriority.Normal, Dispatcher)
+                {
+                    Interval = TimeSpan.FromSeconds(1),
+                };
+                _busyTimer.Tick += (s, e) => StatusText.Text = ComposeBusyStatus();
+            }
+
+            if (!_busyTimer.IsEnabled)
+            {
+                _busyStartedAt = DateTime.UtcNow;
+                _busyTimer.Start();
+            }
+        }
+
+        private void StopBusyClock()
+        {
+            if (_busyTimer != null && _busyTimer.IsEnabled)
+                _busyTimer.Stop();
+        }
+
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
             RefreshContextAndBanner();
             RefreshFeedbackBadge();
+            WarmUpEngine();
+        }
+
+        /// <summary>
+        /// Starts the Node bridge while the architect is still typing, so the first
+        /// message does not pay the ~15 s cold start. Errors surface on that message.
+        /// </summary>
+        private void WarmUpEngine()
+        {
+            var settings = PluginSettingsStore.LoadSettings();
+            if (string.IsNullOrWhiteSpace(settings.AssistantCursorApiKey))
+                return;
+
+            Task.Run(() =>
+            {
+                try { AssistantBridgeLauncher.EnsureRunning(settings); }
+                catch { /* reported when the first turn runs */ }
+            });
         }
 
         private void NewChatButton_Click(object sender, RoutedEventArgs e)
@@ -188,6 +264,9 @@ namespace revit_mcp_plugin.UI.Assistant
             _pendingPreset = null;
             InputBox.Clear();
             ClearPendingAttachments();
+            // A fresh chat is exactly when the launchpad is useful again.
+            _scenariosChosenByUser = false;
+            SetScenariosExpanded(true);
             ShowWelcomeMessage();
             if (showNotice)
             {
@@ -217,15 +296,49 @@ namespace revit_mcp_plugin.UI.Assistant
         {
             if (budget == null)
                 budget = _agent.GetHistoryBudget();
-            ContextMeterText.Text = budget.MeterLabel;
-            var pct = budget.FillPercent;
-            var color = pct >= 85
+
+            // Cursor manages its own context window, so a "12 of 13" cap would be a lie.
+            // Show the thread length and nudge towards "+ Новый" once it gets long.
+            var turns = budget.UserTurns;
+            ContextMeterText.Text = turns <= 0 ? "Новый диалог" : $"Вопросов: {turns}";
+
+            var longThread = turns >= LongThreadTurns;
+            ContextMeterText.Foreground = new SolidColorBrush(longThread
                 ? System.Windows.Media.Color.FromRgb(0xE8, 0xA0, 0x5A)
-                : System.Windows.Media.Color.FromRgb(0x7A, 0x9B, 0xB8);
-            ContextMeterText.Foreground = new SolidColorBrush(color);
-            ContextMeterText.ToolTip =
-                $"Память диалога: {budget.UserTurns} из {budget.MaxUserTurnsInclusive} реплик · " +
-                $"~{budget.EstimatedChars:N0} / {budget.MaxHistoryChars:N0} символов ({pct}%)";
+                : System.Windows.Media.Color.FromRgb(0x7A, 0x9B, 0xB8));
+            ContextMeterText.ToolTip = longThread
+                ? "Диалог длинный. Если ассистент начал путаться — нажмите «+ Новый»."
+                : "Вопросов в этом диалоге. «+ Новый» начинает разговор с чистого листа.";
+        }
+
+        /// <summary>
+        /// Set once the architect clicks the header, so the auto-collapse below never
+        /// overrides a choice they made themselves.
+        /// </summary>
+        private bool _scenariosChosenByUser;
+
+        private void ScenariosToggle_Click(object sender, RoutedEventArgs e)
+        {
+            _scenariosChosenByUser = true;
+            SetScenariosExpanded(ScenariosBody.Visibility != System.Windows.Visibility.Visible);
+        }
+
+        private void SetScenariosExpanded(bool expanded)
+        {
+            ScenariosBody.Visibility = expanded
+                ? System.Windows.Visibility.Visible
+                : System.Windows.Visibility.Collapsed;
+            ScenariosChevron.Text = expanded ? "⌄" : "›";
+        }
+
+        /// <summary>
+        /// The chips are a launchpad for the first question; after that they only steal
+        /// height from the answer. Fold them away once, leaving the header to bring them back.
+        /// </summary>
+        private void CollapseScenariosAfterFirstTurn()
+        {
+            if (_scenariosChosenByUser) return;
+            SetScenariosExpanded(false);
         }
 
         private void BuildChips()
@@ -312,6 +425,7 @@ namespace revit_mcp_plugin.UI.Assistant
             _busy = true;
             SetBusyUi(true);
             AddUserMessage(displayText, null);
+            CollapseScenariosAfterFirstTurn();
             RefreshContextAndBanner();
             SetStatus("Проверка норм…", StatusTone.Busy);
 
@@ -718,6 +832,7 @@ namespace revit_mcp_plugin.UI.Assistant
             _streamBuffer = "";
             _activeAskBubble = null;
             AddUserMessage(displayText, attachments);
+            CollapseScenariosAfterFirstTurn();
             RefreshContextAndBanner();
 
             var toAgent = string.IsNullOrWhiteSpace(agentText) ? displayText : agentText;
@@ -766,7 +881,7 @@ namespace revit_mcp_plugin.UI.Assistant
             catch (Exception ex)
             {
                 ClearStreamingBubble();
-                AddBotMessage("Ошибка: " + ex.Message, turnId, null, displayText);
+                AddBotMessage(DescribeTurnFailure(ex), turnId, null, displayText);
             }
             finally
             {
@@ -793,6 +908,29 @@ namespace revit_mcp_plugin.UI.Assistant
                 return;
             AddBotMessage(notice.Trim());
             SetStatus("Сильная модель…", StatusTone.Busy);
+        }
+
+        /// <summary>
+        /// A dropped connection surfaced as the raw .NET text ("Сбой операции чтения,
+        /// см. внутреннее исключение"), which tells an architect nothing about the one
+        /// thing that matters: the turn may have already changed the model before it died.
+        /// </summary>
+        private static string DescribeTurnFailure(Exception ex)
+        {
+            for (var e = ex; e != null; e = e.InnerException)
+            {
+                if (e is IOException
+                    || e is System.Net.Http.HttpRequestException
+                    || e is System.Net.Sockets.SocketException
+                    || e is System.Net.WebException)
+                {
+                    return "Связь с ассистентом оборвалась — проверьте интернет.\n" +
+                           "Часть работы могла успеть выполниться. Напишите «продолжи»: " +
+                           "он сверится с моделью, прежде чем что-то добавлять.";
+                }
+            }
+
+            return "Ошибка: " + ex.Message;
         }
 
         private static string FormatModelMeta(AgentTurnResult result)

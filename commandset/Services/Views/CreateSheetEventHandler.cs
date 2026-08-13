@@ -52,6 +52,9 @@ public class CreateSheetEventHandler : IExternalEventHandler, IWaitableExternalE
 
                 ApplyRevisions(doc, sheet, _sheetInfo, warnings);
 
+                doc.Regenerate();
+                ApplySheetFormat(doc, sheet, _sheetInfo.SheetFormat, warnings);
+
                 tx.Commit();
             }
 
@@ -120,9 +123,7 @@ public class CreateSheetEventHandler : IExternalEventHandler, IWaitableExternalE
             throw new InvalidOperationException("No title block types are loaded in the project.");
 
         // Prefer основная надпись (working sheets), never ADSK_Титул / cover sheets.
-        var preferred = symbols.FirstOrDefault(s =>
-            s.FamilyName.IndexOf("ОсновнаяНадпись", StringComparison.OrdinalIgnoreCase) >= 0
-            || s.FamilyName.IndexOf("основная надпись", StringComparison.OrdinalIgnoreCase) >= 0);
+        var preferred = symbols.FirstOrDefault(IsWorkingStampTitleBlock);
 
         if (preferred == null)
         {
@@ -142,10 +143,16 @@ public class CreateSheetEventHandler : IExternalEventHandler, IWaitableExternalE
         string familyName,
         string typeName)
     {
-        foreach (var symbol in new FilteredElementCollector(doc)
-                     .OfCategory(BuiltInCategory.OST_TitleBlocks)
-                     .OfClass(typeof(FamilySymbol))
-                     .Cast<FamilySymbol>())
+        var symbols = new FilteredElementCollector(doc)
+            .OfCategory(BuiltInCategory.OST_TitleBlocks)
+            .OfClass(typeof(FamilySymbol))
+            .Cast<FamilySymbol>()
+            .ToList();
+
+        // A caller that names only the format ("А3А") means a working sheet, but that type
+        // name also exists in ADSK_Титул (the cover page). Match основная надпись first so a
+        // format-only request never lands the drawing on the title page.
+        foreach (var symbol in symbols.OrderByDescending(IsWorkingStampTitleBlock))
         {
             var familyMatches = string.IsNullOrWhiteSpace(familyName) ||
                                 symbol.FamilyName.Equals(familyName.Trim(), StringComparison.OrdinalIgnoreCase);
@@ -159,6 +166,13 @@ public class CreateSheetEventHandler : IExternalEventHandler, IWaitableExternalE
         return null;
     }
 
+    private static bool IsWorkingStampTitleBlock(FamilySymbol symbol)
+    {
+        var family = symbol?.FamilyName ?? string.Empty;
+        return family.IndexOf("ОсновнаяНадпись", StringComparison.OrdinalIgnoreCase) >= 0
+               || family.IndexOf("основная надпись", StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
     private static FamilySymbol EnsureTitleBlockActive(Document doc, FamilySymbol symbol)
     {
         if (!symbol.IsActive)
@@ -168,6 +182,51 @@ public class CreateSheetEventHandler : IExternalEventHandler, IWaitableExternalE
         }
 
         return symbol;
+    }
+
+    /// <summary>
+    ///     Set the paper format on the sheet's title block instance. ADSK «ОсновнаяНадпись»
+    ///     draws one family at every size and picks the frame from the integer «Формат А»
+    ///     parameter (3 = A3), so the format cannot be chosen by type name.
+    /// </summary>
+    private static void ApplySheetFormat(
+        Document doc,
+        ViewSheet sheet,
+        string format,
+        List<string> warnings)
+    {
+        if (string.IsNullOrWhiteSpace(format))
+            return;
+
+        var digits = new string(format.Where(char.IsDigit).ToArray());
+        if (!int.TryParse(digits, out var formatNumber))
+        {
+            warnings.Add($"Unrecognized sheetFormat '{format}'; sheet left with the default format.");
+            return;
+        }
+
+        var titleBlock = new FilteredElementCollector(doc, sheet.Id)
+            .OfCategory(BuiltInCategory.OST_TitleBlocks)
+            .WhereElementIsNotElementType()
+            .FirstElement();
+
+        if (titleBlock == null)
+        {
+            warnings.Add("Sheet has no title block instance; sheetFormat was ignored.");
+            return;
+        }
+
+        var formatParam = titleBlock.LookupParameter("Формат А");
+        if (formatParam == null || formatParam.IsReadOnly)
+        {
+            warnings.Add(
+                $"Title block '{titleBlock.Name}' has no writable 'Формат А' parameter; " +
+                $"sheetFormat '{format}' was ignored. Pick a title block type of the needed size instead.");
+            return;
+        }
+
+        formatParam.Set(formatNumber);
+        doc.Regenerate();
     }
 
     private static void ApplyRevisions(

@@ -1,21 +1,30 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using revit_mcp_plugin.Configuration;
+using revit_mcp_plugin.Core.Assistant;
 
 namespace revit_mcp_plugin.UI
 {
+    /// <summary>
+    /// Assistant settings. Cursor is the only engine (REV-155) — there is no
+    /// backend switch and no OpenAI fields any more.
+    /// </summary>
     public partial class AssistantSettingsPage : Page
     {
-        private static readonly string[] DefaultModelOptions =
-        {
-            "gpt-4o-mini",
-            "gpt-4o",
-            "gpt-4-turbo",
-            "gpt-3.5-turbo",
-            "o3-mini",
-            "o1-mini",
-        };
+        // Ids verified against Cursor.models.list(); see CursorModelCatalog.
+        private static readonly string[] CursorModelLabels =
+            CursorModelCatalog.Entries.Select(e => e.Label).ToArray();
+
+        private static readonly string[] CursorModelIds =
+            CursorModelCatalog.Entries.Select(e => e.Id).ToArray();
+
+        private static readonly Brush OkBrush = new SolidColorBrush(Color.FromRgb(0x1F, 0x6B, 0x4A));
+        private static readonly Brush ErrBrush = new SolidColorBrush(Color.FromRgb(0xB3, 0x2D, 0x2D));
 
         public AssistantSettingsPage()
         {
@@ -32,34 +41,88 @@ namespace revit_mcp_plugin.UI
         private void LoadFromStore()
         {
             var s = PluginSettingsStore.LoadSettings();
-            ApiKeyBox.Password = s.AssistantApiKey ?? "";
-            BaseUrlBox.Text = string.IsNullOrWhiteSpace(s.AssistantApiBaseUrl)
-                ? "https://api.openai.com/v1"
-                : s.AssistantApiBaseUrl;
 
-            var model = string.IsNullOrWhiteSpace(s.AssistantModel)
-                ? "gpt-4o-mini"
-                : s.AssistantModel.Trim();
-            if (!string.IsNullOrWhiteSpace(s.AssistantModelSmart))
-                model = s.AssistantModelSmart.Trim();
+            CursorApiKeyBox.Password = s.AssistantCursorApiKey ?? "";
+            NodePathBox.Text = s.AssistantNodePath ?? "";
+            BridgePortBox.Text = (s.AssistantBridgePort > 0 ? s.AssistantBridgePort : 8790).ToString();
 
-            var items = new List<string>(DefaultModelOptions);
-            if (!items.Contains(model))
-                items.Insert(0, model);
+            // Normalize first: stored "auto-smart:*" ids are rejected by the Cursor API.
+            var cursorModel = CursorModelCatalog.Normalize(s.AssistantCursorModel);
+            var cursorIdx = Array.IndexOf(CursorModelIds, cursorModel);
+            if (cursorIdx < 0)
+            {
+                // Unknown id from a newer catalog — keep it selectable rather than silently swapping it.
+                var labels = new List<string>(CursorModelLabels) { cursorModel };
+                CursorModelCombo.ItemsSource = labels;
+                CursorModelCombo.SelectedIndex = labels.Count - 1;
+            }
+            else
+            {
+                CursorModelCombo.ItemsSource = CursorModelLabels;
+                CursorModelCombo.SelectedIndex = cursorIdx;
+            }
+        }
 
-            ModelCombo.ItemsSource = items;
-            ModelCombo.SelectedItem = model;
+        private string SelectedCursorModelId()
+        {
+            var i = CursorModelCombo.SelectedIndex;
+            if (i >= 0 && i < CursorModelIds.Length)
+                return CursorModelIds[i];
+            return CursorModelCatalog.Normalize(CursorModelCombo.SelectedItem as string);
+        }
+
+        private ServiceSettings CollectSettings()
+        {
+            var s = PluginSettingsStore.LoadSettings();
+            s.AssistantBackend = "cursor";
+            s.AssistantCursorApiKey = CursorApiKeyBox.Password ?? "";
+            s.AssistantCursorModel = SelectedCursorModelId();
+            s.AssistantNodePath = (NodePathBox.Text ?? "").Trim();
+
+            int port;
+            if (int.TryParse((BridgePortBox.Text ?? "").Trim(), out port) && port > 0 && port < 65536)
+                s.AssistantBridgePort = port;
+
+            return s;
         }
 
         private void SaveButton_Click(object sender, RoutedEventArgs e)
         {
-            var s = PluginSettingsStore.LoadSettings();
-            s.AssistantApiKey = ApiKeyBox.Password ?? "";
-            s.AssistantApiBaseUrl = (BaseUrlBox.Text ?? "").Trim();
-            s.AssistantModel = (ModelCombo.SelectedItem as string ?? "gpt-4o-mini").Trim();
-            s.AssistantModelSmart = "";
+            var s = CollectSettings();
             PluginSettingsStore.SaveSettings(s);
-            SaveStatusText.Text = "Сохранено";
+            BridgePortBox.Text = s.AssistantBridgePort.ToString();
+
+            SetStatus("Сохранено", ok: true);
+        }
+
+        private async void TestButton_Click(object sender, RoutedEventArgs e)
+        {
+            var s = CollectSettings();
+            PluginSettingsStore.SaveSettings(s);
+
+            TestButton.IsEnabled = false;
+            SetStatus("Проверяю…", ok: true);
+
+            try
+            {
+                // Starting the bridge is the honest test: it validates Node, paths and the key.
+                await Task.Run(() => AssistantBridgeLauncher.EnsureRunning(s)).ConfigureAwait(true);
+                SetStatus("Движок запущен, ассистент готов", ok: true);
+            }
+            catch (Exception ex)
+            {
+                SetStatus(ex.Message, ok: false);
+            }
+            finally
+            {
+                TestButton.IsEnabled = true;
+            }
+        }
+
+        private void SetStatus(string text, bool ok)
+        {
+            SaveStatusText.Foreground = ok ? OkBrush : ErrBrush;
+            SaveStatusText.Text = text;
         }
     }
 }

@@ -11,9 +11,9 @@
         "node": ">=20.0.0"
     },
     "scripts": {
-        "clean": "rimraf build",
+        "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('build', { recursive: true, force: true });\"",
         "prebuild": "npm run clean",
-        "build": "tsc",
+        "build": "npx tsc",
         "test": "npm run build && node --test \"build/normatives/**/*.test.js\" \"build/utils/*.test.js\" \"build/cad/**/*.test.js\" \"build/tools/*.test.js\"",
         "seed:norms": "npm run build && node build/scripts/seed-norm-library.js",
         "seed:residential-norms": "npm run build && node build/scripts/seed-residential-norms.js",
@@ -55,7 +55,7 @@
     },
     "devDependencies": {
         "@types/better-sqlite3": "^7.6.13",
-        "@types/node": "^22.13.10",
+        "@types/node": "^20.19.43",
         "@types/ws": "^8.18.0",
         "rimraf": "^5.0.10",
         "typescript": "^5.8.2"

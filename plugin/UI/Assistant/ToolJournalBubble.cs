@@ -68,7 +68,12 @@ namespace revit_mcp_plugin.UI.Assistant
         {
             if (ev?.AllSteps == null) return;
             var steps = ev.AllSteps;
-            UpdateHeader(steps.Count);
+            // Rows, not calls: repeats fold into one row as "×N". Count the calls so
+            // the header matches what the rows add up to.
+            var calls = 0;
+            foreach (var s in steps)
+                calls += s == null ? 0 : Math.Max(1, s.Round);
+            UpdateHeader(calls);
 
             foreach (var step in steps)
             {

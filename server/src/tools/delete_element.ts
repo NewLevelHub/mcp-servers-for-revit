@@ -5,7 +5,7 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerDeleteElementTool(server: McpServer) {
   server.tool(
     "delete_element",
-    "Delete one or more elements from the Revit model by their element IDs.",
+    "Delete elements from the Revit model by id. The result names what was targeted (requested) and how many extra dependents Revit removed with them (dependentsRemoved) — deleting a sheet also drops its viewports and title block, so count is normally larger than the id list. Ids listed in missingIds are already gone; never call again with them.",
     {
       elementIds: z
         .array(z.string())
