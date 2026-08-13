@@ -1,5 +1,6 @@
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using RevitMCPCommandSet.Utils;
 using RevitMCPSDK.API.Interfaces;
 
 namespace RevitMCPCommandSet.Services
@@ -11,6 +12,23 @@ namespace RevitMCPCommandSet.Services
 
         // 成功删除的元素数量
         public int DeletedCount { get; private set; }
+
+        /// <summary>
+        /// What the caller asked to delete, as «Категория «Имя» (id)». doc.Delete also removes
+        /// dependents, so a request for one sheet can report a count of seven — the journal has
+        /// to say what was actually targeted, not just a number.
+        /// </summary>
+        public List<string> DeletedDescriptions { get; } = new List<string>();
+
+        /// <summary>Ids that were not in the document (already deleted, or from another model).</summary>
+        public List<string> MissingIds { get; } = new List<string>();
+
+        /// <summary>Ids that were not numbers at all.</summary>
+        public List<string> InvalidIds { get; } = new List<string>();
+
+        /// <summary>Set when the delete transaction itself failed.</summary>
+        public string ErrorMessage { get; private set; } = string.Empty;
+
         // 状态同步对象
         public bool TaskCompleted { get; private set; }
         private readonly ManualResetEvent _resetEvent = new ManualResetEvent(false);
@@ -36,58 +54,64 @@ namespace RevitMCPCommandSet.Services
             {
                 var doc = app.ActiveUIDocument.Document;
                 DeletedCount = 0;
+                DeletedDescriptions.Clear();
+                MissingIds.Clear();
+                InvalidIds.Clear();
+                ErrorMessage = string.Empty;
+
                 if (ElementIds == null || ElementIds.Length == 0)
                 {
+                    ErrorMessage = "elementIds is empty.";
                     IsSuccess = false;
                     return;
                 }
-                // 创建待删除元素ID集合
-                List<ElementId> elementIdsToDelete = new List<ElementId>();
-                List<string> invalidIds = new List<string>();
+
+                var elementIdsToDelete = new List<ElementId>();
                 foreach (var idStr in ElementIds)
                 {
-                    if (int.TryParse(idStr, out int elementIdValue))
+                    if (!int.TryParse(idStr, out var elementIdValue))
                     {
-                        var elementId = new ElementId(elementIdValue);
-                        // 检查元素是否存在
-                        if (doc.GetElement(elementId) != null)
-                        {
-                            elementIdsToDelete.Add(elementId);
-                        }
+                        InvalidIds.Add(idStr);
+                        continue;
                     }
-                    else
-                    {
-                        invalidIds.Add(idStr);
-                    }
-                }
-                if (invalidIds.Count > 0)
-                {
-                    TaskDialog.Show("警告", $"以下ID无效或元素不存在：{string.Join(", ", invalidIds)}");
-                }
-                // 如果有可删除的元素，则执行删除
-                if (elementIdsToDelete.Count > 0)
-                {
-                    using (var transaction = new Transaction(doc, "Delete Elements"))
-                    {
-                        transaction.Start();
 
-                        // 批量删除元素
-                        ICollection<ElementId> deletedIds = doc.Delete(elementIdsToDelete);
-                        DeletedCount = deletedIds.Count;
-
-                        transaction.Commit();
+                    var elementId = new ElementId(elementIdValue);
+                    var element = doc.GetElement(elementId);
+                    if (element == null)
+                    {
+                        MissingIds.Add(idStr);
+                        continue;
                     }
-                    IsSuccess = true;
+
+                    elementIdsToDelete.Add(elementId);
+                    DeletedDescriptions.Add(Describe(element));
                 }
-                else
+
+                // Nothing left to delete is a normal answer for an id that is already gone —
+                // never a modal dialog: this runs on an MCP call with no one at the keyboard,
+                // and a TaskDialog would block Revit until someone clicks it.
+                if (elementIdsToDelete.Count == 0)
                 {
-                    TaskDialog.Show("错误", "没有有效的元素可以删除");
+                    ErrorMessage = InvalidIds.Count > 0
+                        ? "No element ids could be parsed."
+                        : "None of the requested elements exist in the active document (already deleted?).";
                     IsSuccess = false;
+                    return;
                 }
+
+                using (var transaction = new Transaction(doc, "Delete Elements"))
+                {
+                    transaction.Start();
+                    var deletedIds = doc.Delete(elementIdsToDelete);
+                    DeletedCount = deletedIds.Count;
+                    transaction.Commit();
+                }
+
+                IsSuccess = true;
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("错误", "删除元素失败: " + ex.Message);
+                ErrorMessage = ex.Message;
                 IsSuccess = false;
             }
             finally
@@ -96,6 +120,20 @@ namespace RevitMCPCommandSet.Services
                 _resetEvent.Set();
             }
         }
+        private static string Describe(Element element)
+        {
+            var category = element.Category?.Name;
+            var name = element.Name;
+            var id = element.Id.GetValue();
+
+            if (string.IsNullOrWhiteSpace(category))
+                return string.IsNullOrWhiteSpace(name) ? $"id {id}" : $"'{name}' (id {id})";
+
+            return string.IsNullOrWhiteSpace(name)
+                ? $"{category} (id {id})"
+                : $"{category} '{name}' (id {id})";
+        }
+
         public string GetName()
         {
             return "删除元素";

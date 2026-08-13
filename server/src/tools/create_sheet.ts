@@ -16,6 +16,13 @@ const sheetSchema = z.object({
     .optional()
     .default("")
     .describe("Title block type name from the project"),
+  sheetFormat: z
+    .string()
+    .optional()
+    .default("")
+    .describe(
+      'Paper format "A0".."A4". ADSK "ОсновнаяНадпись" is one family at every size and picks the frame from its "Формат А" parameter, so ask for the format here instead of guessing a type name.'
+    ),
   revisionIds: z.array(z.number()).optional().default([]),
   parameters: z.record(z.unknown()).optional(),
 });
@@ -23,10 +30,10 @@ const sheetSchema = z.object({
 export function registerCreateSheetTool(server: McpServer) {
   server.tool(
     "create_sheet",
-    "Create a Revit sheet with a title block from the current project. Coordinates and view placement use place_view_on_sheet.",
+    "Create a Revit working sheet with a title block from the current project. Views and schedules are placed afterwards with place_view_on_sheet. Leave the title block unset to get the project's основная надпись (working stamp) and pass sheetFormat for the size — never request an ADSK_Титул type, that is the cover page.",
     {
       sheet: sheetSchema.describe(
-        "Sheet settings. Provide titleBlockFamilyName/titleBlockTypeName or titleBlockTypeId from project title blocks."
+        "Sheet settings. Prefer sheetFormat (e.g. \"A3\") over naming a title block type; titleBlockFamilyName/titleBlockTypeName/titleBlockTypeId only when a specific stamp is required."
       ),
     },
     async (args) => {

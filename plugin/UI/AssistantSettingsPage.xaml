@@ -4,7 +4,7 @@
       xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
       xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
       mc:Ignorable="d"
-      d:DesignHeight="450" d:DesignWidth="620"
+      d:DesignHeight="560" d:DesignWidth="620"
       Background="White"
       FontFamily="Segoe UI">
   <Page.Resources>
@@ -15,6 +15,7 @@
       <Setter Property="BorderThickness" Value="1"/>
       <Setter Property="Background" Value="#F7FAFC"/>
       <Setter Property="FontSize" Value="13"/>
+      <Setter Property="VerticalContentAlignment" Value="Center"/>
     </Style>
     <Style TargetType="PasswordBox" x:Key="FieldPass">
       <Setter Property="Height" Value="34"/>
@@ -23,6 +24,7 @@
       <Setter Property="BorderThickness" Value="1"/>
       <Setter Property="Background" Value="#F7FAFC"/>
       <Setter Property="FontSize" Value="13"/>
+      <Setter Property="VerticalContentAlignment" Value="Center"/>
     </Style>
     <Style TargetType="ComboBox" x:Key="FieldCombo">
       <Setter Property="Height" Value="34"/>
@@ -32,51 +34,87 @@
       <Setter Property="Background" Value="#F7FAFC"/>
       <Setter Property="FontSize" Value="13"/>
       <Setter Property="IsEditable" Value="False"/>
+      <Setter Property="VerticalContentAlignment" Value="Center"/>
+    </Style>
+    <Style TargetType="TextBlock" x:Key="FieldLabel">
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="Foreground" Value="#5B6B7C"/>
+      <Setter Property="Margin" Value="0,0,0,4"/>
+    </Style>
+    <Style TargetType="TextBlock" x:Key="Hint">
+      <Setter Property="FontSize" Value="11.5"/>
+      <Setter Property="Foreground" Value="#5B6B7C"/>
+      <Setter Property="TextWrapping" Value="Wrap"/>
+      <Setter Property="Margin" Value="0,8,0,0"/>
     </Style>
   </Page.Resources>
 
   <ScrollViewer VerticalScrollBarVisibility="Auto">
     <StackPanel Margin="4,0,12,12">
+
       <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
         <Border Width="32" Height="32" CornerRadius="16" Background="#1A2744" Margin="0,0,10,0">
           <TextBlock Text="✦" Foreground="White" FontSize="14"
                      HorizontalAlignment="Center" VerticalAlignment="Center"/>
         </Border>
         <StackPanel VerticalAlignment="Center">
-          <TextBlock Text="Ассистент" FontSize="22" FontWeight="SemiBold" Foreground="#1A2744"/>
+          <TextBlock Text="AI-ассистент" FontSize="22" FontWeight="SemiBold" Foreground="#1A2744"/>
+          <TextBlock Text="Движок: агент Cursor с инструментами Revit"
+                     FontSize="12" Foreground="#5B6B7C"/>
         </StackPanel>
       </StackPanel>
 
-      <TextBlock Text="Ключ организации настраивает IT. Архитектор открывает чат на ленте и пишет запросы."
-                 Foreground="#5B6B7C" Margin="0,0,0,16" TextWrapping="Wrap" FontSize="12.5"/>
+      <TextBlock Text="Ключ организации настраивает IT. Архитектор просто открывает чат на ленте и пишет запросы обычным языком."
+                 Foreground="#5B6B7C" Margin="0,6,0,16" TextWrapping="Wrap" FontSize="12.5"/>
 
       <Border Background="#F0F4F8" BorderBrush="#D5DEE8" BorderThickness="1"
               CornerRadius="12" Padding="16" Margin="0,0,0,14">
         <StackPanel>
-          <TextBlock Text="Подключение к модели" FontSize="15" FontWeight="SemiBold"
+          <TextBlock Text="Подключение" FontSize="15" FontWeight="SemiBold"
                      Foreground="#1A2744" Margin="0,0,0,12"/>
 
-          <TextBlock Text="Ключ API" FontSize="12" Foreground="#5B6B7C" Margin="0,0,0,4"/>
-          <PasswordBox x:Name="ApiKeyBox" Style="{StaticResource FieldPass}"/>
+          <TextBlock Text="Cursor API key" Style="{StaticResource FieldLabel}"/>
+          <PasswordBox x:Name="CursorApiKeyBox" Style="{StaticResource FieldPass}"/>
+          <TextBlock Style="{StaticResource Hint}"
+                     Text="Создаётся в Cursor Dashboard → Integrations → API Keys."/>
 
-          <TextBlock Text="Базовый URL (совместимый с OpenAI)" FontSize="12" Foreground="#5B6B7C"
-                     Margin="0,12,0,4"/>
-          <TextBox x:Name="BaseUrlBox" Style="{StaticResource FieldBox}"
-                   Text="https://api.openai.com/v1"/>
-
-          <TextBlock Text="Модель" FontSize="12" Foreground="#5B6B7C"
-                     Margin="0,12,0,4"/>
-          <ComboBox x:Name="ModelCombo" Style="{StaticResource FieldCombo}"/>
+          <TextBlock Text="Модель" Style="{StaticResource FieldLabel}" Margin="0,14,0,4"/>
+          <ComboBox x:Name="CursorModelCombo" Style="{StaticResource FieldCombo}"/>
+          <TextBlock Style="{StaticResource Hint}"
+                     Text="«Авто» — Cursor сам подбирает модель под сложность задачи. Для тяжёлых узлов и норм можно закрепить Opus."/>
         </StackPanel>
       </Border>
+
+      <Expander Header="Дополнительно" FontSize="13" Foreground="#1A2744" Margin="0,0,0,14">
+        <Border Background="#F7FAFC" BorderBrush="#D5DEE8" BorderThickness="1"
+                CornerRadius="12" Padding="16" Margin="0,8,0,0">
+          <StackPanel>
+            <TextBlock Text="Node.js (если не найден автоматически)" Style="{StaticResource FieldLabel}"/>
+            <TextBox x:Name="NodePathBox" Style="{StaticResource FieldBox}"
+                     ToolTip="C:\Program Files\nodejs\node.exe"/>
+            <TextBlock Style="{StaticResource Hint}"
+                       Text="Нужен Node.js 22.13 или новее — на нём работает движок ассистента."/>
+
+            <TextBlock Text="Порт локального движка" Style="{StaticResource FieldLabel}" Margin="0,14,0,4"/>
+            <TextBox x:Name="BridgePortBox" Style="{StaticResource FieldBox}" Width="140"
+                     HorizontalAlignment="Left"/>
+            <TextBlock Style="{StaticResource Hint}"
+                       Text="Меняйте, только если 8790 занят другой программой."/>
+          </StackPanel>
+        </Border>
+      </Expander>
 
       <StackPanel Orientation="Horizontal">
         <Button Content="Сохранить" Width="128" Height="36" Click="SaveButton_Click"
                 Background="#1A2744" Foreground="White" FontWeight="SemiBold" BorderThickness="0"
                 Cursor="Hand"/>
+        <Button x:Name="TestButton" Content="Проверить связь" Width="150" Height="36" Margin="10,0,0,0"
+                Click="TestButton_Click" Background="White" Foreground="#1A2744"
+                BorderBrush="#D5DEE8" BorderThickness="1" Cursor="Hand"/>
         <TextBlock x:Name="SaveStatusText" Margin="14,0,0,0" VerticalAlignment="Center"
-                   Foreground="#1F6B4A" FontWeight="SemiBold"/>
+                   Foreground="#1F6B4A" FontWeight="SemiBold" TextWrapping="Wrap"/>
       </StackPanel>
+
     </StackPanel>
   </ScrollViewer>
 </Page>

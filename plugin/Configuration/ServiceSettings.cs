@@ -29,6 +29,38 @@ namespace revit_mcp_plugin.Configuration
         [JsonProperty("autoStartOnLaunch")]
         public bool AutoStartOnLaunch { get; set; } = true;
 
+        /// <summary>openai = legacy Chat Completions; cursor = Cursor SDK bridge (REV-155).</summary>
+        [JsonProperty("assistantBackend")]
+        public string AssistantBackend { get; set; } = "cursor";
+
+        /// <summary>Cursor API key (organization). Used when <see cref="AssistantBackend"/> = cursor.</summary>
+        [JsonProperty("assistantCursorApiKey")]
+        public string AssistantCursorApiKey { get; set; } = "";
+
+        /// <summary>Cursor model id. "default" is the auto-router — see CursorModelCatalog.</summary>
+        [JsonProperty("assistantCursorModel")]
+        public string AssistantCursorModel { get; set; } = "default";
+
+        /// <summary>Local HTTP port for assistant-bridge (default 8790).</summary>
+        [JsonProperty("assistantBridgePort")]
+        public int AssistantBridgePort { get; set; } = 8790;
+
+        /// <summary>Optional path to node.exe (Node 22.13+).</summary>
+        [JsonProperty("assistantNodePath")]
+        public string AssistantNodePath { get; set; } = "";
+
+        /// <summary>Optional path to assistant-bridge/dist/index.js.</summary>
+        [JsonProperty("assistantBridgePath")]
+        public string AssistantBridgePath { get; set; } = "";
+
+        /// <summary>Optional cwd with .cursor/rules for Cursor agent.</summary>
+        [JsonProperty("assistantRulesPath")]
+        public string AssistantRulesPath { get; set; } = "";
+
+        /// <summary>Optional path to mcp server/build/index.js.</summary>
+        [JsonProperty("assistantMcpServerPath")]
+        public string AssistantMcpServerPath { get; set; } = "";
+
         /// <summary>OpenAI-compatible API key (organization). Architect does not configure this.</summary>
         [JsonProperty("assistantApiKey")]
         public string AssistantApiKey { get; set; } = "";

@@ -992,16 +992,22 @@ namespace revit_mcp_plugin.Core.Assistant
                       ("positionX", N(), "mm from sheet lower-left"),
                       ("positionY", N(), "mm from sheet lower-left"),
                       ("includeLevels", B(), "true"), ("includeRoomsByPurpose", B(), "true"))),
-                T("create_sheet", "Create sheet with project title block.", P(
-                    ("sheetNumber", S(), null), ("sheetName", S(), null), ("titleBlockName", S(), null))),
+                T("create_sheet",
+                    "Create a working sheet. Leave titleBlockName empty to get основная надпись " +
+                    "(ADSK_Титул is the project cover page — never place drawings on it); " +
+                    "set the size with sheetFormat.",
+                    P(("sheetNumber", S(), null), ("sheetName", S(), null),
+                      ("sheetFormat", S(), "A3 / A2 — paper size, preferred over a type name"),
+                      ("titleBlockName", S(), null))),
                 T("place_view_on_sheet",
-                    "Place an existing floor plan or schedule on a sheet. " +
+                    "Place an existing floor plan or schedule on a sheet. Kept inside the printed " +
+                    "frame and clear of the stamp automatically — do not retry with other coordinates. " +
                     "Do not call without viewId. Not for TEP — use render_tep_table.",
                     P(R("sheetId", "viewId"),
                       ("sheetId", N(), "sheet element id"),
                       ("viewId", N(), "view or schedule element id"),
-                      ("positionX", N(), "mm from sheet lower-left"),
-                      ("positionY", N(), "mm from sheet lower-left"),
+                      ("positionX", N(), "mm from the printed frame lower-left"),
+                      ("positionY", N(), "mm from the printed frame lower-left"),
                       ("placement", O(), "optional nested {sheetId,viewId,positionX,positionY}"))),
                 T("auto_layout_sheet",
                     "Auto-pack existing views/schedules on a sheet. Pass real view ids in items. Not for TEP table.",

@@ -1051,8 +1051,10 @@ public class AutoLayoutSheetEventHandler : IExternalEventHandler, IWaitableExter
     }
 
     /// <summary>
-    ///     "Форма 3" / ADSK_ОсновнаяНадпись is a stamp, not a sheet format. Prefer ADSK_Титул A3
-    ///     so the printable frame matches the title block the user sees.
+    ///     ADSK «ОсновнаяНадпись» (Форма 3/5/6) draws the full ГОСТ frame plus the stamp — it is
+    ///     the working sheet. ADSK_Титул is the cover page: it carries the project title text and
+    ///     no working stamp, so a schedule or plan must never land on it. Prefer основная надпись
+    ///     for anything this tool creates.
     /// </summary>
     private static FamilySymbol ResolveTitleBlockForNewSheet(
         Document doc,
@@ -1060,94 +1062,66 @@ public class AutoLayoutSheetEventHandler : IExternalEventHandler, IWaitableExter
         List<string> warnings)
     {
         var requested = FindTitleBlock(doc, info.TitleBlockFamilyName, info.TitleBlockTypeName);
-        if (requested != null && !IsStampOnlyTitleBlock(requested))
+        if (requested != null && !IsCoverSheetTitleBlock(requested))
             return requested;
 
-        if (requested != null && IsStampOnlyTitleBlock(requested))
+        var working = FindWorkingTitleBlock(doc);
+        if (working == null)
+            return requested;
+
+        if (requested != null)
         {
-            var paper = FindTitleBlock(doc, "ADSK_Титул", "А3А")
-                        ?? FindTitleBlock(doc, "ADSK_Титул1", "А3А 2")
-                        ?? FindLargestPaperTitleBlock(doc);
-            if (paper != null)
-            {
-                warnings.Add(
-                    $"'{requested.FamilyName} - {requested.Name}' is a stamp without a full sheet frame; " +
-                    $"using paper title block '{paper.FamilyName} - {paper.Name}' so layout stays inside the A3 border.");
-                return paper;
-            }
+            warnings.Add(
+                $"'{requested.FamilyName} - {requested.Name}' is a cover-page title block; " +
+                $"using working title block '{working.FamilyName} - {working.Name}' instead.");
         }
 
-        return requested ?? FindTitleBlock(doc, string.Empty, string.Empty);
+        return working;
     }
 
-    private static bool IsStampOnlyTitleBlock(FamilySymbol symbol)
+    /// <summary>ADSK_Титул / «Начальный вид» — cover pages, not working sheets.</summary>
+    private static bool IsCoverSheetTitleBlock(FamilySymbol symbol)
     {
         if (symbol == null)
             return false;
 
         var family = symbol.FamilyName ?? string.Empty;
-        var name = symbol.Name ?? string.Empty;
+        return family.IndexOf("Титул", StringComparison.OrdinalIgnoreCase) >= 0
+               || family.IndexOf("Начальный", StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    /// <summary>First «основная надпись» type, else any non-cover title block.</summary>
+    private static FamilySymbol FindWorkingTitleBlock(Document doc)
+    {
+        var symbols = new FilteredElementCollector(doc)
+            .OfCategory(BuiltInCategory.OST_TitleBlocks)
+            .OfClass(typeof(FamilySymbol))
+            .Cast<FamilySymbol>()
+            .ToList();
+
+        return symbols.FirstOrDefault(IsWorkingStampTitleBlock)
+               ?? symbols.FirstOrDefault(symbol => !IsCoverSheetTitleBlock(symbol));
+    }
+
+    private static bool IsWorkingStampTitleBlock(FamilySymbol symbol)
+    {
+        var family = symbol?.FamilyName ?? string.Empty;
         return family.IndexOf("ОсновнаяНадпись", StringComparison.OrdinalIgnoreCase) >= 0
-               || name.StartsWith("Форма ", StringComparison.OrdinalIgnoreCase)
-               || name.Equals("Форма 3", StringComparison.OrdinalIgnoreCase)
-               || name.Equals("Форма 5", StringComparison.OrdinalIgnoreCase)
-               || name.Equals("Форма 6", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static FamilySymbol FindLargestPaperTitleBlock(Document doc)
-    {
-        FamilySymbol best = null;
-        var bestScore = 0.0;
-
-        foreach (var symbol in new FilteredElementCollector(doc)
-                     .OfCategory(BuiltInCategory.OST_TitleBlocks)
-                     .OfClass(typeof(FamilySymbol))
-                     .Cast<FamilySymbol>())
-        {
-            if (IsStampOnlyTitleBlock(symbol))
-                continue;
-
-            // Prefer symbols with width/height parameters near A3.
-            var width = TryGetTypeLengthMm(symbol, "Ширина") ?? TryGetTypeLengthMm(symbol, "Width");
-            var height = TryGetTypeLengthMm(symbol, "Высота") ?? TryGetTypeLengthMm(symbol, "Height");
-            var score = (width ?? 0) * (height ?? 0);
-            if (score > bestScore)
-            {
-                bestScore = score;
-                best = symbol;
-            }
-        }
-
-        return best;
-    }
-
-    private static double? TryGetTypeLengthMm(FamilySymbol symbol, string parameterName)
-    {
-        var parameter = symbol.LookupParameter(parameterName);
-        if (parameter == null || !parameter.HasValue)
-            return null;
-
-        try
-        {
-            return parameter.AsDouble() * MmPerFoot;
-        }
-        catch
-        {
-            return null;
-        }
+               || family.IndexOf("основная надпись", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
     private static FamilySymbol FindTitleBlock(Document doc, string familyName, string typeName)
     {
-        FamilySymbol fallback = null;
+        var symbols = new FilteredElementCollector(doc)
+            .OfCategory(BuiltInCategory.OST_TitleBlocks)
+            .OfClass(typeof(FamilySymbol))
+            .Cast<FamilySymbol>()
+            .ToList();
 
-        foreach (var symbol in new FilteredElementCollector(doc)
-                     .OfCategory(BuiltInCategory.OST_TitleBlocks)
-                     .OfClass(typeof(FamilySymbol))
-                     .Cast<FamilySymbol>())
+        // A bare type name like "А3А" exists in several families, and the cover-page one
+        // must not win the race — search working stamps first.
+        foreach (var symbol in symbols.OrderByDescending(IsWorkingStampTitleBlock))
         {
-            fallback ??= symbol;
-
             var familyMatches = string.IsNullOrWhiteSpace(familyName) ||
                                 symbol.FamilyName.Equals(familyName.Trim(), StringComparison.OrdinalIgnoreCase);
             var typeMatches = string.IsNullOrWhiteSpace(typeName) ||
@@ -1158,7 +1132,7 @@ public class AutoLayoutSheetEventHandler : IExternalEventHandler, IWaitableExter
         }
 
         // Requested title block not matched: any loaded one keeps the sheet usable.
-        return fallback;
+        return symbols.FirstOrDefault();
     }
 
     private static string GetUniqueSheetNumber(Document doc, ViewSheet ownSheet, string requestedNumber)

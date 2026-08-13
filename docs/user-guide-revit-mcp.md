@@ -72,9 +72,12 @@
 
    - из `.cursor/mcp.json.example`
 
-   - в `.cursor/mcp.json`  
+   - в `.cursor/mcp.json`
 
-   (или выполните скрипт `scripts/setup-user.ps1` — см. ниже)
+   - замените в нём `<REPO_ROOT>` на путь к папке репозитория (через `/`,
+     например `C:/dev/mcp-servers-for-revit`)
+
+   (или выполните скрипт `scripts/setup-user.ps1` — он подставит путь сам, см. ниже)
 
 2. Перезапустите Cursor.
 
@@ -134,7 +137,9 @@
 
 
 
-Скрипт скопирует `.cursor/mcp.json.example` → `.cursor/mcp.json` и выведет чеклист.
+Скрипт создаст `.cursor/mcp.json` из `.cursor/mcp.json.example`, подставив путь к вашему
+репозиторию вместо `<REPO_ROOT>`, и выведет чеклист. Сам `.cursor/mcp.json` в git не хранится —
+пути в нём машинозависимые.
 
 
 

@@ -152,6 +152,13 @@ namespace revit_mcp_plugin.Core
             }
             catch { }
 
+            // Otherwise the Node bridge outlives Revit and leaks a process per session.
+            try
+            {
+                Assistant.AssistantBridgeLauncher.Stop();
+            }
+            catch { }
+
             return Result.Succeeded;
         }
     }

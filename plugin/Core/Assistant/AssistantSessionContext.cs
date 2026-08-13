@@ -21,6 +21,47 @@ namespace revit_mcp_plugin.Core.Assistant
         public IList<string> SelectionCategories { get; set; } = new List<string>();
         public string Units { get; set; } = "мм";
 
+        /// <summary>
+        /// Revit's ViewType enum is English API vocabulary ("FloorPlan"); the architect
+        /// reading the header should see the same words as the Revit browser.
+        /// </summary>
+        private static readonly Dictionary<string, string> ViewTypeNames =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["FloorPlan"] = "План этажа",
+                ["CeilingPlan"] = "План потолка",
+                ["EngineeringPlan"] = "Инженерный план",
+                ["AreaPlan"] = "План зонирования",
+                ["Section"] = "Разрез",
+                ["Elevation"] = "Фасад",
+                ["Detail"] = "Узел",
+                ["DraftingView"] = "Чертёжный вид",
+                ["ThreeD"] = "3D-вид",
+                ["Schedule"] = "Спецификация",
+                ["ColumnSchedule"] = "Спецификация колонн",
+                ["PanelSchedule"] = "Спецификация щитов",
+                ["DrawingSheet"] = "Лист",
+                ["Legend"] = "Легенда",
+                ["Rendering"] = "Визуализация",
+                ["Walkthrough"] = "Обход",
+                ["Report"] = "Отчёт",
+                ["CostReport"] = "Отчёт по стоимости",
+                ["LoadsReport"] = "Отчёт по нагрузкам",
+                ["Undefined"] = "",
+                ["Internal"] = "",
+            };
+
+        /// <summary>Russian caption for <see cref="ViewType"/>, or the raw value when unmapped.</summary>
+        private string ViewTypeCaption
+        {
+            get
+            {
+                if (string.IsNullOrEmpty(ViewType))
+                    return "";
+                return ViewTypeNames.TryGetValue(ViewType, out var ru) ? ru : ViewType;
+            }
+        }
+
         /// <summary>Full preamble block for the model.</summary>
         public string FormatForPrompt()
         {
@@ -37,31 +78,42 @@ namespace revit_mcp_plugin.Core.Assistant
         public string FormatForHeader()
         {
             var scale = Scale.HasValue && Scale.Value > 0 ? $", 1:{Scale.Value}" : "";
-            var viewBit = string.IsNullOrEmpty(ViewType)
+            var type = ViewTypeCaption;
+            var viewBit = string.IsNullOrEmpty(type)
                 ? ViewName
-                : $"{ViewName} ({ViewType}{scale})";
+                : $"{ViewName} ({type}{scale})";
             var sel = SelectionCount > 0
-                ? $" · Выд.: {SelectionCount}"
+                ? $" · Выделено: {SelectionCount}{FormatSelectionCategories()}"
                 : "";
-            return $"Документ: {DocumentTitle} · Вид: {viewBit} · Ур.: {LevelName}{sel}";
+            return $"Документ: {DocumentTitle} · Вид: {viewBit} · Уровень: {LevelName}{sel}";
+        }
+
+        /// <summary>" (Стены, Двери)" for the header, or "" when categories are unknown.</summary>
+        private string FormatSelectionCategories()
+        {
+            if (SelectionCategories == null || SelectionCategories.Count == 0)
+                return "";
+            return " (" + string.Join(", ", SelectionCategories.Take(2)) + ")";
         }
 
         /// <summary>Legacy single-line format (ParseViewContext / logs).</summary>
         public string FormatLegacyLine()
         {
             var scale = Scale.HasValue && Scale.Value > 0 ? $", 1:{Scale.Value}" : "";
-            var viewBit = string.IsNullOrEmpty(ViewType)
+            var type = ViewTypeCaption;
+            var viewBit = string.IsNullOrEmpty(type)
                 ? ViewName
-                : $"{ViewName} ({ViewType}{scale})";
+                : $"{ViewName} ({type}{scale})";
             return $"Документ: {DocumentTitle} · Вид: {viewBit} · Уровень: {LevelName}";
         }
 
         private string FormatPrimaryLine()
         {
             var scale = Scale.HasValue && Scale.Value > 0 ? $", 1:{Scale.Value}" : "";
-            var viewBit = string.IsNullOrEmpty(ViewType)
+            var type = ViewTypeCaption;
+            var viewBit = string.IsNullOrEmpty(type)
                 ? $"«{ViewName}»"
-                : $"«{ViewName}» ({ViewType}{scale})";
+                : $"«{ViewName}» ({type}{scale})";
             return $"Документ: {DocumentTitle} · Вид: {viewBit} · Уровень: {LevelName}";
         }
 

@@ -9,10 +9,14 @@ const placementSchema = z.object({
   viewUniqueId: z.string().optional().default(""),
   positionX: z
     .number()
-    .describe("X position in millimeters from the lower-left sheet outline corner"),
+    .describe(
+      "X of the lower-left corner, in millimeters from the lower-left corner of the printed frame (title block extents)"
+    ),
   positionY: z
     .number()
-    .describe("Y position in millimeters from the lower-left sheet outline corner"),
+    .describe(
+      "Y of the lower-left corner, in millimeters from the lower-left corner of the printed frame (title block extents)"
+    ),
   viewportTypeId: z.number().optional().default(0),
   displayTitle: z.boolean().optional(),
   scaleOverride: z.number().optional().default(0),
@@ -24,10 +28,10 @@ const placementSchema = z.object({
 export function registerPlaceViewOnSheetTool(server: McpServer) {
   server.tool(
     "place_view_on_sheet",
-    "Place a floor plan, view, or schedule on a sheet at coordinates in millimeters. Schedules use ScheduleSheetInstance; other views use Viewport.",
+    "Place a floor plan, view, or schedule on a sheet. Positions are the lower-left corner in mm from the printed frame corner; the placement is always kept inside the frame and clear of the ГОСТ stamp (185×55 mm, bottom-right), so a sane position like x=20 y=70 is enough. Returns warnings when the content is larger than the printable field — read them instead of retrying with other coordinates.",
     {
       placement: placementSchema.describe(
-        "Placement settings. Provide sheetId or sheetUniqueId and viewId or viewUniqueId. Positions are in mm from lower-left sheet outline; viewports are clamped inside the sheet."
+        "Placement settings. Provide sheetId or sheetUniqueId and viewId or viewUniqueId."
       ),
     },
     async (args) => {

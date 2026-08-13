@@ -1,0 +1,506 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Net.Http;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using revit_mcp_plugin.Configuration;
+
+namespace revit_mcp_plugin.Core.Assistant
+{
+    /// <summary>
+    /// In-Revit chat backed by local assistant-bridge → Cursor SDK agent → Revit MCP (REV-155).
+    /// </summary>
+    public sealed class CursorBridgeAgentHost : IAssistantHost
+    {
+        private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+
+        private ServiceSettings _settings;
+        private readonly string _sessionId = Guid.NewGuid().ToString("N").Substring(0, 12);
+        private int _turnCount;
+
+        /// <summary>Set by ClearHistory; makes the next turn drop the Cursor session.</summary>
+        private bool _resetPending;
+
+        public CursorBridgeAgentHost(ServiceSettings settings)
+        {
+            _settings = settings ?? new ServiceSettings();
+        }
+
+        public event Action<string> StatusChanged;
+        public event Func<PendingToolConfirmation, Task<bool>> ConfirmationRequested;
+        public event Func<PendingAskUser, Task<AskUserAnswer>> AskUserRequested;
+        public event Action HistoryTrimmed;
+        public event Action<HistoryBudget> HistoryBudgetChanged;
+        public event Action<AgentPlanSnapshot> PlanChanged;
+        public event Action<string> ModelEscalated;
+        public event Action<ToolStepEvent> ToolStepChanged;
+        public event Action<string> ReplyDelta;
+
+        public void ClearHistory()
+        {
+            _turnCount = 0;
+            // The agent's memory lives in the bridge; drop it on the next send.
+            _resetPending = true;
+            RaiseBudgetChanged();
+        }
+
+        public HistoryBudget GetHistoryBudget()
+        {
+            return new HistoryBudget
+            {
+                UserTurns = _turnCount,
+                MaxPreviousUserTurns = _settings.AssistantMaxPreviousUserTurns,
+                EstimatedChars = 0,
+                MaxHistoryChars = LocalAgentHost.MaxHistoryChars,
+            };
+        }
+
+        public Task<AgentTurnResult> RunAsync(
+            string userMessage,
+            string viewContext,
+            CancellationToken cancellationToken)
+        {
+            return RunAsync(userMessage, viewContext, null, cancellationToken);
+        }
+
+        public async Task<AgentTurnResult> RunAsync(
+            string userMessage,
+            string viewContext,
+            IList<ChatAttachment> attachments,
+            CancellationToken cancellationToken,
+            string turnId = null,
+            IReadOnlyList<string> toolProfiles = null)
+        {
+            var steps = new List<ToolStepEvent>();
+            var stepsByCallId = new Dictionary<string, ToolStepEvent>(StringComparer.Ordinal);
+            var model = DescribeConfiguredModel();
+
+            // Stop must reach the agent itself, not just abort our HTTP read.
+            using (cancellationToken.Register(() => FireAndForgetCancel()))
+            {
+                try
+                {
+                    // Pick up a key or model edited in settings without restarting Revit.
+                    ReloadSettings();
+
+                    // First turn pays for the Node bridge start; say so instead of freezing on "Готов".
+                    RaiseStatus("Запускаю движок…");
+                    AssistantBridgeLauncher.EnsureRunning(_settings);
+                    RaiseStatus("Cursor…");
+
+                    var preamble = BuildPrompt(userMessage, viewContext, toolProfiles);
+                    var images = BuildImages(attachments);
+                    var reset = _resetPending;
+
+                    var body = new JObject
+                    {
+                        ["sessionId"] = _sessionId,
+                        ["message"] = preamble,
+                        ["reset"] = reset,
+                    };
+
+                    if (images.Count > 0)
+                        body["images"] = images;
+
+                    using (var request = NewRequest(HttpMethod.Post, AssistantBridgeLauncher.ChatUrl(_settings)))
+                    {
+                        request.Content = new StringContent(body.ToString(Formatting.None), Encoding.UTF8, "application/json");
+
+                        using (var response = await Http.SendAsync(
+                                   request,
+                                   HttpCompletionOption.ResponseHeadersRead,
+                                   cancellationToken).ConfigureAwait(false))
+                        {
+                            response.EnsureSuccessStatusCode();
+
+                            // Only clear the flag once the bridge accepted the reset.
+                            if (reset)
+                                _resetPending = false;
+
+                            using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
+                            using (var reader = new StreamReader(stream, Encoding.UTF8))
+                            {
+                                var reply = await ReadSseAsync(
+                                    reader, steps, stepsByCallId, m => model = m, cancellationToken)
+                                    .ConfigureAwait(false);
+
+                                _turnCount++;
+                                RaiseBudgetChanged();
+
+                                return new AgentTurnResult
+                                {
+                                    Reply = reply,
+                                    Model = model,
+                                };
+                            }
+                        }
+                    }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    MarkRunningStepsCancelled(steps);
+                    return new AgentTurnResult { Cancelled = true, Reply = "Остановлено.", Model = model };
+                }
+                catch (Exception ex)
+                {
+                    MarkRunningStepsCancelled(steps);
+                    return new AgentTurnResult
+                    {
+                        Failed = true,
+                        Reply = ex.Message,
+                        Model = model,
+                    };
+                }
+            }
+        }
+
+        private void ReloadSettings()
+        {
+            try
+            {
+                var fresh = PluginSettingsStore.LoadSettings();
+                if (fresh != null)
+                    _settings = fresh;
+            }
+            catch { /* keep the settings we already have */ }
+        }
+
+        private HttpRequestMessage NewRequest(HttpMethod method, string url)
+        {
+            var request = new HttpRequestMessage(method, url);
+            var token = AssistantBridgeLauncher.Token;
+            if (!string.IsNullOrEmpty(token))
+                request.Headers.TryAddWithoutValidation("x-bridge-token", token);
+            return request;
+        }
+
+        /// <summary>Tells the bridge to cancel the run; failures are not worth surfacing.</summary>
+        private void FireAndForgetCancel()
+        {
+            Task.Run(async () =>
+            {
+                try
+                {
+                    using (var request = NewRequest(HttpMethod.Post, AssistantBridgeLauncher.CancelUrl(_settings)))
+                    {
+                        var payload = new JObject { ["sessionId"] = _sessionId };
+                        request.Content = new StringContent(payload.ToString(Formatting.None), Encoding.UTF8, "application/json");
+                        using (await Http.SendAsync(request).ConfigureAwait(false)) { }
+                    }
+                }
+                catch { /* bridge already gone or run finished */ }
+            });
+        }
+
+        private async Task<string> ReadSseAsync(
+            StreamReader reader,
+            IList<ToolStepEvent> steps,
+            IDictionary<string, ToolStepEvent> stepsByCallId,
+            Action<string> setModel,
+            CancellationToken cancellationToken)
+        {
+            string reply = "";
+            string eventName = null;
+
+            while (!reader.EndOfStream)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var line = await reader.ReadLineAsync().ConfigureAwait(false);
+                if (line == null)
+                    break;
+
+                if (line.StartsWith("event:", StringComparison.OrdinalIgnoreCase))
+                {
+                    eventName = line.Substring(6).Trim();
+                    continue;
+                }
+
+                if (!line.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var json = line.Substring(5).Trim();
+                if (string.IsNullOrWhiteSpace(json))
+                    continue;
+
+                var data = JObject.Parse(json);
+                switch (eventName)
+                {
+                    case "status":
+                        RaiseStatus(data["text"]?.ToString());
+                        break;
+
+                    case "text_delta":
+                        reply = data["text"]?.ToString() ?? reply;
+                        RaiseReplyDelta(reply);
+                        break;
+
+                    case "tool_step":
+                        ApplyToolStep(data, steps, stepsByCallId);
+                        break;
+
+                    case "confirm":
+                        await HandleConfirmAsync(data).ConfigureAwait(false);
+                        break;
+
+                    case "done":
+                        reply = data["reply"]?.ToString() ?? reply;
+                        var doneModel = data["model"]?.ToString();
+                        if (!string.IsNullOrWhiteSpace(doneModel))
+                            setModel(doneModel);
+                        // doneSummary is deliberately ignored: the steps journal above the
+                        // answer already lists what ran, in Russian. Repeating raw tool ids
+                        // in a "Сделано:" line is noise for an architect.
+                        return reply;
+
+                    case "error":
+                        throw new InvalidOperationException(data["message"]?.ToString() ?? "Ошибка Cursor bridge");
+                }
+            }
+
+            return string.IsNullOrWhiteSpace(reply) ? "Пустой ответ от Cursor bridge." : reply;
+        }
+
+        /// <summary>
+        /// Maintains the turn journal. The UI only renders steps that carry a full
+        /// <see cref="ToolStepEvent.AllSteps"/> snapshot, so every raise carries one.
+        /// </summary>
+        private void ApplyToolStep(
+            JObject data,
+            IList<ToolStepEvent> steps,
+            IDictionary<string, ToolStepEvent> stepsByCallId)
+        {
+            var name = data["name"]?.ToString() ?? "tool";
+            var status = data["status"]?.ToString() ?? ToolStepEvent.StatusRunning;
+            var callId = data["callId"]?.ToString();
+            if (string.IsNullOrEmpty(callId))
+                callId = name + "#" + steps.Count;
+
+            var label = ToolStepLabels.Humanize(name);
+
+            ToolStepEvent step;
+            if (!stepsByCallId.TryGetValue(callId, out step))
+            {
+                // The agent often repeats one tool across layers or passes, and the
+                // repeats are rarely back to back — another tool interleaves. Fold a
+                // repeat into the row that tool already owns, wherever it sits, as
+                // "×N" instead of 16 near-identical lines (or two rows for one tool).
+                var owner = FindFoldTarget(steps, label);
+                if (owner != null)
+                {
+                    step = owner;
+                    step.Round += 1;
+                }
+                else
+                {
+                    step = new ToolStepEvent
+                    {
+                        Index = steps.Count + 1,
+                        Round = 1,
+                        BaseLabel = label,
+                    };
+                    steps.Add(step);
+                }
+
+                stepsByCallId[callId] = step;
+            }
+
+            if (status == ToolStepEvent.StatusRunning)
+            {
+                step.Pending += 1;
+            }
+            else
+            {
+                if (step.Pending > 0) step.Pending -= 1;
+                if (status == ToolStepEvent.StatusError) step.HadError = true;
+            }
+
+            // The journal header shows Name; args/result live in the expander.
+            step.Name = ToolStepLabels.WithRepeat(label, step.Round);
+            // A folded row is done only when the last call in it has answered, and a
+            // failure among them outranks the successes that followed.
+            step.Status = step.Pending > 0
+                ? ToolStepEvent.StatusRunning
+                : (step.HadError ? ToolStepEvent.StatusError : status);
+            step.ArgsJson = data["args"]?.ToString() ?? step.ArgsJson;
+            step.ResultJson = data["result"]?.ToString() ?? step.ResultJson;
+            step.Summary = ToolStepLabels.StatusNote(step.Status);
+
+            RaiseToolStep(step, steps);
+        }
+
+        /// <summary>
+        /// Row a repeat of <paramref name="label"/> should fold into: the row that tool
+        /// already owns, or null when it has none yet. Deliberately folds into rows that
+        /// are still running — the agent fires a tool as a parallel batch, and refusing
+        /// in-flight rows split one tool across several lines. <see cref="ToolStepEvent.Pending"/>
+        /// keeps the row marked running until the whole batch answers.
+        /// </summary>
+        private static ToolStepEvent FindFoldTarget(IList<ToolStepEvent> steps, string label)
+        {
+            for (var i = steps.Count - 1; i >= 0; i--)
+            {
+                var candidate = steps[i];
+                if (candidate != null && string.Equals(candidate.BaseLabel, label, StringComparison.Ordinal))
+                    return candidate;
+            }
+
+            return null;
+        }
+
+        private async Task HandleConfirmAsync(JObject data)
+        {
+            var requestId = data["requestId"]?.ToString() ?? "";
+            var action = data["action"]?.ToString() ?? "Действие в модели";
+            var details = data["details"]?.ToString() ?? "";
+            var tool = data["tool"]?.ToString();
+
+            var summary = string.IsNullOrWhiteSpace(details) ? action : action + "\n" + details;
+
+            // Feed the delete confirmation bar real ids so it can show categories.
+            var args = new JObject();
+            if (data["elementIds"] is JArray ids && ids.Count > 0)
+                args["elementIds"] = ids;
+
+            var approved = false;
+            var handler = ConfirmationRequested;
+            if (handler != null)
+            {
+                try
+                {
+                    approved = await handler(new PendingToolConfirmation
+                    {
+                        // The tool id drives the "Удалить"/"Выполнить" button choice.
+                        ToolName = string.IsNullOrWhiteSpace(tool) ? action : tool.Trim(),
+                        Summary = summary,
+                        ArgumentsJson = args.ToString(Formatting.None),
+                    }).ConfigureAwait(false);
+                }
+                catch
+                {
+                    approved = false;
+                }
+            }
+
+            try
+            {
+                using (var request = NewRequest(HttpMethod.Post, AssistantBridgeLauncher.ConfirmUrl(_settings)))
+                {
+                    var payload = new JObject
+                    {
+                        ["sessionId"] = _sessionId,
+                        ["requestId"] = requestId,
+                        ["approved"] = approved,
+                    };
+                    request.Content = new StringContent(payload.ToString(Formatting.None), Encoding.UTF8, "application/json");
+                    using (await Http.SendAsync(request).ConfigureAwait(false)) { }
+                }
+            }
+            catch { /* the bridge times out on its own and treats it as a refusal */ }
+        }
+
+        private void MarkRunningStepsCancelled(IList<ToolStepEvent> steps)
+        {
+            if (steps == null || steps.Count == 0)
+                return;
+
+            var changed = false;
+            foreach (var step in steps)
+            {
+                if (step.Status == ToolStepEvent.StatusRunning)
+                {
+                    step.Status = ToolStepEvent.StatusCancelled;
+                    step.Summary = ToolStepLabels.StatusNote(ToolStepEvent.StatusCancelled);
+                    changed = true;
+                }
+            }
+
+            if (changed)
+                RaiseToolStep(steps[steps.Count - 1], steps);
+        }
+
+        private string DescribeConfiguredModel()
+        {
+            var id = string.IsNullOrWhiteSpace(_settings.AssistantCursorModel)
+                ? AssistantBridgeLauncher.DefaultModelId
+                : _settings.AssistantCursorModel.Trim();
+            return CursorModelCatalog.LabelFor(id);
+        }
+
+        private static string BuildPrompt(
+            string userMessage,
+            string viewContext,
+            IReadOnlyList<string> toolProfiles)
+        {
+            var sb = new StringBuilder();
+            if (!string.IsNullOrWhiteSpace(viewContext))
+            {
+                sb.AppendLine("[КОНТЕКСТ] " + viewContext.Trim());
+                sb.AppendLine();
+            }
+
+            if (toolProfiles != null && toolProfiles.Count > 0)
+            {
+                sb.AppendLine("[Профиль сценария: " + string.Join(", ", toolProfiles) + "]");
+                sb.AppendLine();
+            }
+
+            sb.AppendLine("[Запрос]");
+            sb.Append(userMessage ?? "");
+            return sb.ToString().TrimEnd();
+        }
+
+        private static JArray BuildImages(IList<ChatAttachment> attachments)
+        {
+            var arr = new JArray();
+            if (attachments == null)
+                return arr;
+
+            foreach (var a in attachments.Where(x => x?.IsImage == true && x.Data != null && x.Data.Length > 0))
+            {
+                arr.Add(new JObject
+                {
+                    ["mimeType"] = string.IsNullOrWhiteSpace(a.MimeType) ? "image/png" : a.MimeType,
+                    ["dataBase64"] = Convert.ToBase64String(a.Data),
+                });
+            }
+
+            return arr;
+        }
+
+        private void RaiseStatus(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return;
+            try { StatusChanged?.Invoke(text); }
+            catch { /* UI disposed */ }
+        }
+
+        private void RaiseReplyDelta(string text)
+        {
+            try { ReplyDelta?.Invoke(text ?? ""); }
+            catch { /* UI disposed */ }
+        }
+
+        private void RaiseToolStep(ToolStepEvent step, IList<ToolStepEvent> steps)
+        {
+            try
+            {
+                var payload = step.CloneWithoutAll();
+                payload.AllSteps = ToolStepEvent.Snapshot(steps);
+                ToolStepChanged?.Invoke(payload);
+            }
+            catch { /* UI disposed */ }
+        }
+
+        private void RaiseBudgetChanged()
+        {
+            try { HistoryBudgetChanged?.Invoke(GetHistoryBudget()); }
+            catch { /* UI disposed */ }
+        }
+    }
+}

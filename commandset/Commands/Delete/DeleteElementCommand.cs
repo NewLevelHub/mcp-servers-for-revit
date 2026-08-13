@@ -37,14 +37,32 @@ namespace RevitMCPCommandSet.Commands.Delete
                     // 触发外部事件并等待完成
                     if (RaiseAndWaitForCompletion(15000))
                     {
+                        // Report what was targeted, not just how many elements Revit removed:
+                        // doc.Delete also drops dependents, so one sheet can come back as 7.
                         if (_handler.IsSuccess)
                         {
-                            return new { deleted = true, count = _handler.DeletedCount };
+                            return new
+                            {
+                                deleted = true,
+                                count = _handler.DeletedCount,
+                                requested = _handler.DeletedDescriptions,
+                                dependentsRemoved =
+                                    Math.Max(0, _handler.DeletedCount - _handler.DeletedDescriptions.Count),
+                                missingIds = _handler.MissingIds,
+                                invalidIds = _handler.InvalidIds
+                            };
                         }
-                        else
+
+                        return new
                         {
-                            throw new Exception("删除元素失败");
-                        }
+                            deleted = false,
+                            count = 0,
+                            message = string.IsNullOrEmpty(_handler.ErrorMessage)
+                                ? "Delete failed."
+                                : _handler.ErrorMessage,
+                            missingIds = _handler.MissingIds,
+                            invalidIds = _handler.InvalidIds
+                        };
                     }
                     else
                     {

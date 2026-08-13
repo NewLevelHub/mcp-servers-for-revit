@@ -1,6 +1,6 @@
 ---
-description: После тикетов ассистента — live MCP replay и сверка с ответом чата в Revit (smoke)
-alwaysApply: true
+description: После тикетов ассистента — live MCP replay и сверка с ответом чата в Revit (smoke). Правило разработки: нужно только при приёмке тикетов REV-*, не при работе архитектора с моделью.
+alwaysApply: false
 ---
 
 # Приёмка тикетов ассистента — live MCP replay

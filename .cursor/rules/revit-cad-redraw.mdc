@@ -1,6 +1,6 @@
 ---
-description: Перечерчивание по DWG/CAD link (Cursor + MCP) — pipeline, dryRun, verify; не угадывать координаты
-alwaysApply: true
+description: Перечерчивание по DWG/CAD link — pipeline, dryRun, verify; не угадывать координаты. Читать перед trace_walls_from_cad, trace_openings_from_cad, trace_columns_from_cad, get_cad_link_geometry и на фразы «перечерти по DWG», «по подложке», «по CAD».
+alwaysApply: false
 ---
 
 # Перечерчивание по DWG (REV-142 + REV-147 + REV-149 + REV-152)

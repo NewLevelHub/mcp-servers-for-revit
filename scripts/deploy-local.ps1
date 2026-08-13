@@ -26,6 +26,10 @@ if ($revit) {
 }
 
 $configuration = "Debug R$($RevitVersion.Substring(2))"
+Write-Host "Building plugin ($configuration)..." -ForegroundColor Cyan
+dotnet build (Join-Path $repo "plugin\RevitMCPPlugin.csproj") -c $configuration --nologo -v q
+if ($LASTEXITCODE -ne 0) { Write-Error "Plugin build failed." }
+
 Write-Host "Building command set ($configuration)..." -ForegroundColor Cyan
 dotnet build (Join-Path $repo "commandset\RevitMCPCommandSet.csproj") -c $configuration --nologo -v q
 if ($LASTEXITCODE -ne 0) { Write-Error "Command set build failed." }
@@ -85,15 +89,88 @@ else {
     Write-Warning "commandRegistry.json not found at $registryPath - new commands will not load."
 }
 
+# A live MCP server keeps better_sqlite3.node mapped into memory, and Windows refuses to
+# unlink a loaded native module - so `npm ci` dies with EPERM (and silently falls back to the
+# previous build) while Cursor or Revit still holds a server process. Clients respawn the
+# server on reconnect, so stopping it here costs nothing. Runs even with -SkipServer, because
+# build-assistant-cursor.ps1 below builds server/ too.
+$serverEntryPattern = "$([regex]::Escape((Split-Path -Leaf $repo)))/server/build/index\.js"
+$staleServers = Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -and ($_.CommandLine -replace '\\', '/') -match $serverEntryPattern }
+
+foreach ($staleServer in $staleServers) {
+    try {
+        Stop-Process -Id $staleServer.ProcessId -Force -ErrorAction Stop
+        Write-Host "Stopped running MCP server (PID $($staleServer.ProcessId)) - it locks better_sqlite3.node" -ForegroundColor Gray
+    }
+    catch {
+        Write-Warning "Could not stop node.exe PID $($staleServer.ProcessId): $($_.Exception.Message)"
+    }
+}
+
 if (-not $SkipServer) {
     Write-Host "Building MCP server..." -ForegroundColor Cyan
-    Push-Location (Join-Path $repo "server")
+    $serverDir = Join-Path $repo "server"
+    $serverJs = Join-Path $serverDir "build\index.js"
+    Push-Location $serverDir
     try {
-        npm run build
-        if ($LASTEXITCODE -ne 0) { Write-Error "MCP server build failed." }
-        Write-Host "Built server/build/index.js" -ForegroundColor Green
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+
+        $npmOk = $false
+        foreach ($cmd in @('ci', 'install')) {
+            Write-Host "npm $cmd in server/..." -ForegroundColor Gray
+            npm $cmd 2>&1 | Out-Host
+            if ($LASTEXITCODE -eq 0) {
+                $npmOk = $true
+                break
+            }
+        }
+
+        $ErrorActionPreference = $prevEap
+
+        if (-not $npmOk) {
+            if (Test-Path $serverJs) {
+                Write-Warning "npm install failed in server/ (EPERM?). Using existing build/index.js"
+            }
+            else {
+                Write-Error "npm install failed in server/ and build/index.js is missing."
+            }
+        }
+        else {
+            $ErrorActionPreference = 'Continue'
+            npm run build 2>&1 | Out-Host
+            $buildCode = $LASTEXITCODE
+            $ErrorActionPreference = $prevEap
+
+            if ($buildCode -ne 0) {
+                if (Test-Path $serverJs) {
+                    Write-Warning "npm run build failed; using existing $serverJs"
+                }
+                else {
+                    Write-Error "MCP server build failed."
+                }
+            }
+            else {
+                Write-Host "Built server/build/index.js" -ForegroundColor Green
+            }
+        }
     }
     finally { Pop-Location }
+}
+
+$buildCursor = Join-Path $repo "scripts\build-assistant-cursor.ps1"
+if (Test-Path $buildCursor) {
+    Write-Host "Building Cursor in-Revit stack (bridge + bundle)..." -ForegroundColor Cyan
+    & $buildCursor -RevitVersion $RevitVersion
+    # build-assistant-cursor may emit npm warnings to stderr; success = payload folders exist.
+    $addinRoot = Join-Path $env:AppData "Autodesk\Revit\Addins\$RevitVersion\revit_mcp_plugin"
+    $cursorOk = (Test-Path (Join-Path $addinRoot "assistant-bridge\dist\index.js")) `
+        -and (Test-Path (Join-Path $addinRoot "mcp-server\build\index.js")) `
+        -and (Test-Path (Join-Path $addinRoot "assistant-bundle\.cursor\rules"))
+    if (-not $cursorOk) {
+        Write-Error "build-assistant-cursor.ps1 failed - Cursor payload not found in $addinRoot"
+    }
 }
 
 Write-Host ""

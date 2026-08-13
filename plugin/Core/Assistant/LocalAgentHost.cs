@@ -34,7 +34,7 @@ namespace revit_mcp_plugin.Core.Assistant
     /// <summary>
     /// In-process agent: LLM + existing Revit JSON-RPC commands (same as MCP socket).
     /// </summary>
-    public sealed class LocalAgentHost
+    public sealed class LocalAgentHost : IAssistantHost
     {
         /// <summary>Core-only prompt; production uses <see cref="BuildSystemPrompt"/> per turn.</summary>
         public const string SystemPrompt = AssistantSystemPrompt.Core;

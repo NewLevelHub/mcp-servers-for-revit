@@ -27,7 +27,22 @@ namespace revit_mcp_plugin.Core
                 {
                     service.Initialize(commandData.Application);
                     service.Start();
-                    TaskDialog.Show("revitMCP", "Open Server");
+
+                    // Report what actually happened. Announcing "Open Server" unconditionally hid
+                    // failed binds: the dialog said started, the ribbon said Offline, and the only
+                    // trace of the real error was a tooltip nobody hovers.
+                    if (service.IsRunning)
+                    {
+                        TaskDialog.Show("revitMCP", "Open Server");
+                    }
+                    else
+                    {
+                        TaskDialog.Show(
+                            "revitMCP",
+                            $"Не удалось открыть сервер на порту {service.Port}.\n\n" +
+                            $"{service.LastStartError}\n\n" +
+                            "Если порт занят — его держит прошлый сеанс плагина; перезапустите Revit.");
+                    }
                 }
 
                 RibbonStatusManager.UpdateStatus(service.IsRunning);

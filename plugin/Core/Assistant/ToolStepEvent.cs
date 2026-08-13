@@ -35,6 +35,22 @@ namespace revit_mcp_plugin.Core.Assistant
 
         public long DurationMs { get; set; }
 
+        /// <summary>
+        /// Caption without the "×N" repeat suffix. Lets repeated calls of the same
+        /// tool fold into one journal row instead of a wall of near-identical lines.
+        /// </summary>
+        public string BaseLabel { get; set; }
+
+        /// <summary>
+        /// Calls folded into this row that have not reported yet. The agent fires one
+        /// tool as a parallel batch, so a row stays "running" until the last of them
+        /// answers — otherwise the first completion marks the whole row done.
+        /// </summary>
+        public int Pending { get; set; }
+
+        /// <summary>Sticky: one failed call among the folded ones must not be hidden by later successes.</summary>
+        public bool HadError { get; set; }
+
         /// <summary>Full journal snapshot at raise time (immutable copy).</summary>
         public IReadOnlyList<ToolStepEvent> AllSteps { get; set; }
 
@@ -50,6 +66,9 @@ namespace revit_mcp_plugin.Core.Assistant
                 ArgsJson = ArgsJson,
                 ResultJson = ResultJson,
                 DurationMs = DurationMs,
+                BaseLabel = BaseLabel,
+                Pending = Pending,
+                HadError = HadError,
             };
         }
 

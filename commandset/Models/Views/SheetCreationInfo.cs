@@ -70,6 +70,14 @@ public class SheetCreationInfo
     public string TitleBlockTypeName { get; set; } = string.Empty;
 
     /// <summary>
+    ///     Paper format ("A0".."A4"). ADSK «ОсновнаяНадпись» drives its frame size from the
+    ///     integer «Формат А» instance parameter, not from the type name, so the format is
+    ///     applied to the title block instance after the sheet is created.
+    /// </summary>
+    [JsonProperty("sheetFormat")]
+    public string SheetFormat { get; set; } = string.Empty;
+
+    /// <summary>
     ///     Revision IDs to apply to the sheet
     /// </summary>
     [JsonProperty("revisionIds")]
