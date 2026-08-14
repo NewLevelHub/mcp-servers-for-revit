@@ -41,9 +41,20 @@ export type ToolStepPayload = {
 
 type SdkAgent = Awaited<ReturnType<typeof Agent.create>>;
 
+/**
+ * Mutable link from an agent to the chat session it currently serves. An agent
+ * is built before anyone asks for it (see prewarm), so its custom tools cannot
+ * close over a session id — they read it from here at call time.
+ */
+type SessionSlot = { sessionId: string };
+
+/** A built agent waiting to be claimed by the next new or reset session. */
+type WarmAgent = { agent: SdkAgent; slot: SessionSlot };
+
 type SessionRecord = {
   agentId: string;
   agent: SdkAgent;
+  slot: SessionSlot;
   /** Run in flight, so /v1/cancel can stop the agent server-side. */
   activeRun?: Run;
   /** Emitter of the request currently streaming this session. */
@@ -59,10 +70,61 @@ const CONFIRM_TIMEOUT_MS = 5 * 60 * 1000;
 
 const MAX_JOURNAL_CHARS = 2000;
 
+/**
+ * Requests worth the auto router's extra hop: multi-step work where a wrong
+ * plan costs the architect far more than the routing delay. Everything else —
+ * questions, a wall, a room, a parameter — goes to the fast model (REV-157).
+ */
+const HEAVY_TASK_HINTS = [
+  "dwg",
+  "cad",
+  "подложк",
+  "перечерт",
+  "обвед",
+  "планировк",
+  "спроектируй",
+  "запроектируй",
+  "нормоконтрол",
+  "нарушен",
+  "по нормам",
+  "аудит",
+  "эвакуац",
+  "спецификац",
+  "ведомост",
+  "экспликац",
+  "тэп",
+  "на лист",
+  "штамп",
+  "раздел",
+  "узел",
+  "узлы",
+  "квартирограф",
+  // Annotation/oformlenie — REV-157: a follow-up like "сделай выноску и подпиши"
+  // has none of the hints above on its own, so it fell back to the lite tool
+  // set and the model faked the result with a plain text note instead of the
+  // real dimension/tag/leader tool (found during REV-157 acceptance testing).
+  "размер",
+  "марк",
+  "выноск",
+  "подпиш",
+  "отметк",
+  "заливк",
+  "покрас",
+  "ось",
+  "оси",
+  "сетк",
+];
+
 const REVIT_SYSTEM_PREFIX =
   "Ты AI-ассистент проектировщика внутри Autodesk Revit. Работай ТОЛЬКО через MCP-tools " +
   "mcp-server-for-revit-local. Следуй правилам из .cursor/rules проекта (revit-mcp, размеры, DWG, нормы). " +
   "Координаты и размеры — в мм. Перед create_* проверь активный вид через get_current_view_info.\n" +
+  // The tool set is chosen per turn by the bridge (see isHeavyRequest); the
+  // model is told what it has rather than being asked to manage the catalog.
+  "Работай теми инструментами, которые видишь в каталоге. Если для задачи нужного инструмента " +
+  "в каталоге нет — не выдумывай его и не описывай, как бы ты его вызвал: скажи одной строкой, " +
+  "что именно требуется, и предложи переформулировать запрос словами задачи " +
+  "(например «перечерти стены по подложке», «собери спецификацию дверей»).\n" +
   "ОБЯЗАТЕЛЬНО: перед необратимым действием (delete_element, send_code_to_revit, " +
   "изменение более 20 элементов разом) сначала вызови инструмент revit_confirm — передай action, " +
   "tool (имя MCP-инструмента) и elementIds, если действие касается конкретных элементов. " +
@@ -110,9 +172,22 @@ const REVIT_SYSTEM_PREFIX =
   "(переместить — place_view_on_sheet или auto_layout_sheet, сузить — fit_schedule_to_sheet, " +
   "формат — параметр листа). delete_element + повторное создание — только если пользователь " +
   "прямо просит удалить. Удаление листа уносит с собой видовые экраны и штамп.\n" +
-  "— ЧИТАЙ warnings из ответа инструмента. Там написано, что не влезло и что делать; " +
-  "повторять тот же вызов с другими координатами бессмысленно — размещение само держит " +
-  "содержимое внутри рамки и в стороне от штампа.\n\n" +
+  // Found during REV-157 acceptance testing: place_view_on_sheet correctly warned that a
+  // door schedule was taller than the printable field, and the model said "Готово" and
+  // moved on without narrowing it or telling the architect — the schedule ran into the stamp.
+  "— ЧИТАЙ warnings из ответа инструмента и ДЕЙСТВУЙ по ним — warning не заканчивает ход, " +
+  "он говорит, что делать дальше. «Schedule taller than printable field» — сразу вызови " +
+  "fit_schedule_to_sheet, не оставляй как есть. Если после этого предупреждение не исчезло — " +
+  "скажи об этом пользователю одной строкой («спецификация не влезает по высоте, часть строк " +
+  "уйдёт за рамку»), не отчитывайся «готово» молча. Повторять place_view_on_sheet с другими " +
+  "координатами ради этой проблемы бессмысленно — оно держит только точку вставки в рамке и " +
+  "в стороне от штампа, а не высоту содержимого.\n" +
+  // Same test run: asked to annotate a norm violation, no dimension/tag tool was in the
+  // catalog for that turn, and the model dropped a plain create_text_note directly on top
+  // of the floor plan — covering walls and dimension strings instead of pointing at them.
+  "— ДЛЯ ЗАМЕЧАНИЙ ПО НОРМАМ используй annotate_norm_findings (текст с полкой-выноской в " +
+  "стороне от чертежа), а не голый create_text_note — обычный текст ложится ровно в точку " +
+  "вставки и может закрыть стены, размеры или марки под собой.\n\n" +
   "ЛИСТЫ:\n" +
   "— рабочий лист = основная надпись (ADSK_ОсновнаяНадпись). ADSK_Титул — это титульный лист " +
   "проекта, на него ничего не размещают.\n" +
@@ -150,6 +225,9 @@ export class AgentSessionManager {
   private readonly config: BridgeConfig;
   private readonly sessions = new Map<string, SessionRecord>();
   private readonly store: LocalAgentStore;
+  /** Agent built ahead of demand; see prewarm. */
+  private spare?: WarmAgent;
+  private spareInFlight?: Promise<void>;
 
   constructor(config: BridgeConfig) {
     this.config = config;
@@ -158,7 +236,9 @@ export class AgentSessionManager {
     this.store = new JsonlLocalAgentStore(config.storeDir);
   }
 
-  private buildMcpServers(): Record<string, import("@cursor/sdk").McpServerConfig> {
+  private buildMcpServers(
+    profile = this.config.mcpToolProfile,
+  ): Record<string, import("@cursor/sdk").McpServerConfig> {
     return {
       "mcp-server-for-revit-local": {
         type: "stdio",
@@ -166,7 +246,7 @@ export class AgentSessionManager {
         args: [this.config.mcpServerJs],
         cwd: this.config.mcpServerCwd,
         env: {
-          MCP_TOOL_PROFILE: process.env.MCP_TOOL_PROFILE ?? "default",
+          MCP_TOOL_PROFILE: profile,
         },
       },
     };
@@ -176,7 +256,7 @@ export class AgentSessionManager {
    * In-process tool the agent must call before irreversible edits. Routes the
    * question to the Revit chat panel over SSE and blocks until it answers.
    */
-  private buildCustomTools(sessionId: string): Record<string, SDKCustomTool> {
+  private buildCustomTools(slot: SessionSlot): Record<string, SDKCustomTool> {
     return {
       revit_confirm: {
         description:
@@ -207,7 +287,13 @@ export class AgentSessionManager {
           const elementIds = Array.isArray(args.elementIds)
             ? args.elementIds.filter((id): id is string => typeof id === "string")
             : [];
-          const approved = await this.askConfirmation(sessionId, action, details, tool, elementIds);
+          const approved = await this.askConfirmation(
+            slot.sessionId,
+            action,
+            details,
+            tool,
+            elementIds,
+          );
           return {
             content: [
               {
@@ -286,6 +372,66 @@ export class AgentSessionManager {
     return false;
   }
 
+  /**
+   * Build an agent. This is the expensive part of a turn — it loads the project
+   * rules and skills and spawns the Revit MCP server — which is why nothing
+   * calls it from inside a request if a warm one is on the shelf.
+   */
+  private async createAgent(): Promise<WarmAgent> {
+    const slot: SessionSlot = { sessionId: "" };
+    const agent = await Agent.create({
+      apiKey: this.config.apiKey,
+      // With the auto router the real choice happens per send; start on the
+      // fast model so a turn that never overrides it still skips the hop.
+      model: this.config.routePerTurn ? this.config.fastModel : this.config.model,
+      tools: ["mcp"],
+      local: {
+        cwd: this.config.rulesCwd,
+        settingSources: ["project"],
+        customTools: this.buildCustomTools(slot),
+        store: this.store,
+      },
+      mcpServers: this.buildMcpServers(),
+    });
+    return { agent, slot };
+  }
+
+  /**
+   * Build one agent ahead of demand so the first message of a chat — and every
+   * "+ Новый" — starts talking to the model instead of waiting for a boot.
+   * Safe to call at any time; concurrent calls collapse into one.
+   */
+  prewarm(): void {
+    if (this.spare || this.spareInFlight) return;
+    this.spareInFlight = this.createAgent()
+      .then((warm) => {
+        this.spare = warm;
+      })
+      .catch((err) => {
+        // A bad key or an offline machine must not crash the bridge; the next
+        // real turn will surface the error where the architect can see it.
+        console.error("[assistant-bridge] prewarm failed:", err);
+      })
+      .finally(() => {
+        this.spareInFlight = undefined;
+      });
+  }
+
+  /** Claim the warm agent if there is one, then start building the next. */
+  private async takeAgent(): Promise<WarmAgent> {
+    const warm = this.spare;
+    if (warm) {
+      this.spare = undefined;
+      this.prewarm();
+      return warm;
+    }
+
+    // Nothing warm: pay for it now, and make sure the next turn does not.
+    const created = await this.createAgent();
+    this.prewarm();
+    return created;
+  }
+
   private async getOrCreateSession(sessionId: string, reset: boolean): Promise<SessionRecord> {
     if (!reset) {
       const existing = this.sessions.get(sessionId);
@@ -293,35 +439,54 @@ export class AgentSessionManager {
     } else {
       const old = this.sessions.get(sessionId);
       if (old) {
-        try {
-          await old.agent.close();
-        } catch {
-          /* ignore */
-        }
         this.sessions.delete(sessionId);
+        // Closing the previous agent is cleanup, not something the architect
+        // should wait through before the new chat answers.
+        void Promise.resolve()
+          .then(() => old.agent.close())
+          .catch(() => {
+            /* already gone */
+          });
       }
     }
 
-    const agent = await Agent.create({
-      apiKey: this.config.apiKey,
-      model: this.config.model,
-      tools: ["mcp"],
-      local: {
-        cwd: this.config.rulesCwd,
-        settingSources: ["project"],
-        customTools: this.buildCustomTools(sessionId),
-        store: this.store,
-      },
-      mcpServers: this.buildMcpServers(),
-    });
+    const { agent, slot } = await this.takeAgent();
+    slot.sessionId = sessionId;
 
     const record: SessionRecord = {
       agentId: agent.agentId,
       agent,
+      slot,
       pendingConfirms: new Map(),
     };
     this.sessions.set(sessionId, record);
     return record;
+  }
+
+  /**
+   * Model for one turn. Only applies when the user left the picker on "Авто":
+   * the fast model answers questions and everyday edits, and the router is kept
+   * for the work that actually benefits from it.
+   */
+  private pickModel(userText: string, hasImages: boolean): ModelSelection | undefined {
+    if (!this.config.routePerTurn) return undefined;
+    return this.isHeavyRequest(userText, hasImages) ? { id: AUTO_MODEL_ID } : this.config.fastModel;
+  }
+
+  /**
+   * One judgement per turn, driving both the model and the tool set: is this a
+   * question or an everyday edit, or real multi-step work?
+   */
+  private isHeavyRequest(userText: string, hasImages: boolean): boolean {
+    if (hasImages) return true;
+
+    // The panel prefixes the view context; route on what the architect typed.
+    const marker = userText.lastIndexOf("[Запрос]");
+    const request = (marker >= 0 ? userText.slice(marker + "[Запрос]".length) : userText).trim();
+
+    if (request.length > 600) return true;
+    const text = request.toLowerCase();
+    return HEAVY_TASK_HINTS.some((hint) => text.includes(hint));
   }
 
   /**
@@ -332,14 +497,31 @@ export class AgentSessionManager {
   private async sendWithRecovery(
     session: SessionRecord,
     message: { text: string; images?: Array<{ data: string; mimeType: string }> },
+    model: ModelSelection | undefined,
+    mcpProfile: string | undefined,
   ): Promise<Run> {
+    const options: {
+      model?: ModelSelection;
+      mcpServers?: Record<string, import("@cursor/sdk").McpServerConfig>;
+    } = {};
+    if (model) options.model = model;
+    if (mcpProfile) options.mcpServers = this.buildMcpServers(mcpProfile);
+
     try {
-      return await session.agent.send(message);
+      return await session.agent.send(message, options);
     } catch (err) {
       const text = err instanceof Error ? err.message : String(err);
-      if (!/already has active run/i.test(text)) throw err;
+      if (/already has active run/i.test(text)) {
+        return await session.agent.send(message, { ...options, local: { force: true } });
+      }
 
-      return await session.agent.send(message, { local: { force: true } });
+      // A fast model the account cannot use must cost a retry, not the turn.
+      if (model && model.id !== AUTO_MODEL_ID && /model/i.test(text)) {
+        console.error("[assistant-bridge] fast model rejected, falling back to auto:", text);
+        return await session.agent.send(message, { model: { id: AUTO_MODEL_ID } });
+      }
+
+      throw err;
     }
   }
 
@@ -350,6 +532,16 @@ export class AgentSessionManager {
       emit.error("Пустой запрос");
       return;
     }
+
+    // REV-157: the only way to measure "как быстро он отвечает" used to be a
+    // screenshot of the panel's busy timer. Log turn boundaries so latency is a
+    // grep away — bytes in, ms to first text, ms to done, per session.
+    const turnStartedAt = Date.now();
+    let firstTextLoggedAt: number | null = null;
+    console.error(
+      `[assistant-bridge] turn start session=${sessionId} chars=${message.length}` +
+        (req.images?.length ? ` images=${req.images.length}` : ""),
+    );
 
     emit.status("Подключаю Cursor…");
     const session = await this.getOrCreateSession(sessionId, !!req.reset);
@@ -375,10 +567,15 @@ export class AgentSessionManager {
     let finalSegment = "";
 
     try {
-      const run = await this.sendWithRecovery(session, {
-        text: promptText,
-        images: images.length > 0 ? images : undefined,
-      });
+      const run = await this.sendWithRecovery(
+        session,
+        {
+          text: promptText,
+          images: images.length > 0 ? images : undefined,
+        },
+        this.pickModel(message, images.length > 0),
+        this.isHeavyRequest(message, images.length > 0) ? "default" : this.config.mcpToolProfile,
+      );
       session.activeRun = run;
 
       for await (const event of run.stream()) {
@@ -400,6 +597,13 @@ export class AgentSessionManager {
               resumedAfterTool = false;
               reply += block.text;
               finalSegment += block.text;
+              if (firstTextLoggedAt === null) {
+                firstTextLoggedAt = Date.now();
+                console.error(
+                  `[assistant-bridge] turn first-text session=${sessionId} ` +
+                    `+${firstTextLoggedAt - turnStartedAt}ms`,
+                );
+              }
               emit.textDelta(reply);
             }
           }
@@ -452,6 +656,7 @@ export class AgentSessionManager {
       if (result.model) selectedModel = result.model;
 
       if (result.status === "cancelled") {
+        this.logTurnEnd(sessionId, turnStartedAt, "cancelled", doneSummary.length);
         emit.done({
           reply: reply.trim() || "Остановлено.",
           model: this.describeModel(selectedModel),
@@ -461,6 +666,7 @@ export class AgentSessionManager {
       }
 
       if (result.status === "error") {
+        this.logTurnEnd(sessionId, turnStartedAt, "error", doneSummary.length);
         emit.error(result.error?.message ?? `Cursor agent завершился с ошибкой. run=${result.id}`);
         return;
       }
@@ -469,17 +675,33 @@ export class AgentSessionManager {
       // duplicates the steps journal.
       const answer = finalSegment.trim() || reply.trim() || "Готово.";
 
+      this.logTurnEnd(sessionId, turnStartedAt, "done", doneSummary.length);
       emit.done({
         reply: answer,
         model: this.describeModel(selectedModel),
         doneSummary: [...new Set(doneSummary)],
       });
+    } catch (err) {
+      this.logTurnEnd(sessionId, turnStartedAt, "threw", doneSummary.length);
+      throw err;
     } finally {
       session.activeRun = undefined;
       for (const [, resolve] of session.pendingConfirms) resolve(false);
       session.pendingConfirms.clear();
       if (session.emitter === emit) session.emitter = undefined;
     }
+  }
+
+  private logTurnEnd(
+    sessionId: string,
+    turnStartedAt: number,
+    outcome: "done" | "cancelled" | "error" | "threw",
+    toolCalls: number,
+  ): void {
+    console.error(
+      `[assistant-bridge] turn ${outcome} session=${sessionId} ` +
+        `+${Date.now() - turnStartedAt}ms tools=${toolCalls}`,
+    );
   }
 
   /** Label of the model Cursor actually ran, falling back to the configured one. */
@@ -499,6 +721,17 @@ export class AgentSessionManager {
   }
 
   async disposeAll(): Promise<void> {
+    // Wait out a build in flight, else its agent outlives the bridge.
+    await this.spareInFlight?.catch(() => undefined);
+    if (this.spare) {
+      try {
+        this.spare.agent.close();
+      } catch {
+        /* ignore */
+      }
+      this.spare = undefined;
+    }
+
     for (const [, record] of this.sessions) {
       try {
         await record.agent.close();

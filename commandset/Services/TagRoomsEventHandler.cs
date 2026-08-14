@@ -353,7 +353,8 @@ namespace RevitMCPCommandSet.Services
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("Error", $"Error tagging rooms: {ex.Message}");
+                // No TaskDialog.Show: this runs inside an ExternalEvent with nobody able
+                // to click it during an agent-driven turn — it would hang the chat.
                 TaggingResults = new
                 {
                     success = false,

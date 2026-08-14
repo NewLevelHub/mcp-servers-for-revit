@@ -112,8 +112,12 @@ async function main(): Promise<void> {
   server.listen(config.port, "127.0.0.1", () => {
     // eslint-disable-next-line no-console
     console.log(
-      `[assistant-bridge] listening on http://127.0.0.1:${config.port} model=${config.modelLabel}`,
+      `[assistant-bridge] listening on http://127.0.0.1:${config.port} model=${config.modelLabel}` +
+        ` tools=${config.mcpToolProfile}`,
     );
+    // Build the first agent now: the panel is open and the architect is typing,
+    // which is exactly the time to spend on a boot nobody is waiting through.
+    sessions.prewarm();
   });
 
   const shutdown = async () => {

@@ -249,13 +249,14 @@ namespace RevitMCPCommandSet.Services
                 errorDetails += "\n\n💡 Alternative: If BeamSystem creation fails, consider using 'create_line_based_element' " +
                     "to create individual structural framing beams in a loop.";
 
+                // No TaskDialog.Show: this runs inside an ExternalEvent with nobody able
+                // to click it during an agent-driven turn — it would hang the chat.
                 Result = new AIResult<StructuralFramingSystemCreationResult>
                 {
                     Success = false,
                     Message = errorDetails,
                     Response = null
                 };
-                TaskDialog.Show("Error", errorDetails);
             }
             finally
             {

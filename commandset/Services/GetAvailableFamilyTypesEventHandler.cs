@@ -85,7 +85,9 @@ namespace RevitMCPCommandSet.Services
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("Error", "获取族类型失败: " + ex.Message);
+                // No TaskDialog.Show: this runs inside an ExternalEvent with nobody able
+                // to click it during an agent-driven turn — it would hang the chat.
+                System.Diagnostics.Trace.WriteLine($"get_available_family_types failed: {ex}");
             }
             finally
             {

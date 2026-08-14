@@ -439,7 +439,9 @@ namespace RevitMCPCommandSet.Utils
 
                 if (view3D == null)
                 {
-                    TaskDialog.Show("错误", "无法创建或获取3D视图");
+                    // No TaskDialog.Show: called from ExternalEvent handlers with nobody
+                    // able to click it during an agent-driven turn — it would hang the chat.
+                    System.Diagnostics.Trace.WriteLine("ProjectUtils: could not create or get 3D view");
                     return null;
                 }
 
@@ -498,7 +500,9 @@ namespace RevitMCPCommandSet.Utils
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("错误", $"获取最近面时发生错误：{ex.Message}");
+                // No TaskDialog.Show: called from ExternalEvent handlers with nobody
+                // able to click it during an agent-driven turn — it would hang the chat.
+                System.Diagnostics.Trace.WriteLine($"ProjectUtils: error getting nearest face: {ex}");
                 return null;
             }
         }
@@ -556,7 +560,9 @@ namespace RevitMCPCommandSet.Utils
 
                 if (view3D == null)
                 {
-                    TaskDialog.Show("错误", "无法创建或获取3D视图");
+                    // No TaskDialog.Show: called from ExternalEvent handlers with nobody
+                    // able to click it during an agent-driven turn — it would hang the chat.
+                    System.Diagnostics.Trace.WriteLine("ProjectUtils: could not create or get 3D view");
                     return null;
                 }
 
@@ -621,7 +627,9 @@ namespace RevitMCPCommandSet.Utils
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("错误", $"获取最近宿主元素时发生错误：{ex.Message}");
+                // No TaskDialog.Show: called from ExternalEvent handlers with nobody
+                // able to click it during an agent-driven turn — it would hang the chat.
+                System.Diagnostics.Trace.WriteLine($"ProjectUtils: error getting nearest host element: {ex}");
                 return null;
             }
         }
@@ -1169,7 +1177,9 @@ namespace RevitMCPCommandSet.Utils
 
             if (solidFill == null)
             {
-                TaskDialog.Show("错误", "未找到实心填充图案");
+                // No TaskDialog.Show: called from ExternalEvent handlers with nobody
+                // able to click it during an agent-driven turn — it would hang the chat.
+                System.Diagnostics.Trace.WriteLine("ProjectUtils: no solid fill pattern found");
                 return;
             }
 

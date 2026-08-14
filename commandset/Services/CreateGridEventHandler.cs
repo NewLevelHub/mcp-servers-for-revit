@@ -216,13 +216,14 @@ namespace RevitMCPCommandSet.Services
             }
             catch (Exception ex)
             {
+                // No TaskDialog.Show: this runs inside an ExternalEvent with nobody able
+                // to click it during an agent-driven turn — it would hang the chat.
                 Result = new AIResult<List<GridCreationResult>>
                 {
                     Success = false,
                     Message = $"Failed to create grids: {ex.Message}",
                     Response = null
                 };
-                TaskDialog.Show("Error", $"Failed to create grids: {ex.Message}");
             }
             finally
             {

@@ -68,7 +68,9 @@ namespace RevitMCPCommandSet.Services
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("error", "获取信息失败");
+                // No TaskDialog.Show: this runs inside an ExternalEvent with nobody able
+                // to click it during an agent-driven turn — it would hang the chat.
+                System.Diagnostics.Trace.WriteLine($"get_current_view_info failed: {ex}");
             }
             finally
             {

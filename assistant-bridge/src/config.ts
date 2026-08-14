@@ -8,6 +8,19 @@ export type BridgeConfig = {
   token: string;
   model: ModelSelection;
   modelLabel: string;
+  /**
+   * Model for everyday turns when the user left the picker on "Авто" (REV-157).
+   * The router itself is a hop the architect waits through, and most chat turns
+   * are a question or a couple of walls — they do not need it.
+   */
+  fastModel: ModelSelection;
+  /**
+   * True when the configured model is the auto router, i.e. we are free to pick
+   * per turn. A user who pinned a model gets that model, always.
+   */
+  routePerTurn: boolean;
+  /** Tool profile handed to the Revit MCP server; `lite` lists ~20 tools. */
+  mcpToolProfile: string;
   rulesCwd: string;
   mcpNode: string;
   mcpServerJs: string;
@@ -22,6 +35,9 @@ export type BridgeConfig = {
  * there is no "auto-smart" model and no optimize_for knob.
  */
 export const AUTO_MODEL_ID = "default";
+
+/** Default for the fast lane; override with ASSISTANT_CURSOR_FAST_MODEL. */
+export const DEFAULT_FAST_MODEL_ID = "composer-2.5";
 
 /** Legacy ids written by earlier builds of the settings page. */
 const LEGACY_AUTO_IDS = new Set([
@@ -71,12 +87,19 @@ export function loadConfig(): BridgeConfig {
     throw new Error("REVIT_MCP_SERVER_JS path to server/build/index.js is required");
   }
 
+  const fastModel = parseModelSelection(
+    (process.env.ASSISTANT_CURSOR_FAST_MODEL ?? DEFAULT_FAST_MODEL_ID).trim()
+  );
+
   return {
     port: Number.isFinite(port) && port > 0 ? port : 8790,
     apiKey,
     token: (process.env.ASSISTANT_BRIDGE_TOKEN ?? "").trim(),
     model,
     modelLabel: modelLabel(model),
+    fastModel,
+    routePerTurn: model.id === AUTO_MODEL_ID,
+    mcpToolProfile: (process.env.MCP_TOOL_PROFILE ?? "lite").trim().toLowerCase(),
     rulesCwd,
     mcpNode,
     mcpServerJs,

@@ -25,8 +25,36 @@ Some MCP tools never call Revit (norm library). Some Revit commands are **intern
 | Profile | Behavior |
 |---------|----------|
 | `default` (unset) | All tools with a `register*` export **except** `DEFAULT_DENYLIST` |
+| `lite` | Same set, but only `LITE_ALLOWLIST` (~20 tools) is **listed**; the rest are registered and hidden |
 | `norms` | Only `extract_norm_rules_from_pdf`, `query_norm_rules`, `save_norm_rule` |
 | `full` | Everything including legacy SQLite helpers |
+
+### `lite` and per-turn profile switching (REV-157)
+
+The full catalog serialises to ~188 KB of JSON schema — about 50k tokens the
+model reads before writing its first character, on **every** turn. That is the
+main reason a one-line question took ~12 s in the in-Revit chat. `lite` lists 20
+everyday tools (28 KB, ~8k tokens) and hides the other 70.
+
+The assistant-bridge picks the profile **per turn** and passes it through
+`agent.send(message, { mcpServers })`: `lite` for questions and everyday edits,
+`default` when the request looks like real work (DWG, layout, norms, schedules,
+sheets, images, long prompts — `isHeavyRequest` in `agent-session.ts`). The
+conversation and its history stay on the same agent across the switch.
+
+Verified against Cursor SDK 1.0.24 on a live model:
+
+- Per-send `mcpServers` **works** — a turn asking for `get_cad_link_geometry`
+  reached it in a session whose previous turns ran on `lite`.
+- Runtime unhiding does **not** work. `RegisteredTool.enable()` emits
+  `notifications/tools/list_changed`, but Cursor snapshots the MCP catalog when
+  the agent is created: the newly enabled tool fails with
+  `Tool mcp-server-for-revit-local-<name> was not found`, on that run **and** on
+  the next send in the same session. Do not reintroduce an in-conversation
+  escalation tool without re-testing this.
+
+Cursor IDE and any other client keep the `default` profile unless they set the
+env var.
 
 ### Legacy / full-only (keep files, not in default)
 
