@@ -32,9 +32,14 @@ public class CreateDimensionEventHandler : IExternalEventHandler, IWaitableExter
         try
         {
             var createdDimensionIds = new List<int>();
+            // One bad record used to throw out of the whole loop, so records after it
+            // were never attempted and the model saw a single opaque failure.
+            var failures = new List<string>();
+            var index = 0;
 
             foreach (var dimInfo in DimensionsToCreate)
             {
+                index++;
                 View view = null;
                 if (dimInfo.ViewId > 0)
                     view = Doc.GetElement(new ElementId(dimInfo.ViewId)) as View;
@@ -56,15 +61,21 @@ public class CreateDimensionEventHandler : IExternalEventHandler, IWaitableExter
 
                     Dimension dimension = null;
 
+                    string reason = null;
+
                     if (dimInfo.ElementIds != null && dimInfo.ElementIds.Count > 0)
                     {
                         var dimensionDirection = (endPoint - startPoint).Normalize();
                         var references = new ReferenceArray();
+                        var missingIds = new List<int>();
                         foreach (var elementId in dimInfo.ElementIds)
                         {
                             var element = Doc.GetElement(new ElementId(elementId));
                             if (element == null)
+                            {
+                                missingIds.Add(elementId);
                                 continue;
+                            }
 
                             foreach (var reference in DimensionAnnotationHelper.GetReferences(
                                          element,
@@ -76,34 +87,48 @@ public class CreateDimensionEventHandler : IExternalEventHandler, IWaitableExter
                         }
 
                         if (references.Size >= 2)
+                        {
                             dimension = Doc.Create.NewDimension(view, line, references);
+                        }
+                        else if (missingIds.Count > 0)
+                        {
+                            reason = $"элементы не найдены в модели: {string.Join(", ", missingIds)}";
+                        }
+                        else
+                        {
+                            reason =
+                                $"из {dimInfo.ElementIds.Count} элемент(ов) получено привязок: {references.Size}, " +
+                                "для размера нужно минимум 2";
+                        }
                     }
                     else
                     {
                         var dimDirection = (endPoint - startPoint).Normalize();
                         var refArray = new ReferenceArray();
+                        var tolerance = dimInfo.PickToleranceMm > 0
+                            ? dimInfo.PickToleranceMm
+                            : DimensionAnnotationHelper.DefaultPickToleranceMm;
+
                         var startRef = DimensionAnnotationHelper.FindReferenceAtPoint(
-                            Doc,
-                            view,
-                            startPoint,
-                            dimDirection,
-                            dimInfo.PickToleranceMm > 0
-                                ? dimInfo.PickToleranceMm
-                                : DimensionAnnotationHelper.DefaultPickToleranceMm);
+                            Doc, view, startPoint, dimDirection, tolerance, out var startReason);
                         var endRef = DimensionAnnotationHelper.FindReferenceAtPoint(
-                            Doc,
-                            view,
-                            endPoint,
-                            dimDirection,
-                            dimInfo.PickToleranceMm > 0
-                                ? dimInfo.PickToleranceMm
-                                : DimensionAnnotationHelper.DefaultPickToleranceMm);
+                            Doc, view, endPoint, dimDirection, tolerance, out var endReason);
 
                         if (startRef != null && endRef != null)
                         {
                             refArray.Append(startRef);
                             refArray.Append(endRef);
                             dimension = Doc.Create.NewDimension(view, line, refArray);
+                        }
+                        else if (startRef == null && endRef == null)
+                        {
+                            reason = $"начало: {startReason}; конец: {endReason}";
+                        }
+                        else
+                        {
+                            reason = startRef == null
+                                ? $"начало размера: {startReason}"
+                                : $"конец размера: {endReason}";
                         }
                     }
 
@@ -116,34 +141,49 @@ public class CreateDimensionEventHandler : IExternalEventHandler, IWaitableExter
                             dimInfo.DimensionStyleId);
                         ApplyDimensionParameters(dimension, dimInfo);
                         createdDimensionIds.Add(dimension.Id.GetIntValue());
+                        transaction.Commit();
                     }
-
-                    transaction.Commit();
+                    else
+                    {
+                        // Nothing was created — do not leave an empty transaction behind.
+                        transaction.RollBack();
+                        failures.Add($"#{index}: {reason ?? "размер не создан"}");
+                    }
                 }
-                catch
+                catch (Exception recordEx)
                 {
                     transaction.RollBack();
-                    throw;
+                    // Keep going: the remaining records may well succeed.
+                    failures.Add($"#{index}: {recordEx.Message}");
                 }
             }
 
+            var requested = DimensionsToCreate.Count;
+            var created = createdDimensionIds.Count;
+            var message = $"Создано размеров: {created} из {requested}.";
+            if (failures.Count > 0)
+                message += " Не удалось — " + string.Join("; ", failures) + ".";
+
             Result = new AIResult<List<int>>
             {
-                Success = true,
-                Message =
-                    $"Successfully created {createdDimensionIds.Count} dimensions. ElementIds saved in Response.",
+                // A run that created nothing is a failure, not a success with an empty
+                // list: reporting it as success is what made the model repeat the call.
+                Success = created > 0,
+                Message = message,
                 Response = createdDimensionIds
             };
         }
         catch (Exception ex)
         {
+            // Never TaskDialog.Show here: Execute runs inside an ExternalEvent with
+            // nobody able to click it during an agent-driven turn — it would hang
+            // the whole chat instead of returning this Result over the socket.
             Result = new AIResult<List<int>>
             {
                 Success = false,
                 Message = $"Error creating dimensions: {ex.Message}",
                 Response = new List<int>()
             };
-            TaskDialog.Show("Error", $"Error creating dimensions: {ex.Message}");
         }
         finally
         {

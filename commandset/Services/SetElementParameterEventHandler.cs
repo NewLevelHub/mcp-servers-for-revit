@@ -41,7 +41,7 @@ public class SetElementParameterEventHandler : IExternalEventHandler, IWaitableE
 
             var parameter = ElementParameterHelper.FindParameter(element, ParameterName)
                 ?? throw new ArgumentException(
-                    $"Parameter '{ParameterName}' was not found on element {TargetElementId}.");
+                    ElementParameterHelper.DescribeMissingParameter(element, ParameterName));
 
             using var transaction = new Transaction(doc, "Set Element Parameter");
             transaction.Start();

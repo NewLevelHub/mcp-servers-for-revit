@@ -26,7 +26,10 @@ namespace RevitMCPCommandSet.Services
         {
             try
             {
-                TaskDialog.Show("Revit MCP", Message);
+                // No TaskDialog.Show: this runs inside an ExternalEvent during an
+                // agent-driven turn, with nobody able to click it — the modal would
+                // block the Revit UI thread and hang the whole chat until dismissed.
+                System.Diagnostics.Trace.WriteLine($"[Revit MCP] say_hello: {Message}");
             }
             finally
             {

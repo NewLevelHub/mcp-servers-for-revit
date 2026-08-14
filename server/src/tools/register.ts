@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { wrapToolHandler } from "../utils/toolOutcome.js";
 
 /**
  * Register norms + check_* first (REV-46).
@@ -46,6 +47,41 @@ const DEFAULT_DENYLIST = new Set([
   "query_stored_data",
 ]);
 
+/**
+ * Tools that stay listed in the `lite` profile (REV-157).
+ *
+ * The full catalog serialises to ~188 KB of JSON schema — roughly 50k tokens the
+ * model reads before writing its first character, on every single turn. An
+ * architect asking a one-line question waits through all of it. `lite` lists the
+ * everyday set (~29 KB); the assistant-bridge asks for the `default` profile on
+ * the turns that need more. Registration is unchanged — the rest is registered
+ * and then hidden, so a profile switch costs no extra wiring.
+ */
+const LITE_ALLOWLIST = new Set([
+  // Look before you touch.
+  "get_current_view_info",
+  "get_current_view_elements",
+  "get_selected_elements",
+  "get_element_parameters",
+  "get_elements_parameters",
+  "get_available_family_types",
+  "get_document_styles",
+  "analyze_model_statistics",
+  "export_room_data",
+  // Everyday modelling.
+  "create_line_based_element",
+  "create_point_based_element",
+  "create_surface_based_element",
+  "create_room",
+  "create_level",
+  "create_text_note",
+  "ensure_wall_type",
+  "number_rooms",
+  "set_element_parameter",
+  "operate_element",
+  "delete_element",
+]);
+
 function toolBaseName(file: string): string {
   return file.replace(/\.(ts|js)$/, "");
 }
@@ -82,7 +118,73 @@ function sortToolFiles(files: string[]): string[] {
 function shouldRegisterTool(base: string, profile: string): boolean {
   if (profile === "full") return true;
   if (profile === "norms") return NORMS_ALLOWLIST.has(base);
+  // `lite` shares the default set; the trimming happens after registration.
   return !DEFAULT_DENYLIST.has(base);
+}
+
+type ToolHandle = { enable(): void; disable(): void };
+
+/**
+ * Every `server.tool` overload ends with the handler, so the last function
+ * argument is the one to wrap regardless of which overload a module used.
+ */
+function wrapHandlerArgument(name: string, args: unknown[]): unknown[] {
+  for (let i = args.length - 1; i >= 0; i--) {
+    if (typeof args[i] === "function") {
+      const copy = [...args];
+      copy[i] = wrapToolHandler(name, args[i] as (...a: never[]) => unknown);
+      return copy;
+    }
+  }
+  return args;
+}
+
+/**
+ * Hand the tool modules a server that (a) routes every handler through
+ * {@link wrapToolHandler} so a refusal from Revit reaches the model as an
+ * error instead of a success-shaped payload, and (b) records the tool handles
+ * so the lite profile can hide the non-core ones afterwards.
+ *
+ * The modules keep calling `server.tool(...)` unchanged — doing this here beats
+ * editing the same three lines into 94 handlers.
+ */
+function captureTools(server: McpServer, sink: Map<string, ToolHandle>): McpServer {
+  const wrap =
+    (method: "tool" | "registerTool") =>
+    (...args: unknown[]) => {
+      const name = typeof args[0] === "string" ? args[0] : undefined;
+      const effectiveArgs = name ? wrapHandlerArgument(name, args) : args;
+      const handle = (server as unknown as Record<string, (...a: unknown[]) => unknown>)[
+        method
+      ](...effectiveArgs);
+      if (name && handle) sink.set(name, handle as ToolHandle);
+      return handle;
+    };
+
+  return new Proxy(server, {
+    get(target, prop) {
+      if (prop === "tool" || prop === "registerTool") return wrap(prop);
+      // Read through the target, not the proxy: McpServer methods rely on their
+      // own internals and must not be re-entered through this trap.
+      const value = Reflect.get(target, prop, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as McpServer;
+}
+
+/** Hide everything outside the lite set. Returns how many tools were hidden. */
+function lockNonLiteTools(handles: Map<string, ToolHandle>): number {
+  let locked = 0;
+  for (const [name, handle] of handles) {
+    if (LITE_ALLOWLIST.has(name)) continue;
+    try {
+      handle.disable();
+      locked += 1;
+    } catch (error) {
+      console.error(`не удалось скрыть инструмент ${name}:`, error);
+    }
+  }
+  return locked;
 }
 
 async function registerToolFile(
@@ -118,6 +220,12 @@ export async function registerTools(server: McpServer): Promise<number> {
     fs.readdirSync(__dirname).filter(isToolModuleFile)
   );
 
+  const handles = new Map<string, ToolHandle>();
+  const lite = profile === "lite";
+  // Always proxied: the handler wrapping matters in every profile, and the
+  // captured handles are only consulted for `lite`.
+  const target = captureTools(server, handles);
+
   let registeredToolCount = 0;
 
   for (const file of files) {
@@ -128,12 +236,17 @@ export async function registerTools(server: McpServer): Promise<number> {
     }
 
     try {
-      if (await registerToolFile(server, file)) {
+      if (await registerToolFile(target, file)) {
         registeredToolCount += 1;
       }
     } catch (error) {
       console.error(`注册工具 ${file} 时出错:`, error);
     }
+  }
+
+  if (lite) {
+    const locked = lockNonLiteTools(handles);
+    console.error(`lite profile: ${handles.size - locked} tools listed, ${locked} hidden`);
   }
 
   console.error(

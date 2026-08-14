@@ -145,9 +145,13 @@ public class PlaceDetailComponentEventHandler : IExternalEventHandler, IWaitable
         }
 
         result.PlacedCount = result.Items.Count(item => item.Placed);
-        result.Success = true;
+        // "Placed 0 of 5" is a failure; reporting it as success sent the model on to
+        // the next step believing the components were on the sheet.
+        result.Success = result.Items.Count == 0 || result.PlacedCount > 0;
         result.Message =
             $"Placed {result.PlacedCount} of {result.Items.Count} detail components on view '{view.Name}'.";
+        if (!result.Success && warnings.Count > 0)
+            result.Message += " Причины: " + string.Join("; ", warnings) + ".";
         result.Warnings = warnings;
         return result;
     }

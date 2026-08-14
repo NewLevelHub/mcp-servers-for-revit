@@ -1,5 +1,6 @@
 using Autodesk.Revit.DB;
 using RevitMCPCommandSet.Models.Common;
+using RevitMCPCommandSet.Utils;
 
 namespace RevitMCPCommandSet.Services.AnnotationComponents;
 
@@ -128,6 +129,24 @@ public static class DimensionAnnotationHelper
         XYZ dimensionDirection,
         double pickToleranceMm = DefaultPickToleranceMm)
     {
+        return FindReferenceAtPoint(doc, view, point, dimensionDirection, pickToleranceMm, out _);
+    }
+
+    /// <summary>
+    ///     As <see cref="FindReferenceAtPoint(Document, View, XYZ, XYZ, double)"/>, but states
+    ///     why nothing was found. Returning a bare null told the model only "failed", so it
+    ///     retried the same call with guessed coordinates instead of widening the tolerance
+    ///     or dimensioning by element id.
+    /// </summary>
+    public static Reference FindReferenceAtPoint(
+        Document doc,
+        View view,
+        XYZ point,
+        XYZ dimensionDirection,
+        double pickToleranceMm,
+        out string failureReason)
+    {
+        failureReason = null;
         // Restrict to dimensionable categories — scanning every view element is very slow on large plans.
         var dimensionCategories = new List<BuiltInCategory>
         {
@@ -178,11 +197,44 @@ public static class DimensionAnnotationHelper
             }
         }
 
-        if (closestElement == null || minDistance > toleranceFeet)
+        if (closestElement == null)
+        {
+            failureReason =
+                $"в точке ({point.X / MillimetersToFeet:F0}, {point.Y / MillimetersToFeet:F0}) мм " +
+                "на виде нет элементов, к которым можно привязать размер " +
+                "(ищем стены, оси, колонны, балки, линии, лестницы, двери, окна)";
             return null;
+        }
+
+        if (minDistance > toleranceFeet)
+        {
+            failureReason =
+                $"ближайший подходящий элемент — {DescribeElement(closestElement)} на расстоянии " +
+                $"{minDistance / MillimetersToFeet:F0} мм, это дальше допуска {pickToleranceMm:F0} мм; " +
+                "увеличьте pickToleranceMm или задайте elementIds";
+            return null;
+        }
 
         var refs = GetReferences(closestElement, view, dimensionDirection);
-        return refs.Count > 0 ? refs[0] : null;
+        if (refs.Count == 0)
+        {
+            failureReason =
+                $"у элемента {DescribeElement(closestElement)} нет граней, пригодных для размера " +
+                "в этом направлении";
+            return null;
+        }
+
+        return refs[0];
+    }
+
+    private static string DescribeElement(Element element)
+    {
+        if (element == null)
+            return "неизвестный элемент";
+        var category = element.Category?.Name;
+        return string.IsNullOrWhiteSpace(category)
+            ? $"id {element.Id.GetIntValue()}"
+            : $"{category} (id {element.Id.GetIntValue()})";
     }
 
     /// <summary>

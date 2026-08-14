@@ -173,9 +173,12 @@ public class CreateDetailLinesEventHandler : IExternalEventHandler, IWaitableExt
             tx.Commit();
         }
 
+        var requestedCurves = polylines.Count + arcs.Count;
         var result = new CreateDetailLinesResult
         {
-            Success = true,
+            // Asked for curves and drew none: the warnings say why, and calling that a
+            // success let the model move on as if the detail had been drawn.
+            Success = requestedCurves == 0 || createdIds.Count > 0,
             Message = $"Created {createdIds.Count} detail curves on view '{view.Name}'.",
             CreatedCount = createdIds.Count,
             DetailLineIds = createdIds,

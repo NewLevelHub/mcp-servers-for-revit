@@ -5,6 +5,71 @@ namespace RevitMCPCommandSet.Utils;
 
 public static class ElementParameterHelper
 {
+    /// <summary>
+    ///     Russian ↔ English names for the parameters an architect actually types.
+    ///     A Russian-language Revit shows "Марка", the API often stores "Mark", and a
+    ///     lookup miss used to return a bare "not found" — the model then burned calls
+    ///     guessing spellings (3 misses on "Марка" before it tried "Mark"). Groups are
+    ///     bidirectional: any name in a row resolves to every other name in that row.
+    /// </summary>
+    private static readonly string[][] ParameterAliasGroups =
+    {
+        new[] { "Mark", "Марка" },
+        new[] { "Type Mark", "Марка типа" },
+        new[] { "Comments", "Комментарии", "Примечание" },
+        new[] { "Type Comments", "Комментарии к типу" },
+        new[] { "Description", "Описание" },
+        new[] { "Manufacturer", "Изготовитель", "Производитель" },
+        new[] { "Model", "Модель" },
+        new[] { "Length", "Длина" },
+        new[] { "Width", "Ширина" },
+        new[] { "Height", "Высота" },
+        new[] { "Thickness", "Толщина" },
+        new[] { "Area", "Площадь" },
+        new[] { "Volume", "Объем", "Объём" },
+        new[] { "Perimeter", "Периметр" },
+        new[] { "Level", "Уровень" },
+        new[] { "Name", "Имя", "Наименование" },
+        new[] { "Number", "Номер" },
+        new[] { "Family", "Семейство" },
+        new[] { "Family and Type", "Семейство и типоразмер" },
+        new[] { "Type", "Тип", "Типоразмер" },
+        new[] { "Type Name", "Имя типа" },
+        new[] { "Material", "Материал" },
+        new[] { "Phase Created", "Стадия возведения" },
+        new[] { "Phase Demolished", "Стадия сноса" },
+        new[] { "Base Constraint", "Зависимость снизу" },
+        new[] { "Top Constraint", "Зависимость сверху" },
+        new[] { "Base Offset", "Смещение снизу" },
+        new[] { "Top Offset", "Смещение сверху" },
+        new[] { "Unconnected Height", "Высота неприсоединенная", "Высота неприсоединённая" },
+        new[] { "Sill Height", "Высота нижнего бруса", "Высота подоконника" },
+        new[] { "Head Height", "Высота верхнего бруса" },
+        new[] { "Room Bounding", "Граница помещения", "WALL_ATTR_ROOM_BOUNDING" },
+        new[] { "Department", "Отдел", "Подразделение" },
+        new[] { "Occupancy", "Назначение" },
+        new[] { "Fire Rating", "Предел огнестойкости", "Огнестойкость" },
+        new[] { "Cost", "Стоимость" },
+        new[] { "Keynote", "Ключевая пометка" },
+        new[] { "Assembly Code", "Код сборки" },
+        new[] { "Image", "Изображение" },
+        new[] { "Workset", "Рабочий набор" },
+        new[] { "Elevation", "Отметка" },
+    };
+
+    private static readonly Dictionary<string, string[]> AliasLookup = BuildAliasLookup();
+
+    private static Dictionary<string, string[]> BuildAliasLookup()
+    {
+        var map = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+        foreach (var group in ParameterAliasGroups)
+        {
+            foreach (var name in group)
+                map[name] = group;
+        }
+        return map;
+    }
+
     public static Parameter? FindParameter(Element element, string parameterName)
     {
         if (string.IsNullOrWhiteSpace(parameterName))
@@ -35,9 +100,77 @@ public static class ElementParameterHelper
         return null;
     }
 
+    /// <summary>
+    ///     Why the lookup missed, plus the closest names this element actually has.
+    ///     "Parameter not found" alone gave the model nothing to correct.
+    /// </summary>
+    public static string DescribeMissingParameter(Element element, string parameterName)
+    {
+        var available = element.Parameters
+            .Cast<Parameter>()
+            .Select(p => p.Definition?.Name)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var suggestions = RankSuggestions(parameterName, available!).Take(5).ToList();
+        var message = $"У элемента (id {element.Id.GetIntValue()}) нет параметра «{parameterName}»";
+
+        if (suggestions.Count > 0)
+            message += ". Похожие имена у этого элемента: " + string.Join(", ", suggestions);
+        else if (available.Count > 0)
+            message += $". Всего доступно параметров: {available.Count}";
+
+        return message;
+    }
+
+    /// <summary>Available names ordered by closeness to <paramref name="wanted"/>.</summary>
+    private static IEnumerable<string> RankSuggestions(string wanted, List<string> available)
+    {
+        var needle = wanted.Trim();
+        var aliases = AliasLookup.TryGetValue(needle, out var group)
+            ? new HashSet<string>(group, StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        return available
+            .Select(name => new
+            {
+                Name = name,
+                Score = aliases.Contains(name) ? 0
+                    : name.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0 ? 1
+                    : needle.IndexOf(name, StringComparison.OrdinalIgnoreCase) >= 0 ? 2
+                    : SharedPrefixLength(name, needle) >= 3 ? 3
+                    : int.MaxValue,
+            })
+            .Where(x => x.Score != int.MaxValue)
+            .OrderBy(x => x.Score)
+            .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(x => x.Name);
+    }
+
+    private static int SharedPrefixLength(string a, string b)
+    {
+        var max = Math.Min(a.Length, b.Length);
+        var i = 0;
+        while (i < max && char.ToLowerInvariant(a[i]) == char.ToLowerInvariant(b[i]))
+            i++;
+        return i;
+    }
+
     private static IEnumerable<string> ExpandParameterAliases(string parameterName)
     {
         yield return parameterName;
+
+        var trimmed = parameterName.Trim();
+        if (AliasLookup.TryGetValue(trimmed, out var group))
+        {
+            foreach (var alias in group)
+            {
+                if (!string.Equals(alias, trimmed, StringComparison.OrdinalIgnoreCase))
+                    yield return alias;
+            }
+        }
+
         if (IsRoomBoundingAlias(parameterName))
         {
             yield return "Room Bounding";

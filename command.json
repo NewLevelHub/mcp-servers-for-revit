@@ -79,6 +79,11 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "tag_elements",
+      "description": "Поставить марки Revit по категории или списку ElementId (двери, окна, стены и др.)",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "delete_element",
       "description": "Удалить элементы по ElementId",
       "assemblyPath": "RevitMCPCommandSet.dll"

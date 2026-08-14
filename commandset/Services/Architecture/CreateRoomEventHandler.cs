@@ -77,6 +77,10 @@ namespace RevitMCPCommandSet.Services.Architecture
             try
             {
                 var createdRooms = new List<RoomResultInfo>();
+                // Skipped rooms used to vanish silently, so "created 0 room(s)" came
+                // back as a success and the model had no idea what to fix.
+                var failures = new List<string>();
+                var roomIndex = 0;
 
                 // Get all existing room numbers to avoid duplicates
                 HashSet<string> existingRoomNumbers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -96,6 +100,7 @@ namespace RevitMCPCommandSet.Services.Architecture
 
                 foreach (var roomInfo in RoomData)
                 {
+                    roomIndex++;
                     using (Transaction tx = new Transaction(_doc, "Create Room"))
                     {
                         // Set up failure handling to completely suppress duplicate room number warnings
@@ -135,7 +140,8 @@ namespace RevitMCPCommandSet.Services.Architecture
 
                         if (level == null)
                         {
-                            // Skip if no level found
+                            tx.RollBack();
+                            failures.Add($"#{roomIndex}: в проекте нет ни одного уровня для размещения помещения");
                             continue;
                         }
 
@@ -155,9 +161,12 @@ namespace RevitMCPCommandSet.Services.Architecture
 
                         if (room == null)
                         {
-                            // If location-based creation failed, create an unplaced room
-                            // This can happen if the point is not inside an enclosed area
                             tx.RollBack();
+                            failures.Add(roomInfo.Location == null
+                                ? $"#{roomIndex}: не задана точка размещения (location)"
+                                : $"#{roomIndex}: точка ({roomInfo.Location.X:F0}, {roomInfo.Location.Y:F0}) мм " +
+                                  $"на уровне «{level.Name}» не внутри замкнутого контура стен — " +
+                                  "помещение создать не из чего");
                             continue;
                         }
 
@@ -262,21 +271,26 @@ namespace RevitMCPCommandSet.Services.Architecture
                     }
                 }
 
+                var roomMessage = $"Создано помещений: {createdRooms.Count} из {RoomData.Count}.";
+                if (failures.Count > 0)
+                    roomMessage += " Не удалось — " + string.Join("; ", failures) + ".";
+
                 Result = new AIResult<List<RoomResultInfo>>
                 {
-                    Success = true,
-                    Message = $"Successfully created {createdRooms.Count} room(s)",
+                    Success = createdRooms.Count > 0,
+                    Message = roomMessage,
                     Response = createdRooms
                 };
             }
             catch (Exception ex)
             {
+                // No TaskDialog.Show: this runs inside an ExternalEvent with nobody able
+                // to click it during an agent-driven turn — it would hang the chat.
                 Result = new AIResult<List<RoomResultInfo>>
                 {
                     Success = false,
                     Message = $"Error creating rooms: {ex.Message}",
                 };
-                TaskDialog.Show("Error", $"Error creating rooms: {ex.Message}");
             }
             finally
             {
