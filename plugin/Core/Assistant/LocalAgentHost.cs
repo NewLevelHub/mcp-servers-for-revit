@@ -110,7 +110,9 @@ namespace revit_mcp_plugin.Core.Assistant
             RaiseBudgetChanged();
         }
 
-        private static void ParseViewContext(string ctx, TurnLogEntry log)
+        /// <summary>Shared with <see cref="CursorBridgeAgentHost"/> — both hosts receive the same
+        /// <see cref="AssistantSessionContext.FormatForPrompt"/> string.</summary>
+        internal static void ParseViewContext(string ctx, TurnLogEntry log)
         {
             if (string.IsNullOrWhiteSpace(ctx)) return;
             try

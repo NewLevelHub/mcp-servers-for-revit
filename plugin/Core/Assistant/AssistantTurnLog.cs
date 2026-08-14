@@ -144,8 +144,10 @@ namespace revit_mcp_plugin.Core.Assistant
 
         /// <summary>
         /// Append a rating patch to the same JSONL file. Links to the original entry by turnId.
+        /// Returns false when the write failed, so the UI can tell the architect their feedback
+        /// was not actually saved instead of silently swallowing it.
         /// </summary>
-        public static void WriteRatingPatch(string turnId, int rating, string reason, string comment)
+        public static bool WriteRatingPatch(string turnId, int rating, string reason, string comment)
         {
             try
             {
@@ -161,8 +163,13 @@ namespace revit_mcp_plugin.Core.Assistant
                     }
                 };
                 AppendLine(jo.ToString(Formatting.None));
+                return true;
             }
-            catch { /* safe */ }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.WriteLine("[AssistantTurnLogger] WriteRatingPatch failed: " + ex);
+                return false;
+            }
         }
 
         private static void AppendLine(string line)

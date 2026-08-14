@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -22,6 +23,16 @@ namespace revit_mcp_plugin.Core.Assistant
         private ServiceSettings _settings;
         private readonly string _sessionId = Guid.NewGuid().ToString("N").Substring(0, 12);
         private int _turnCount;
+
+        /// <summary>A raw tool_step "running" not yet resolved to ok/error — tracked
+        /// independently of the UI's folded <see cref="ToolStepEvent"/> rows so the turn
+        /// log (REV feedback fix) sees every real call, not the folded display copy.</summary>
+        private struct PendingToolCall
+        {
+            public long StartMs;
+            public string Name;
+            public string Args;
+        }
 
         /// <summary>Set by ClearHistory; makes the next turn drop the Cursor session.</summary>
         private bool _resetPending;
@@ -78,7 +89,24 @@ namespace revit_mcp_plugin.Core.Assistant
         {
             var steps = new List<ToolStepEvent>();
             var stepsByCallId = new Dictionary<string, ToolStepEvent>(StringComparer.Ordinal);
+            var pendingCalls = new Dictionary<string, PendingToolCall>(StringComparer.Ordinal);
             var model = DescribeConfiguredModel();
+
+            // REV feedback fix: the turn log is the only way a 👎 in the panel ever
+            // reaches assistant-feedback_*.md with real content (question/view/model/
+            // tool chain) instead of an empty stub — see CursorBridgeAgentHost never
+            // having written one before this.
+            var turnLog = new TurnLogEntry
+            {
+                TurnId = string.IsNullOrWhiteSpace(turnId) ? Guid.NewGuid().ToString("N").Substring(0, 12) : turnId,
+                SessionId = _sessionId,
+                Ts = DateTime.UtcNow,
+                UserText = userMessage,
+                Model = model,
+                ToolProfiles = toolProfiles != null ? toolProfiles.ToList() : new List<string>(),
+            };
+            LocalAgentHost.ParseViewContext(viewContext, turnLog);
+            var turnSw = Stopwatch.StartNew();
 
             // Stop must reach the agent itself, not just abort our HTTP read.
             using (cancellationToken.Register(() => FireAndForgetCancel()))
@@ -126,11 +154,15 @@ namespace revit_mcp_plugin.Core.Assistant
                             using (var reader = new StreamReader(stream, Encoding.UTF8))
                             {
                                 var reply = await ReadSseAsync(
-                                    reader, steps, stepsByCallId, m => model = m, cancellationToken)
+                                    reader, steps, stepsByCallId, pendingCalls, turnLog, turnSw,
+                                    m => model = m, cancellationToken)
                                     .ConfigureAwait(false);
 
                                 _turnCount++;
                                 RaiseBudgetChanged();
+
+                                turnLog.Outcome = "ok";
+                                turnLog.Reply = reply;
 
                                 return new AgentTurnResult
                                 {
@@ -143,18 +175,30 @@ namespace revit_mcp_plugin.Core.Assistant
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
-                    MarkRunningStepsCancelled(steps);
+                    MarkRunningStepsCancelled(steps, pendingCalls, turnLog, turnSw);
+                    turnLog.Outcome = "cancelled";
+                    turnLog.Reply = "Остановлено.";
                     return new AgentTurnResult { Cancelled = true, Reply = "Остановлено.", Model = model };
                 }
                 catch (Exception ex)
                 {
-                    MarkRunningStepsCancelled(steps);
+                    MarkRunningStepsCancelled(steps, pendingCalls, turnLog, turnSw);
+                    turnLog.Outcome = "failed";
+                    turnLog.Reply = ex.Message;
                     return new AgentTurnResult
                     {
                         Failed = true,
                         Reply = ex.Message,
                         Model = model,
                     };
+                }
+                finally
+                {
+                    // Always exactly one entry per turn, whichever of the three paths above ran.
+                    turnLog.TotalMs = turnSw.ElapsedMilliseconds;
+                    turnLog.Model = model;
+                    turnLog.Rounds = turnLog.ToolCalls.Count;
+                    AssistantTurnLogger.Write(turnLog);
                 }
             }
         }
@@ -201,6 +245,9 @@ namespace revit_mcp_plugin.Core.Assistant
             StreamReader reader,
             IList<ToolStepEvent> steps,
             IDictionary<string, ToolStepEvent> stepsByCallId,
+            IDictionary<string, PendingToolCall> pendingCalls,
+            TurnLogEntry turnLog,
+            Stopwatch turnSw,
             Action<string> setModel,
             CancellationToken cancellationToken)
         {
@@ -240,7 +287,7 @@ namespace revit_mcp_plugin.Core.Assistant
                         break;
 
                     case "tool_step":
-                        ApplyToolStep(data, steps, stepsByCallId);
+                        ApplyToolStep(data, steps, stepsByCallId, pendingCalls, turnLog, turnSw);
                         break;
 
                     case "confirm":
@@ -272,13 +319,18 @@ namespace revit_mcp_plugin.Core.Assistant
         private void ApplyToolStep(
             JObject data,
             IList<ToolStepEvent> steps,
-            IDictionary<string, ToolStepEvent> stepsByCallId)
+            IDictionary<string, ToolStepEvent> stepsByCallId,
+            IDictionary<string, PendingToolCall> pendingCalls,
+            TurnLogEntry turnLog,
+            Stopwatch turnSw)
         {
             var name = data["name"]?.ToString() ?? "tool";
             var status = data["status"]?.ToString() ?? ToolStepEvent.StatusRunning;
             var callId = data["callId"]?.ToString();
             if (string.IsNullOrEmpty(callId))
                 callId = name + "#" + steps.Count;
+
+            RecordRawToolCall(data, name, status, callId, pendingCalls, turnLog, turnSw);
 
             var label = ToolStepLabels.Humanize(name);
 
@@ -331,6 +383,49 @@ namespace revit_mcp_plugin.Core.Assistant
             step.Summary = ToolStepLabels.StatusNote(step.Status);
 
             RaiseToolStep(step, steps);
+        }
+
+        /// <summary>
+        /// One entry per real tool call for the turn log, independent of the UI fold
+        /// above (which merges repeats of the same tool into one journal row). This is
+        /// what lets a 👎 report actually name which call in the chain failed.
+        /// </summary>
+        private static void RecordRawToolCall(
+            JObject data,
+            string name,
+            string status,
+            string callId,
+            IDictionary<string, PendingToolCall> pendingCalls,
+            TurnLogEntry turnLog,
+            Stopwatch turnSw)
+        {
+            if (status == ToolStepEvent.StatusRunning)
+            {
+                pendingCalls[callId] = new PendingToolCall
+                {
+                    StartMs = turnSw.ElapsedMilliseconds,
+                    Name = name,
+                    Args = data["args"]?.ToString(),
+                };
+                return;
+            }
+
+            PendingToolCall pending;
+            pendingCalls.TryGetValue(callId, out pending);
+            pendingCalls.Remove(callId);
+            var resultStr = data["result"]?.ToString();
+
+            turnLog.ToolCalls.Add(new ToolCallLog
+            {
+                Round = turnLog.ToolCalls.Count + 1,
+                Name = string.IsNullOrEmpty(pending.Name) ? name : pending.Name,
+                Args = pending.Args ?? data["args"]?.ToString(),
+                Ok = status == ToolStepEvent.StatusOk,
+                DurationMs = turnSw.ElapsedMilliseconds - pending.StartMs,
+                Error = status == ToolStepEvent.StatusError ? (resultStr ?? "ошибка") : null,
+                ResultBytes = resultStr?.Length ?? 0,
+                Summary = resultStr,
+            });
         }
 
         /// <summary>
@@ -403,8 +498,31 @@ namespace revit_mcp_plugin.Core.Assistant
             catch { /* the bridge times out on its own and treats it as a refusal */ }
         }
 
-        private void MarkRunningStepsCancelled(IList<ToolStepEvent> steps)
+        private void MarkRunningStepsCancelled(
+            IList<ToolStepEvent> steps,
+            IDictionary<string, PendingToolCall> pendingCalls,
+            TurnLogEntry turnLog,
+            Stopwatch turnSw)
         {
+            // Whatever was still in flight when the turn died is exactly what a "почему
+            // завис" investigation needs — record it before the pending set is dropped.
+            if (pendingCalls != null && pendingCalls.Count > 0)
+            {
+                foreach (var kv in pendingCalls)
+                {
+                    turnLog.ToolCalls.Add(new ToolCallLog
+                    {
+                        Round = turnLog.ToolCalls.Count + 1,
+                        Name = kv.Value.Name,
+                        Args = kv.Value.Args,
+                        Ok = false,
+                        DurationMs = turnSw.ElapsedMilliseconds - kv.Value.StartMs,
+                        Error = "прервано",
+                    });
+                }
+                pendingCalls.Clear();
+            }
+
             if (steps == null || steps.Count == 0)
                 return;
 

@@ -1189,7 +1189,8 @@ namespace revit_mcp_plugin.UI.Assistant
 
         private void OnBubbleFeedback(object sender, FeedbackEventArgs e)
         {
-            Core.Assistant.AssistantTurnLogger.WriteRatingPatch(e.TurnId, e.Rating, e.Reason, e.Comment);
+            var ok = Core.Assistant.AssistantTurnLogger.WriteRatingPatch(e.TurnId, e.Rating, e.Reason, e.Comment);
+            (sender as ChatBubble)?.ShowFeedbackResult(ok);
             RefreshFeedbackBadge();
         }
 

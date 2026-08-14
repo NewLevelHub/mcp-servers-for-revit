@@ -51,6 +51,8 @@ namespace revit_mcp_plugin.UI.Assistant
         private string _selectedReason;
         private readonly List<Button> _reasonChips = new List<Button>();
         private TextBox _commentBox;
+        private Button _sendBtn;
+        private TextBlock _feedbackStatusText;
         private readonly string _metaFooter;
         private StackPanel _messageStack;
         private FrameworkElement _textHost;
@@ -158,6 +160,17 @@ namespace revit_mcp_plugin.UI.Assistant
             }
             outer.Children.Add(actionRow);
 
+            // Lives outside _dislikeForm on purpose: SubmitDislike hides the form right
+            // after firing FeedbackSubmitted, and this ack must survive that (Д19).
+            _feedbackStatusText = new TextBlock
+            {
+                FontSize = 10.5,
+                Margin = new Thickness(2, 3, 0, 0),
+                Visibility = Visibility.Collapsed,
+                TextWrapping = TextWrapping.Wrap,
+            };
+            outer.Children.Add(_feedbackStatusText);
+
             if (!string.IsNullOrWhiteSpace(_metaFooter))
             {
                 outer.Children.Add(new TextBlock
@@ -229,7 +242,7 @@ namespace revit_mcp_plugin.UI.Assistant
             var stack = new StackPanel();
             stack.Children.Add(new TextBlock
             {
-                Text = "Что пошло не так? (выберите тег)",
+                Text = "Что пошло не так? Тег и/или пара слов",
                 FontSize = 11,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = new SolidColorBrush(Color.FromRgb(0x1A, 0x27, 0x44)),
@@ -259,34 +272,77 @@ namespace revit_mcp_plugin.UI.Assistant
                 BorderBrush = new SolidColorBrush(Color.FromRgb(0xD5, 0xDE, 0xE8)),
                 BorderThickness = new Thickness(1),
                 Foreground = new SolidColorBrush(Color.FromRgb(0x1F, 0x29, 0x33)),
-                ToolTip = "Необязательный комментарий",
+                ToolTip = "Можно отправить один комментарий, без тега",
             };
             AutomationProperties.SetName(_commentBox, "Комментарий к дизлайку");
+            _commentBox.TextChanged += (s, e) => UpdateSendEnabled();
             stack.Children.Add(_commentBox);
 
-            var sendBtn = new Button
+            _sendBtn = new Button
             {
                 Content = "Отправить",
                 Margin = new Thickness(0, 6, 0, 0),
                 Padding = new Thickness(12, 5, 12, 5),
                 FontSize = 11.5,
                 FontWeight = FontWeights.SemiBold,
-                Background = new SolidColorBrush(Color.FromRgb(0x1A, 0x27, 0x44)),
-                Foreground = Brushes.White,
                 BorderThickness = new Thickness(0),
-                Cursor = Cursors.Hand,
                 IsEnabled = false,
             };
-            AutomationProperties.SetName(sendBtn, "Отправить дизлайк");
-            sendBtn.Template = BuildSimpleRoundedButtonTemplate(10);
-            sendBtn.Click += (s, e) => SubmitDislike();
+            AutomationProperties.SetName(_sendBtn, "Отправить дизлайк");
+            _sendBtn.Template = BuildSimpleRoundedButtonTemplate(10);
+            ApplySendButtonEnabledStyle(enabled: false);
+            _sendBtn.Click += (s, e) => SubmitDislike();
 
             foreach (var chip in _reasonChips)
-                chip.Click += (s, e) => { sendBtn.IsEnabled = _selectedReason != null; };
+                chip.Click += (s, e) => UpdateSendEnabled();
 
-            stack.Children.Add(sendBtn);
+            stack.Children.Add(_sendBtn);
             form.Child = stack;
             return form;
+        }
+
+        /// <summary>
+        /// Enabled when there is a tag OR a comment — a tag alone used to be required,
+        /// which made a comment-only report impossible to send (Д19).
+        /// </summary>
+        private void UpdateSendEnabled()
+        {
+            var enabled = _selectedReason != null || !string.IsNullOrWhiteSpace(_commentBox?.Text);
+            if (_sendBtn != null)
+                _sendBtn.IsEnabled = enabled;
+            ApplySendButtonEnabledStyle(enabled);
+        }
+
+        /// <summary>
+        /// <see cref="BuildSimpleRoundedButtonTemplate"/> has no IsEnabled trigger, so a
+        /// disabled Send button used to look identical to an enabled one (Д19) — style it
+        /// in code instead, same pattern as <see cref="ApplyChipStyle"/>.
+        /// </summary>
+        private void ApplySendButtonEnabledStyle(bool enabled)
+        {
+            if (_sendBtn == null) return;
+            _sendBtn.Background = enabled
+                ? new SolidColorBrush(Color.FromRgb(0x1A, 0x27, 0x44))
+                : new SolidColorBrush(Color.FromRgb(0xE3, 0xE7, 0xEC));
+            _sendBtn.Foreground = enabled
+                ? Brushes.White
+                : new SolidColorBrush(Color.FromRgb(0x9A, 0xA3, 0xB0));
+            _sendBtn.Cursor = enabled ? Cursors.Hand : Cursors.Arrow;
+        }
+
+        /// <summary>
+        /// Called by the host once <c>WriteRatingPatch</c> returns, so a silent log
+        /// failure is visible instead of leaving the architect believing they complained
+        /// successfully (Д19 — "снять глушитель").
+        /// </summary>
+        public void ShowFeedbackResult(bool ok)
+        {
+            if (_feedbackStatusText == null) return;
+            _feedbackStatusText.Text = ok ? "Записано" : "Не сохранено — попробуйте ещё раз";
+            _feedbackStatusText.Foreground = ok
+                ? new SolidColorBrush(Color.FromRgb(0x2E, 0x7D, 0x32))
+                : new SolidColorBrush(Color.FromRgb(0xB0, 0x2A, 0x2A));
+            _feedbackStatusText.Visibility = Visibility.Visible;
         }
 
         private Button MakeReasonChip(string reason)
@@ -411,12 +467,13 @@ namespace revit_mcp_plugin.UI.Assistant
                 ApplyChipStyle(c, selected: false);
             if (_commentBox != null)
                 _commentBox.Text = string.Empty;
+            UpdateSendEnabled();
         }
 
         private void SubmitDislike()
         {
-            if (_selectedReason == null) return;
             var comment = _commentBox?.Text?.Trim();
+            if (_selectedReason == null && string.IsNullOrEmpty(comment)) return;
             FeedbackSubmitted?.Invoke(this, new FeedbackEventArgs(_turnId, -1, _selectedReason, string.IsNullOrEmpty(comment) ? null : comment));
             HideDislikeForm();
             ApplyRatingButtonStyle(_dislikeBtn, active: true);
