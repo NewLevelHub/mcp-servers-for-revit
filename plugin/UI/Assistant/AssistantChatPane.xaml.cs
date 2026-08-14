@@ -1189,6 +1189,11 @@ namespace revit_mcp_plugin.UI.Assistant
 
         private void OnBubbleFeedback(object sender, FeedbackEventArgs e)
         {
+            // A rating without a turn behind it can only ever export as an empty
+            // complaint, so refuse it here as well as hiding the buttons.
+            if (e == null || string.IsNullOrWhiteSpace(e.TurnId))
+                return;
+
             var ok = Core.Assistant.AssistantTurnLogger.WriteRatingPatch(e.TurnId, e.Rating, e.Reason, e.Comment);
             (sender as ChatBubble)?.ShowFeedbackResult(ok);
             RefreshFeedbackBadge();

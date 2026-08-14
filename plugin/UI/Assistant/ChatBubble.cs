@@ -43,6 +43,14 @@ namespace revit_mcp_plugin.UI.Assistant
         private string _messageText;
         private readonly bool _fromUser;
 
+        /// <summary>
+        /// True only for bubbles that carry a real assistant turn. System notices
+        /// ("Отчёт сохранён…", "Новый диалог", errors) have no turn behind them, so
+        /// rating one produced a rating patch whose turnId matched no log entry —
+        /// and the complaint arrived empty, which is the very thing the turn log fixed.
+        /// </summary>
+        private readonly bool _ratable;
+
         private Button _likeBtn;
         private Button _dislikeBtn;
         private int _rating;
@@ -65,7 +73,10 @@ namespace revit_mcp_plugin.UI.Assistant
             string metaFooter = null,
             string userRequestText = null)
         {
-            _turnId = turnId ?? Guid.NewGuid().ToString("N").Substring(0, 8);
+            // A generated id used to stand in here, which is exactly how a notice
+            // ended up ratable against a turn that never existed.
+            _ratable = !string.IsNullOrWhiteSpace(turnId);
+            _turnId = turnId;
             _metaFooter = metaFooter;
             _userRequestText = userRequestText;
             _messageText = text ?? "";
@@ -130,14 +141,18 @@ namespace revit_mcp_plugin.UI.Assistant
 
             var actionRow = new WrapPanel { Margin = new Thickness(2, 4, 0, 0) };
 
-            _likeBtn = MakeActionButton("👍", "Хороший ответ");
-            _dislikeBtn = MakeActionButton("👎", "Плохой ответ");
             var copyBtn = MakeActionButton("📋", "Копировать");
             var retryBtn = MakeActionButton("↻", "Повторить");
             var editBtn = MakeActionButton("✎", "Изменить запрос");
 
-            _likeBtn.Click += (s, e) => OnLikeClick();
-            _dislikeBtn.Click += (s, e) => OnDislikeClick();
+            if (_ratable)
+            {
+                _likeBtn = MakeActionButton("👍", "Хороший ответ");
+                _dislikeBtn = MakeActionButton("👎", "Плохой ответ");
+                _likeBtn.Click += (s, e) => OnLikeClick();
+                _dislikeBtn.Click += (s, e) => OnDislikeClick();
+            }
+
             copyBtn.Click += (s, e) => OnCopyClick(_messageText);
             retryBtn.Click += (s, e) =>
             {
@@ -150,8 +165,11 @@ namespace revit_mcp_plugin.UI.Assistant
                     EditRequested?.Invoke(this, new RetryEventArgs(_turnId, _userRequestText));
             };
 
-            actionRow.Children.Add(_likeBtn);
-            actionRow.Children.Add(_dislikeBtn);
+            if (_ratable)
+            {
+                actionRow.Children.Add(_likeBtn);
+                actionRow.Children.Add(_dislikeBtn);
+            }
             actionRow.Children.Add(copyBtn);
             if (!string.IsNullOrWhiteSpace(_userRequestText))
             {
@@ -160,16 +178,19 @@ namespace revit_mcp_plugin.UI.Assistant
             }
             outer.Children.Add(actionRow);
 
-            // Lives outside _dislikeForm on purpose: SubmitDislike hides the form right
-            // after firing FeedbackSubmitted, and this ack must survive that (Д19).
-            _feedbackStatusText = new TextBlock
+            if (_ratable)
             {
-                FontSize = 10.5,
-                Margin = new Thickness(2, 3, 0, 0),
-                Visibility = Visibility.Collapsed,
-                TextWrapping = TextWrapping.Wrap,
-            };
-            outer.Children.Add(_feedbackStatusText);
+                // Lives outside _dislikeForm on purpose: SubmitDislike hides the form right
+                // after firing FeedbackSubmitted, and this ack must survive that (Д19).
+                _feedbackStatusText = new TextBlock
+                {
+                    FontSize = 10.5,
+                    Margin = new Thickness(2, 3, 0, 0),
+                    Visibility = Visibility.Collapsed,
+                    TextWrapping = TextWrapping.Wrap,
+                };
+                outer.Children.Add(_feedbackStatusText);
+            }
 
             if (!string.IsNullOrWhiteSpace(_metaFooter))
             {
@@ -183,8 +204,12 @@ namespace revit_mcp_plugin.UI.Assistant
                 });
             }
 
-            _dislikeForm = BuildDislikeForm();
-            outer.Children.Add(_dislikeForm);
+            if (_ratable)
+            {
+                _dislikeForm = BuildDislikeForm();
+                outer.Children.Add(_dislikeForm);
+            }
+
             return outer;
         }
 
@@ -457,10 +482,17 @@ namespace revit_mcp_plugin.UI.Assistant
             catch { /* clipboard may be locked */ }
         }
 
-        private void ShowDislikeForm() => _dislikeForm.Visibility = Visibility.Visible;
+        private void ShowDislikeForm()
+        {
+            if (_dislikeForm != null)
+                _dislikeForm.Visibility = Visibility.Visible;
+        }
 
         private void HideDislikeForm()
         {
+            if (_dislikeForm == null)
+                return;
+
             _dislikeForm.Visibility = Visibility.Collapsed;
             _selectedReason = null;
             foreach (var c in _reasonChips)
