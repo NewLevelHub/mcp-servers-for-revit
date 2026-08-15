@@ -91,8 +91,94 @@ export function curatedRoomHeightRule(): SaveableNormRule {
   };
 }
 
+export const CURATED_ROOM_DEPTH_RULE_ID =
+  "сп рк 3.02-101-2012|п. 4.4.10.22|жилое помещение|max_value";
+
+export const CURATED_APARTMENT_DEPTH_RULE_ID =
+  "сп рк 3.02-101-2012|п. 4.4.10.21|квартира|max_value";
+
+/**
+ * Room depth. The clause is printed in Kazakh only in СП РК 3.02-101-2012*, which
+ * is why the Russian-oriented PDF extractor never produced a value and
+ * check_room_depth reported "no numeric values in the library".
+ *
+ * The clause says "ұсынылады" (recommended), not "тиіс" (required), so 6 m is an
+ * advisory threshold: a finding worth looking at, not a violation to certify.
+ */
+export function curatedRoomDepthRule(): SaveableNormRule {
+  return {
+    id: CURATED_ROOM_DEPTH_RULE_ID,
+    type: "max_value",
+    object: "жилое помещение",
+    value: 6,
+    unit: "m",
+    source: {
+      document: "СП РК 3.02-101-2012",
+      clause: "п. 4.4.10.22",
+      quote:
+        "Тереңдігі 6 м асатын тұрғын үй бӛлмелерін кемінде 4 м енмен жобалау ұсынылады. " +
+        "Тар және терең бӛлмелер ұсынылмайды.",
+    },
+    applicability: {
+      raw: "глубина жилых комнат (рекомендация; при глубине > 6 м ширина не менее 4 м)",
+      roomType: "жилые помещения",
+      buildingType: "жилые здания",
+    },
+    normalized: { exact: 6000 },
+    tags: [
+      "глубина помещения",
+      "глубина комнаты",
+      "глубина жилой комнаты",
+      "тереңдігі",
+      "тұрғын бөлме",
+      "узкая комната",
+      "6 м",
+    ],
+  };
+}
+
+/**
+ * Apartment depth measured from the window — a hard requirement ("тиіс"), unlike
+ * the room-depth recommendation above. Also Kazakh-only in the source.
+ */
+export function curatedApartmentDepthRule(): SaveableNormRule {
+  return {
+    id: CURATED_APARTMENT_DEPTH_RULE_ID,
+    type: "max_value",
+    object: "квартира",
+    value: 10,
+    unit: "m",
+    source: {
+      document: "СП РК 3.02-101-2012",
+      clause: "п. 4.4.10.21",
+      quote:
+        "Табиғи жарықтандыру және желдету шарттары бойынша бір пәтердің тереңдігі терезеден " +
+        "10 м аспауы тиіс.",
+    },
+    applicability: {
+      raw: "глубина квартиры от окна по условиям естественного освещения и проветривания",
+      roomType: "квартира",
+      buildingType: "жилые здания",
+    },
+    normalized: { exact: 10000 },
+    tags: [
+      "глубина квартиры",
+      "глубина от окна",
+      "естественное освещение",
+      "проветривание",
+      "пәтердің тереңдігі",
+      "10 м",
+    ],
+  };
+}
+
 export function curatedResidentialRoomNorms(): SaveableNormRule[] {
-  return [curatedBathroomAreaRule(), curatedRoomHeightRule()];
+  return [
+    curatedBathroomAreaRule(),
+    curatedRoomHeightRule(),
+    curatedRoomDepthRule(),
+    curatedApartmentDepthRule(),
+  ];
 }
 
 /** Upsert curated rules into SQLite (idempotent). */

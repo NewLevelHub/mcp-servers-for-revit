@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Builds the command set and MCP server and installs them into the local Revit add-ins folder.
 
@@ -54,8 +54,11 @@ $registryPath = Join-Path $commandsDir "commandRegistry.json"
 $commandJson = Join-Path $repo "command.json"
 
 if ((Test-Path $registryPath) -and (Test-Path $commandJson)) {
-    $registry = Get-Content $registryPath -Raw | ConvertFrom-Json
-    $declared = (Get-Content $commandJson -Raw | ConvertFrom-Json).commands
+    # Читаем через .NET: Get-Content без -Encoding принимает UTF-8 без BOM за ANSI,
+    # и кириллические описания уезжают в мохибейк при каждой записи (ÐŸÑ€Ð¾Ð¼Ð°Ñ€...).
+    # ReadAllText с явной UTF-8 снимает BOM, если он есть, и не ломает файлы без него.
+    $registry = [IO.File]::ReadAllText($registryPath, [Text.Encoding]::UTF8) | ConvertFrom-Json
+    $declared = ([IO.File]::ReadAllText($commandJson, [Text.Encoding]::UTF8) | ConvertFrom-Json).commands
     $known = @($registry.commands | ForEach-Object { $_.commandName })
 
     $added = @()
@@ -173,5 +176,86 @@ if (Test-Path $buildCursor) {
     }
 }
 
+# ── Проверка: встало ли на самом деле ────────────────────────────────────────
+# "Файл на месте" ничего не доказывает: папка аддинов пережила прошлые сборки, и
+# позавчерашний mcp-server спокойно проходил старую проверку существования, пока
+# правки лежали только в репозитории. Сравниваем время развёрнутого артефакта с
+# самым свежим исходником — протухшее видно сразу.
+
+$addinRoot = Join-Path $env:AppData "Autodesk\Revit\Addins\$RevitVersion\revit_mcp_plugin"
+$stale = @()
+
+function Get-NewestSourceTime {
+    param([string]$Path, [string[]]$Include)
+    if (-not (Test-Path $Path)) { return $null }
+    $newest = Get-ChildItem $Path -Recurse -File -Include $Include -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch '\\(bin|obj|node_modules|build|dist)\\' } |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($newest) { return $newest.LastWriteTime }
+    return $null
+}
+
+function Test-Artifact {
+    param([string]$Label, [string]$Artifact, [datetime]$SourceTime)
+
+    if (-not (Test-Path $Artifact)) {
+        Write-Host ("  {0,-14} НЕТ ФАЙЛА  {1}" -f $Label, $Artifact) -ForegroundColor Red
+        $script:stale += $Label
+        return
+    }
+
+    $built = (Get-Item $Artifact).LastWriteTime
+    if ($built -lt $SourceTime) {
+        Write-Host ("  {0,-14} УСТАРЕЛ    собран {1:HH:mm dd.MM}, исходник {2:HH:mm dd.MM}" -f `
+            $Label, $built, $SourceTime) -ForegroundColor Red
+        $script:stale += $Label
+    }
+    else {
+        Write-Host ("  {0,-14} ОК         {1:HH:mm dd.MM}" -f $Label, $built) -ForegroundColor Green
+    }
+}
+
 Write-Host ""
-Write-Host "Done. Start Revit, then restart the MCP client so it reconnects." -ForegroundColor Green
+Write-Host "Проверка развёртывания:" -ForegroundColor Cyan
+
+$pluginSrc = Get-NewestSourceTime (Join-Path $repo "plugin") @("*.cs", "*.xaml")
+$cmdSrc    = Get-NewestSourceTime (Join-Path $repo "commandset") @("*.cs")
+$srvSrc    = Get-NewestSourceTime (Join-Path $repo "server\src") @("*.ts")
+
+if ($pluginSrc) { Test-Artifact "плагин"     (Join-Path $addinRoot "RevitMCPPlugin.dll") $pluginSrc }
+if ($cmdSrc)    { Test-Artifact "commandset" (Join-Path $addinRoot "Commands\RevitMCPCommandSet\$RevitVersion\RevitMCPCommandSet.dll") $cmdSrc }
+if ($srvSrc)    { Test-Artifact "MCP-сервер"  (Join-Path $addinRoot "mcp-server\build\index.js") $srvSrc }
+
+# Пустая библиотека норм — самая тихая поломка: нормоконтроль отвечает
+# "нарушений нет" вместо "проверять нечем".
+$normDb = Join-Path $addinRoot "mcp-server\revit-data.db"
+if (Test-Path $normDb) {
+    $countScript = 'const D=require("better-sqlite3");' +
+        'console.log(new D(process.argv[1],{readonly:true}).prepare("SELECT COUNT(*) c FROM norm_rules").get().c);'
+    $rules = & node -e $countScript $normDb 2>$null
+    if ($rules -and [int]$rules -gt 0) {
+        Write-Host ("  {0,-14} ОК         {1} правил" -f "база норм", $rules) -ForegroundColor Green
+    }
+    else {
+        Write-Host ("  {0,-14} ПУСТАЯ     нормоконтроль ничего не найдёт (npm run seed:norms)" -f "база норм") -ForegroundColor Red
+        $stale += "база норм"
+    }
+
+    # База норм не собирается этим скриптом, а копируется из server\revit-data.db.
+    # Правки в правилах попадут в Revit только после отдельного пересева, поэтому
+    # молчать про расхождение нельзя — проверка норм просто продолжит работать по
+    # старым значениям, и это ничем не проявится.
+    $seedDb = Join-Path $repo "server\revit-data.db"
+    $normSrc = Get-NewestSourceTime (Join-Path $repo "server\src\normatives") @("*.ts")
+    if ((Test-Path $seedDb) -and $normSrc -and ((Get-Item $seedDb).LastWriteTime -lt $normSrc)) {
+        Write-Host ("  {0,-14} ВНИМАНИЕ   правила норм менялись после сборки базы —" -f "") -ForegroundColor Yellow
+        Write-Host ("  {0,-14}            если правка про значения: cd server; npm run seed:residential-norms" -f "") -ForegroundColor Yellow
+    }
+}
+
+Write-Host ""
+if ($stale.Count -gt 0) {
+    Write-Error ("Развёрнуто НЕ всё: " + ($stale -join ", ") + ". В Revit пойдёт старая версия.")
+}
+
+Write-Host "Готово. Запускайте Revit." -ForegroundColor Green

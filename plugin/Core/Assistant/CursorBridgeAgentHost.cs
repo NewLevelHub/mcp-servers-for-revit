@@ -422,10 +422,80 @@ namespace revit_mcp_plugin.Core.Assistant
                 Args = pending.Args ?? data["args"]?.ToString(),
                 Ok = status == ToolStepEvent.StatusOk,
                 DurationMs = turnSw.ElapsedMilliseconds - pending.StartMs,
-                Error = status == ToolStepEvent.StatusError ? (resultStr ?? "ошибка") : null,
+                Error = status == ToolStepEvent.StatusError ? (SummarizeResult(resultStr) ?? "ошибка") : null,
                 ResultBytes = resultStr?.Length ?? 0,
-                Summary = resultStr,
+                Summary = SummarizeResult(resultStr),
             });
+        }
+
+        /// <summary>
+        /// A readable one-liner from the tool result. The raw value is an MCP envelope
+        /// wrapping the payload in nested content/text objects, and writing it straight
+        /// into the log made the "Цепочка" line of a complaint report unreadable JSON.
+        /// </summary>
+        private static string SummarizeResult(string resultJson)
+        {
+            if (string.IsNullOrWhiteSpace(resultJson))
+                return null;
+
+            var text = resultJson;
+            try
+            {
+                // Unwrap {"status":..,"value":{"content":[{"text":{"text":"<payload>"}}]}}
+                var token = JToken.Parse(resultJson);
+                var inner = token.SelectToken("value.content[0].text.text")
+                            ?? token.SelectToken("value.content[0].text")
+                            ?? token.SelectToken("content[0].text.text")
+                            ?? token.SelectToken("content[0].text");
+                if (inner != null)
+                    text = inner.Type == JTokenType.String ? inner.ToString() : inner.ToString(Formatting.None);
+
+                // The payload is often itself JSON with a summary/message worth showing.
+                if (text.TrimStart().StartsWith("{"))
+                {
+                    var payload = JToken.Parse(text);
+                    var note = payload.SelectToken("summary")
+                               ?? payload.SelectToken("message")
+                               ?? payload.SelectToken("Message");
+                    if (note != null && note.Type == JTokenType.String)
+                        text = note.ToString();
+                }
+            }
+            catch
+            {
+                // The bridge truncates results to 2000 chars, so the envelope usually
+                // arrives as invalid JSON and parsing above never gets a chance. Pull
+                // the innermost payload out textually instead of showing the wrapper.
+                text = UnwrapTruncatedEnvelope(resultJson);
+            }
+
+            text = System.Text.RegularExpressions.Regex.Replace(text ?? "", @"\s+", " ").Trim();
+            if (text.Length > 160)
+                text = text.Substring(0, 160) + "…";
+            return text.Length == 0 ? null : text;
+        }
+
+        /// <summary>
+        /// Last-resort unwrap for a result the bridge cut mid-JSON: take the deepest
+        /// "text": "…" value, then unescape it enough to read.
+        /// </summary>
+        private static string UnwrapTruncatedEnvelope(string raw)
+        {
+            if (string.IsNullOrEmpty(raw))
+                return raw;
+
+            var matches = System.Text.RegularExpressions.Regex.Matches(
+                raw, "\"(?:text|summary|message|Message)\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)");
+            if (matches.Count == 0)
+                return raw;
+
+            // The deepest match is the innermost payload, which is the human-readable part.
+            var payload = matches[matches.Count - 1].Groups[1].Value;
+            return payload
+                .Replace("\\n", " ")
+                .Replace("\\r", " ")
+                .Replace("\\\"", "\"")
+                .Replace("\\\\", "\\");
         }
 
         /// <summary>

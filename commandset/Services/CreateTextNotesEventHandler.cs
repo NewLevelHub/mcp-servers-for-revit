@@ -446,6 +446,34 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
             AccBox(grid.get_BoundingBox(view) ?? grid.get_BoundingBox(null));
         }
 
+        // Annotation already on the sheet counts as "the drawing" too. Dimension
+        // chains in particular are strung well outside the walls, so bounds taken
+        // from geometry alone put the note straight on top of them.
+        var annotationCategories = new List<BuiltInCategory>
+        {
+            BuiltInCategory.OST_Dimensions,
+            BuiltInCategory.OST_TextNotes,
+            BuiltInCategory.OST_RoomTags,
+            BuiltInCategory.OST_DoorTags,
+            BuiltInCategory.OST_WindowTags,
+            BuiltInCategory.OST_WallTags,
+            BuiltInCategory.OST_AreaTags,
+            BuiltInCategory.OST_GenericAnnotation,
+            BuiltInCategory.OST_SpotElevations,
+        };
+
+        foreach (var annotation in new FilteredElementCollector(Doc, view.Id)
+                     .WhereElementIsNotElementType()
+                     .WherePasses(new ElementMulticategoryFilter(annotationCategories)))
+        {
+            // Skip the notes this run is about to replace, or the field creeps
+            // outward on every repeated audit.
+            if (IsTaggedMcp(annotation))
+                continue;
+
+            AccBox(annotation.get_BoundingBox(view));
+        }
+
         if (!any)
             return (-10000, 10000, -10000, 10000);
 

@@ -127,7 +127,16 @@ export function classifyDoorWidths(
       door.clearWidthMm != null &&
       door.widthSource !== "nominal_fallback" &&
       door.widthSource !== "missing";
-    if (options.requireClearWidth && !hasTrustworthyClearWidth) {
+
+    // A nominal leaf already narrower than the minimum settles the question without
+    // measuring: the clear opening is never wider than the nominal width, because the
+    // frame only takes away from it. Reporting such a door as "not measured" hid a
+    // certain violation — an 800 mm leaf cannot pass an 800 mm requirement.
+    const nominalMm = door.openingWidthMm;
+    const nominalAlreadyFails =
+      nominalMm != null && Number.isFinite(nominalMm) && nominalMm > 0 && nominalMm < minWidthMm;
+
+    if (options.requireClearWidth && !hasTrustworthyClearWidth && !nominalAlreadyFails) {
       missingWidth += 1;
       unmeasured.push(door);
       continue;

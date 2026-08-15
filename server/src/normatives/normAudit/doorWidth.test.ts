@@ -132,4 +132,33 @@ describe("classifyDoorWidths (golden fixtures)", () => {
     assert.deepEqual(result.unmeasured.map((door) => door.id), [11]);
     assert.equal(result.egressChecked, 1);
   });
+
+  it("still reports a door whose nominal width alone is below the minimum", () => {
+    // The frame only narrows the opening, so an 800 mm leaf cannot satisfy 900 mm
+    // however it is measured — calling it "unmeasured" hid a certain violation.
+    const result = classifyDoorWidths(
+      [
+        {
+          id: 20,
+          openingWidthMm: 800,
+          clearWidthMm: 800,
+          widthSource: "nominal_fallback",
+          isOnEgressPath: true,
+        },
+        {
+          id: 21,
+          openingWidthMm: 1000,
+          clearWidthMm: 1000,
+          widthSource: "nominal_fallback",
+          isOnEgressPath: true,
+        },
+      ],
+      { minWidthMm: 900, requireClearWidth: true }
+    );
+
+    assert.deepEqual(result.violations.map((door) => door.id), [20]);
+    assert.equal(result.violations[0].widthSource, "nominal_fallback");
+    // A wide-enough nominal is still genuinely unknown without a clear width.
+    assert.deepEqual(result.unmeasured.map((door) => door.id), [21]);
+  });
 });
