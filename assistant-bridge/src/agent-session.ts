@@ -566,6 +566,8 @@ export class AgentSessionManager {
     // already shows.
     let finalSegment = "";
 
+    const requestedModel = this.pickModel(message, images.length > 0);
+
     try {
       const run = await this.sendWithRecovery(
         session,
@@ -573,7 +575,7 @@ export class AgentSessionManager {
           text: promptText,
           images: images.length > 0 ? images : undefined,
         },
-        this.pickModel(message, images.length > 0),
+        requestedModel,
         this.isHeavyRequest(message, images.length > 0) ? "default" : this.config.mcpToolProfile,
       );
       session.activeRun = run;
@@ -659,7 +661,7 @@ export class AgentSessionManager {
         this.logTurnEnd(sessionId, turnStartedAt, "cancelled", doneSummary.length);
         emit.done({
           reply: reply.trim() || "Остановлено.",
-          model: this.describeModel(selectedModel),
+          model: this.describeModel(selectedModel, requestedModel),
           doneSummary: [...new Set(doneSummary)],
         });
         return;
@@ -678,7 +680,7 @@ export class AgentSessionManager {
       this.logTurnEnd(sessionId, turnStartedAt, "done", doneSummary.length);
       emit.done({
         reply: answer,
-        model: this.describeModel(selectedModel),
+        model: this.describeModel(selectedModel, requestedModel),
         doneSummary: [...new Set(doneSummary)],
       });
     } catch (err) {
@@ -704,20 +706,38 @@ export class AgentSessionManager {
     );
   }
 
-  /** Label of the model Cursor actually ran, falling back to the configured one. */
-  private describeModel(selected: ModelSelection | undefined): string {
+  /** Label of the model Cursor actually ran, falling back to the lane we asked for. */
+  private describeModel(
+    selected: ModelSelection | undefined,
+    requested: ModelSelection | undefined,
+  ): string {
     // The panel shows a bare "Авто" whenever the router does not name the model it
     // picked, and "no model reported" looks identical to "reported: default". Log the
     // raw value so the two can be told apart without guessing.
     console.error(
       "[assistant-bridge] model reported by Cursor:",
       selected ? JSON.stringify(selected) : "none",
+      "| requested:",
+      requested ? JSON.stringify(requested) : "session default",
     );
-    if (!selected) return this.config.modelLabel;
-    const actual = modelLabel(selected);
-    // Show what the router actually picked, e.g. "Авто → Composer 2.5".
-    if (this.config.model.id !== AUTO_MODEL_ID || selected.id === AUTO_MODEL_ID) return actual;
-    return `Авто → ${actual}`;
+
+    // A pinned model is what ran, whatever Cursor echoes back — reporting "Авто"
+    // there would send the architect chasing a router that was never used.
+    if (this.config.model.id !== AUTO_MODEL_ID) {
+      return selected && selected.id !== AUTO_MODEL_ID
+        ? modelLabel(selected)
+        : this.config.modelLabel;
+    }
+
+    if (selected && selected.id !== AUTO_MODEL_ID) return `Авто → ${modelLabel(selected)}`;
+
+    // Observed 15.08.2026: Cursor answers {"id":"default"} for every routed run, including
+    // ones sent with an explicit fast model, so its echo cannot tell the two REV-157 lanes
+    // apart. Record the lane we asked for instead — without it a 👎 on a 54-second turn
+    // reads exactly like one on a fast turn, and per-turn routing cannot be judged at all.
+    if (requested && requested.id !== AUTO_MODEL_ID)
+      return `Авто → запрошена ${modelLabel(requested)}`;
+    return "Авто → роутер";
   }
 
   async disposeAll(): Promise<void> {
