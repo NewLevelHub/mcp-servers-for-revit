@@ -28,6 +28,16 @@ public static class OpeningFacadeDimensionCollector
     }
 
     /// <summary>
+    ///     Distance from the building outline to the innermost chain, in PAPER mm.
+    ///     ГОСТ Р 21.101 puts the first dimension line no closer than 10 mm to the
+    ///     outline; 14 leaves room for the window/door marks that hang off the facade.
+    /// </summary>
+    public const double OpeningTierPaperMm = 14;
+
+    /// <summary>Gap between chains, in PAPER mm (ГОСТ Р 21.101: 7–8 mm).</summary>
+    public const double TierGapPaperMm = 8;
+
+    /// <summary>
     ///     Opening-tier offset from envelope: max(300, firstOffsetMm - tierGapMm).
     /// </summary>
     public static double ComputeOpeningOffsetMm(double firstOffsetMm, double tierGapMm)
@@ -35,6 +45,31 @@ public static class OpeningFacadeDimensionCollector
         var first = firstOffsetMm > 0 ? firstOffsetMm : 1200;
         var gap = tierGapMm > 0 ? tierGapMm : 800;
         return Math.Max(MinOpeningOffsetMm, first - gap);
+    }
+
+    /// <summary>
+    ///     The three exterior tiers, measured out from the building envelope.
+    ///     <para>
+    ///     Offsets live in model millimetres but the drawing is read on paper, so a
+    ///     fixed ladder only ever suits one scale: the old 400/1200/2000 default reads
+    ///     as 4/12/20 mm at 1:100 — the inner chain lands on top of the ОК-1 marks —
+    ///     and as 2/6/10 mm at 1:200. Derive it from the view scale instead, unless
+    ///     the caller pinned an offset, in which case the ladder hangs off their value.
+    ///     </para>
+    /// </summary>
+    public static (double Opening, double InterAxis, double Overall) ComputeTierLadderMm(
+        int viewScale,
+        double firstOffsetMm,
+        double tierGapMm)
+    {
+        var scale = viewScale > 0 ? viewScale : 100;
+        var gap = tierGapMm > 0 ? tierGapMm : TierGapPaperMm * scale;
+
+        if (firstOffsetMm > 0)
+            return (ComputeOpeningOffsetMm(firstOffsetMm, gap), firstOffsetMm, firstOffsetMm + gap);
+
+        var opening = Math.Max(MinOpeningOffsetMm, OpeningTierPaperMm * scale);
+        return (opening, opening + gap, opening + 2 * gap);
     }
 
     /// <summary>

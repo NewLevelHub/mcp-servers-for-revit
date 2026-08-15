@@ -940,9 +940,11 @@ namespace revit_mcp_plugin.Core.Assistant
                     ("gridTypeName", S(), null), ("bubbleEnd", bubbleEnd, null),
                     ("xExtentMin", N(), "mm"), ("xExtentMax", N(), "mm"),
                     ("yExtentMin", N(), "mm"), ("yExtentMax", N(), "mm"))),
-                T("dimension_grids", "Exterior dimensions from building envelope: openings/piers + inter-axis + overall.", P(
-                    ("firstOffsetMm", N(), "mm inter-axis from envelope"),
-                    ("tierGapMm", N(), "mm between dimension tiers"),
+                T("dimension_grids",
+                    "Exterior dimensions from building envelope: openings/piers + inter-axis + overall. " +
+                    "Omit the offsets — they are derived from the view scale (ГОСТ: 14 mm paper to the first chain, 8 mm between).", P(
+                    ("firstOffsetMm", N(), "mm inter-axis; OMIT unless the user named an offset"),
+                    ("tierGapMm", N(), "mm between tiers; OMIT unless the user named one"),
                     ("includeOpeningTier", B(), "innermost openings/piers tier, default true"),
                     ("numericSide", S(), null), ("letterSide", S(), null), ("dimensionType", S(), null))),
                 T("tag_rooms",

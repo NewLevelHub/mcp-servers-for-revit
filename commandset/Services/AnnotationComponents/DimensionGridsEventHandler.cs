@@ -56,11 +56,17 @@ public class DimensionGridsEventHandler : IExternalEventHandler, IWaitableExtern
                 throw new InvalidOperationException(
                     "Could not compute building envelope from walls on this level.");
 
-            var firstOffset = _info.FirstOffsetMm > 0 ? _info.FirstOffsetMm : 1200;
-            var tierGap = _info.TierGapMm > 0 ? _info.TierGapMm : 800;
-            var bubbleClearance = _info.BubbleClearanceMm > 0 ? _info.BubbleClearanceMm : 1200;
+            var viewScale = viewPlan.Scale > 0 ? viewPlan.Scale : 100;
+            var ladder = OpeningFacadeDimensionCollector.ComputeTierLadderMm(
+                viewScale, _info.FirstOffsetMm, _info.TierGapMm);
+            var openingOffset = ladder.Opening;
+            var firstOffset = ladder.InterAxis;
+            var overallOffset = ladder.Overall;
+            var tierGap = overallOffset - firstOffset;
+            var bubbleClearance = _info.BubbleClearanceMm > 0
+                ? _info.BubbleClearanceMm
+                : tierGap * 1.5;
             var includeOpeningTier = _info.IncludeOpeningTier;
-            var openingOffset = OpeningFacadeDimensionCollector.ComputeOpeningOffsetMm(firstOffset, tierGap);
 
             var createdIds = new List<int>();
             var openingTierIds = new List<int>();
@@ -112,7 +118,7 @@ public class DimensionGridsEventHandler : IExternalEventHandler, IWaitableExtern
                         var overallY = ComputeExteriorLineCoordinate(
                             envelope.MinYMm,
                             envelope.MaxYMm,
-                            firstOffset + tierGap,
+                            overallOffset,
                             towardMin);
                         var extremes = new List<GridAxis>
                         {
@@ -175,7 +181,7 @@ public class DimensionGridsEventHandler : IExternalEventHandler, IWaitableExtern
                         var overallX = ComputeExteriorLineCoordinate(
                             envelope.MinXMm,
                             envelope.MaxXMm,
-                            firstOffset + tierGap,
+                            overallOffset,
                             towardMin);
                         var extremes = new List<GridAxis>
                         {
@@ -231,9 +237,10 @@ public class DimensionGridsEventHandler : IExternalEventHandler, IWaitableExtern
                 $"from building envelope " +
                 $"(X [{envelope.MinXMm:F0}..{envelope.MaxXMm:F0}], " +
                 $"Y [{envelope.MinYMm:F0}..{envelope.MaxYMm:F0}] mm), " +
-                $"firstOffset={firstOffset} mm" +
-                (includeOpeningTier ? $", openingOffset={openingOffset} mm" : "") +
-                ".";
+                $"scale 1:{viewScale}, tiers " +
+                (includeOpeningTier ? $"openings {openingOffset:F0} / " : "") +
+                $"inter-axis {firstOffset:F0} / overall {overallOffset:F0} mm " +
+                $"beyond the envelope ({(includeOpeningTier ? openingOffset / viewScale : firstOffset / viewScale):F0} mm on paper to the first chain)." ;
             if (warnings.Count > 0)
                 message += " " + string.Join(" ", warnings);
 
@@ -255,7 +262,9 @@ public class DimensionGridsEventHandler : IExternalEventHandler, IWaitableExtern
                         maxY = envelope.MaxYMm
                     },
                     firstOffsetMm = firstOffset,
+                    overallOffsetMm = overallOffset,
                     tierGapMm = tierGap,
+                    viewScale,
                     warnings
                 }
             };

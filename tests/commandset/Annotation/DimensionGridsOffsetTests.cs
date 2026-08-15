@@ -76,6 +76,64 @@ public class DimensionGridsOffsetTests
     }
 
     [Test]
+    [Arguments(50, 700d, 1100d, 1500d)]
+    [Arguments(100, 1400d, 2200d, 3000d)]
+    [Arguments(200, 2800d, 4400d, 6000d)]
+    public async Task AutoLadder_ScalesWithTheView(
+        int scale, double opening, double interAxis, double overall)
+    {
+        var ladder = OpeningFacadeDimensionCollector.ComputeTierLadderMm(scale, 0, 0);
+
+        await Assert.That(ladder.Opening).IsEqualTo(opening);
+        await Assert.That(ladder.InterAxis).IsEqualTo(interAxis);
+        await Assert.That(ladder.Overall).IsEqualTo(overall);
+    }
+
+    [Test]
+    [Arguments(50)]
+    [Arguments(100)]
+    [Arguments(200)]
+    public async Task AutoLadder_ReadsTheSameOnPaper(int scale)
+    {
+        var ladder = OpeningFacadeDimensionCollector.ComputeTierLadderMm(scale, 0, 0);
+
+        // The whole point: on paper the ladder is 14 / 22 / 30 mm at every scale.
+        // The old fixed 400/1200/2000 gave 4/12/20 mm at 1:100 and 2/6/10 at 1:200,
+        // which is what put the inner chain on top of the window marks.
+        await Assert.That(ladder.Opening / scale).IsEqualTo(14d);
+        await Assert.That(ladder.InterAxis / scale).IsEqualTo(22d);
+        await Assert.That(ladder.Overall / scale).IsEqualTo(30d);
+    }
+
+    [Test]
+    public async Task AutoLadder_ClearsTheOldInnerChain_At1To100()
+    {
+        var ladder = OpeningFacadeDimensionCollector.ComputeTierLadderMm(100, 0, 0);
+        var oldOpening = OpeningFacadeDimensionCollector.ComputeOpeningOffsetMm(1200, 800);
+
+        await Assert.That(ladder.Opening - oldOpening).IsEqualTo(1000d);
+    }
+
+    [Test]
+    public async Task PinnedFirstOffset_KeepsTheLadderAnchoredOnIt()
+    {
+        var ladder = OpeningFacadeDimensionCollector.ComputeTierLadderMm(100, 1200, 800);
+
+        await Assert.That(ladder.InterAxis).IsEqualTo(1200d);
+        await Assert.That(ladder.Opening).IsEqualTo(400d);
+        await Assert.That(ladder.Overall).IsEqualTo(2000d);
+    }
+
+    [Test]
+    public async Task PinnedFirstOffset_StillScalesTheGapWhenOnlyGapIsOmitted()
+    {
+        var ladder = OpeningFacadeDimensionCollector.ComputeTierLadderMm(200, 1200, 0);
+
+        await Assert.That(ladder.InterAxis).IsEqualTo(1200d);
+        await Assert.That(ladder.Overall - ladder.InterAxis).IsEqualTo(1600d);
+    }
+
+    [Test]
     public async Task OpeningOffset_ClampsToMinimum300()
     {
         // first < gap would go negative — clamp to 300

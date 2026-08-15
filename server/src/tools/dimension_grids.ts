@@ -16,16 +16,14 @@ export function registerDimensionGridsTool(server: McpServer) {
         .number()
         .positive()
         .optional()
-        .default(1200)
         .describe(
-          "Offset of the inter-axis chain beyond the building envelope (mm). Default 1200 — clears walls/loggias. Opening tier (when enabled) sits at max(300, firstOffsetMm - tierGapMm)."
+          "OMIT unless the user asked for a specific offset. Offsets are model mm but the drawing is read on paper, so leaving this out lets Revit derive the ladder from the view scale (ГОСТ Р 21.101: 14 mm on paper to the first chain, 8 mm between chains) — at 1:100 that is 1400/2200/3000 mm. Passing a number pins the inter-axis chain there and stacks the rest around it."
         ),
       tierGapMm: z
         .number()
         .positive()
         .optional()
-        .default(800)
-        .describe("Gap between dimension tiers (mm). Default 800."),
+        .describe("OMIT unless asked. Gap between chains (mm); omitted = 8 mm on paper × view scale."),
       includeOverall: z
         .boolean()
         .optional()
@@ -79,8 +77,7 @@ export function registerDimensionGridsTool(server: McpServer) {
         .number()
         .positive()
         .optional()
-        .default(1200)
-        .describe("Extra overshoot beyond outer tier for bubbles (mm)."),
+        .describe("Extra overshoot beyond outer tier for bubbles (mm). Omitted = 1.5 tier gaps."),
     },
     async (args, extra) => {
       const params = {

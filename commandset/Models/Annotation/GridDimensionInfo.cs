@@ -15,17 +15,18 @@ public class GridDimensionInfo
     public List<int> GridIds { get; set; } = new();
 
     /// <summary>
-    ///     Offset of the first (inter-axis) chain beyond the building envelope (mm).
-    ///     Default 1200 — clears walls, loggias, entrances.
+    ///     Offset of the inter-axis chain beyond the building envelope (mm).
+    ///     0 (default) = derive the whole ladder from the view scale, which is the only
+    ///     way the spacing reads the same on paper at 1:50, 1:100 and 1:200.
     /// </summary>
     [JsonProperty("firstOffsetMm")]
-    public double FirstOffsetMm { get; set; } = 1200;
+    public double FirstOffsetMm { get; set; }
 
     /// <summary>
-    ///     Gap between dimension tiers (mm). Default 800.
+    ///     Gap between dimension tiers (mm). 0 (default) = 8 mm on paper × view scale.
     /// </summary>
     [JsonProperty("tierGapMm")]
-    public double TierGapMm { get; set; } = 800;
+    public double TierGapMm { get; set; }
 
     /// <summary>
     ///     Create overall (extreme-grid) chains on the outer tier. Default true.
@@ -35,7 +36,8 @@ public class GridDimensionInfo
 
     /// <summary>
     ///     Create innermost exterior tier: openings and wall piers along the facade.
-    ///     Offset = max(300, firstOffsetMm - tierGapMm). Default true.
+    ///     Sits 14 mm (paper) beyond the envelope unless firstOffsetMm pins the ladder.
+    ///     Default true.
     /// </summary>
     [JsonProperty("includeOpeningTier")]
     public bool IncludeOpeningTier { get; set; } = true;
