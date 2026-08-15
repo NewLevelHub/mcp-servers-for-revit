@@ -63,7 +63,7 @@ public class TagElementsEventHandler : IExternalEventHandler, IWaitableExternalE
                 return;
             }
 
-            var targets = CollectTargets(view, out var collectError);
+            var targets = CollectTargets(view, out var collectError, out var nestedSkipped);
             if (collectError != null)
             {
                 Result = Fail(collectError);
@@ -74,7 +74,10 @@ public class TagElementsEventHandler : IExternalEventHandler, IWaitableExternalE
             {
                 Result = Fail(string.IsNullOrWhiteSpace(_category)
                     ? "Не переданы элементы для маркировки."
-                    : $"На виде «{view.Name}» нет элементов категории {_category}.");
+                    : nestedSkipped > 0
+                        ? $"На виде «{view.Name}» в категории {_category} все {nestedSkipped} элементов — " +
+                          "вложенные семейства (откосы, подэлементы). Маркировать нечего."
+                        : $"На виде «{view.Name}» нет элементов категории {_category}.");
                 return;
             }
 
@@ -155,6 +158,8 @@ public class TagElementsEventHandler : IExternalEventHandler, IWaitableExternalE
             transaction.Commit();
 
             var message = $"Создано марок: {created.Count} из {targets.Count}.";
+            if (nestedSkipped > 0)
+                message += $" Пропущено вложенных семейств (откосы, подэлементы): {nestedSkipped}.";
             if (skipped.Count > 0)
                 message += $" Пропущено (уже промаркированы): {skipped.Count}.";
             if (failures.Count > 0)
@@ -185,9 +190,10 @@ public class TagElementsEventHandler : IExternalEventHandler, IWaitableExternalE
         Response = new List<int>(),
     };
 
-    private List<Element> CollectTargets(View view, out string error)
+    private List<Element> CollectTargets(View view, out string error, out int nestedSkipped)
     {
         error = null;
+        nestedSkipped = 0;
 
         if (_elementIds.Count > 0)
         {
@@ -225,10 +231,21 @@ public class TagElementsEventHandler : IExternalEventHandler, IWaitableExternalE
             return new List<Element>();
         }
 
-        return new FilteredElementCollector(Doc, view.Id)
+        var collected = new FilteredElementCollector(Doc, view.Id)
             .OfCategory(builtInCategory)
             .WhereElementIsNotElementType()
             .ToList();
+
+        // Shared nested families — door reveals «(откос)…», panel sub-components — live in
+        // the host's own category, so collecting by category picks them up alongside the
+        // real doors and hangs a second, empty tag next to each one. Explicit elementIds
+        // above are left alone: an architect who names an id means that id.
+        var targets = collected
+            .Where(element => !(element is FamilyInstance instance && instance.SuperComponent != null))
+            .ToList();
+
+        nestedSkipped = collected.Count - targets.Count;
+        return targets;
     }
 
     private HashSet<long> CollectTaggedElementIds(View view)
