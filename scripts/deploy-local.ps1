@@ -230,9 +230,15 @@ if ($srvSrc)    { Test-Artifact "MCP-сервер"  (Join-Path $addinRoot "mcp-s
 # "нарушений нет" вместо "проверять нечем".
 $normDb = Join-Path $addinRoot "mcp-server\revit-data.db"
 if (Test-Path $normDb) {
-    $countScript = 'const D=require("better-sqlite3");' +
-        'console.log(new D(process.argv[1],{readonly:true}).prepare("SELECT COUNT(*) c FROM norm_rules").get().c);'
-    $rules = & node -e $countScript $normDb 2>$null
+    # Кавычки в JS — одинарные: PowerShell срезает двойные при передаче в node.exe,
+    # и скрипт приезжает в node уже сломанным ("Expected ',', got '<eof>'").
+    # Запускать из папки развёрнутого сервера: require ищет модуль от текущего
+    # каталога, а в корне репозитория node_modules нет.
+    $countScript = "const D=require('better-sqlite3');" +
+        "console.log(new D(process.argv[1],{readonly:true}).prepare('SELECT COUNT(*) c FROM norm_rules').get().c);"
+    Push-Location (Split-Path -Parent $normDb)
+    try { $rules = & node -e $countScript $normDb 2>$null }
+    finally { Pop-Location }
     if ($rules -and [int]$rules -gt 0) {
         Write-Host ("  {0,-14} ОК         {1} правил" -f "база норм", $rules) -ForegroundColor Green
     }
