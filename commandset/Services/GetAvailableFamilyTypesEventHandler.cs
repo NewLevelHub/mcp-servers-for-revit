@@ -8,7 +8,12 @@ namespace RevitMCPCommandSet.Services
 {
     public class GetAvailableFamilyTypesEventHandler : IExternalEventHandler, IWaitableExternalEventHandler
     {
-        public List<FamilyTypeInfo> ResultFamilyTypes { get; private set; }
+        /// <summary>
+        /// Paged envelope, not a bare list. The bare list was cut to Limit without a
+        /// word, so a project with 300 door types answered with 100 and no sign that
+        /// the rest existed — the model then picked from an arbitrary prefix.
+        /// </summary>
+        public AIResult<List<FamilyTypeInfo>> Result { get; private set; }
 
         public bool TaskCompleted { get; private set; }
         private readonly ManualResetEvent _resetEvent = new ManualResetEvent(false);
@@ -16,6 +21,7 @@ namespace RevitMCPCommandSet.Services
         public List<string> CategoryList { get; set; }
         public string FamilyNameFilter { get; set; }
         public int? Limit { get; set; }
+        public int? Offset { get; set; }
 
         /// <summary>
         /// Reset wait state before ExternalEvent.Raise. Must be called from the command before RaiseAndWaitForCompletion.
@@ -38,10 +44,16 @@ namespace RevitMCPCommandSet.Services
             {
                 var doc = app.ActiveUIDocument.Document;
                 int limit = Limit.HasValue && Limit.Value > 0 ? Limit.Value : int.MaxValue;
-                var results = new List<FamilyTypeInfo>();
+                int offset = Offset.HasValue && Offset.Value > 0 ? Offset.Value : 0;
 
                 var categoryIds = ResolveCategoryIds(CategoryList);
                 bool filterByCategory = categoryIds.Count > 0;
+
+                // Every match is collected before paging: the total is the whole point
+                // of the envelope, and it cannot be known while short-circuiting on
+                // limit. These are types, not instances — the count stays in the
+                // hundreds even on a large model.
+                var matches = new List<FamilyTypeInfo>();
 
                 // Loadable families — apply multicategory filter in Revit when possible.
                 FilteredElementCollector symbolCollector = new FilteredElementCollector(doc)
@@ -56,12 +68,7 @@ namespace RevitMCPCommandSet.Services
                 {
                     if (!MatchesNameFilter(symbol.FamilyName, symbol.Name))
                         continue;
-                    results.Add(ToFamilyTypeInfo(symbol, symbol.FamilyName));
-                    if (results.Count >= limit)
-                    {
-                        ResultFamilyTypes = results;
-                        return;
-                    }
+                    matches.Add(ToFamilyTypeInfo(symbol, symbol.FamilyName));
                 }
 
                 // System types: only collect classes that can match requested categories (or all if unfiltered).
@@ -76,24 +83,60 @@ namespace RevitMCPCommandSet.Services
                     if (!MatchesNameFilter(familyName, systemType.Name))
                         continue;
 
-                    results.Add(ToFamilyTypeInfo(systemType, familyName));
-                    if (results.Count >= limit)
-                        break;
+                    matches.Add(ToFamilyTypeInfo(systemType, familyName));
                 }
 
-                ResultFamilyTypes = results;
+                var page = matches.Skip(offset).Take(limit).ToList();
+                var hasMore = offset + page.Count < matches.Count;
+
+                Result = new AIResult<List<FamilyTypeInfo>>
+                {
+                    // Nothing matching a filter is a valid answer, not a refusal —
+                    // toolOutcome must not turn an empty catalogue into an error.
+                    Success = true,
+                    Message = BuildMessage(matches.Count, page.Count, offset, hasMore),
+                    Response = page,
+                    TotalCount = matches.Count,
+                    HasMore = hasMore,
+                    Offset = offset,
+                    Limit = limit == int.MaxValue ? (int?)null : limit
+                };
             }
             catch (Exception ex)
             {
                 // No TaskDialog.Show: this runs inside an ExternalEvent with nobody able
                 // to click it during an agent-driven turn — it would hang the chat.
                 System.Diagnostics.Trace.WriteLine($"get_available_family_types failed: {ex}");
+                Result = new AIResult<List<FamilyTypeInfo>>
+                {
+                    Success = false,
+                    Message = ex.Message,
+                    Response = new List<FamilyTypeInfo>()
+                };
             }
             finally
             {
                 TaskCompleted = true;
                 _resetEvent.Set();
             }
+        }
+
+        /// <summary>
+        /// Says outright when the list is a page, and what to do about it. Silent
+        /// truncation is what made the model treat a prefix as the whole catalogue.
+        /// </summary>
+        private static string BuildMessage(int total, int shown, int offset, bool hasMore)
+        {
+            if (total == 0)
+                return "Подходящих типов не найдено. Проверьте categoryList / familyNameFilter.";
+
+            if (!hasMore && offset == 0)
+                return $"Найдено типов: {total} (показаны все).";
+
+            return $"Найдено типов: {total}, показано {shown} начиная с {offset}. "
+                   + (hasMore
+                       ? $"Есть ещё: повторите с offset={offset + shown} или сузьте categoryList / familyNameFilter."
+                       : "Это последняя страница.");
         }
 
         private bool MatchesNameFilter(string familyName, string typeName)

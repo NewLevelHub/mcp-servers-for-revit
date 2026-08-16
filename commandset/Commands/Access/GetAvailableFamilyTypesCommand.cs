@@ -32,9 +32,10 @@ namespace RevitMCPCommandSet.Commands.Access
 
                     string familyNameFilter = parameters?["familyNameFilter"]?.Value<string>();
                     int? limit = parameters?["limit"]?.Value<int>();
+                    int? offset = parameters?["offset"]?.Value<int>();
 
-                    // Default: walls only when agent asks for types before creating walls without filter —
-                    // keep unfiltered if neither arg set (legacy). Limit large dumps.
+                    // Page size only — the reply now carries TotalCount/HasMore, so a
+                    // cap no longer hides how much there is.
                     if (!limit.HasValue || limit.Value <= 0)
                         limit = categoryList.Count > 0 ? 80 : 60;
 
@@ -42,12 +43,13 @@ namespace RevitMCPCommandSet.Commands.Access
                     _handler.CategoryList = categoryList;
                     _handler.FamilyNameFilter = familyNameFilter;
                     _handler.Limit = limit;
+                    _handler.Offset = offset;
                     _handler.Prepare();
 
                     // 触发外部事件并等待完成，最多等待15秒
                     if (RaiseAndWaitForCompletion(15000))
                     {
-                        return _handler.ResultFamilyTypes;
+                        return _handler.Result;
                     }
                     else
                     {

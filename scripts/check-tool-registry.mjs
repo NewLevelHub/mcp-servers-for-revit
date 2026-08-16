@@ -24,6 +24,22 @@ const ALIASES = {
 const INTERNAL_COMMANDS = new Set(["export_egress_graph"]);
 
 /**
+ * Tools that overlap enough for the model to reach for the wrong one (Д8). They are
+ * kept apart by their descriptions, not by the schema, so each must name its
+ * sibling and say when to prefer it — otherwise a wrong first pick costs a whole
+ * extra round trip. Editing a description without keeping the pointer fails here.
+ */
+const TOOL_TWINS = [
+  ["create_text_note", "create_text_notes"],
+  ["tag_all_walls", "tag_elements"],
+  ["tag_all_rooms", "tag_elements"],
+  ["create_dimensions", "dimension_room_walls"],
+  ["create_dimensions", "dimension_grids"],
+  ["dimension_room_walls", "dimension_grids"],
+  ["set_element_parameter", "set_elements_parameters"],
+];
+
+/**
  * MCP tools that intentionally have no matching command.json entry
  * (server-only orchestration / norm library / aliases already mapped).
  */
@@ -138,6 +154,46 @@ function checkRegisterPriority() {
   }
 }
 
+/**
+ * The description a tool registers with — everything between the tool name and the
+ * schema object in its `server.tool(...)` call.
+ */
+function readToolDescription(base) {
+  const p = path.join(root, "server", "src", "tools", `${base}.ts`);
+  if (!fs.existsSync(p)) return null;
+  const text = fs.readFileSync(p, "utf8");
+  const start = text.indexOf(`"${base}"`);
+  if (start < 0) return null;
+  const end = text.indexOf("\n    {", start);
+  return text.slice(start, end < 0 ? text.length : end);
+}
+
+function checkTwinCrossReferences(toolSet) {
+  for (const [a, b] of TOOL_TWINS) {
+    for (const [tool, sibling] of [
+      [a, b],
+      [b, a],
+    ]) {
+      if (!toolSet.has(tool)) {
+        errors.push(`TOOL_TWINS names "${tool}", but server/src/tools/${tool}.ts is missing`);
+        continue;
+      }
+      const description = readToolDescription(tool);
+      if (description === null) {
+        errors.push(`Could not read the registered description of "${tool}"`);
+        continue;
+      }
+      if (!description.includes(sibling)) {
+        errors.push(
+          `"${tool}" does not point at its twin "${sibling}" in its description. ` +
+            `They overlap, so the model needs to be told which one to prefer ` +
+            `(see TOOL_TWINS in check-tool-registry.mjs)`
+        );
+      }
+    }
+  }
+}
+
 function main() {
   const tools = listToolBases();
   const toolSet = new Set(tools);
@@ -161,6 +217,7 @@ function main() {
   }
 
   checkRegisterPriority();
+  checkTwinCrossReferences(toolSet);
 
   // --- alias map integrity ---
   for (const [mcp, revit] of Object.entries(ALIASES)) {
@@ -217,6 +274,7 @@ function main() {
   console.log(`command.json commands: ${manifestNames.length}`);
   console.log(`commandset CommandName: ${csharpNames.size}`);
   console.log(`Aliases: ${Object.keys(ALIASES).filter((k) => ALIASES[k] !== k).join(", ")}`);
+  console.log(`Twin pairs cross-referenced: ${TOOL_TWINS.length}`);
 
   if (warnings.length) {
     console.log("\nWarnings:");

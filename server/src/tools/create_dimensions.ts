@@ -5,7 +5,12 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerCreateDimensionsTool(server: McpServer) {
   server.tool(
     "create_dimensions",
-    "Create dimension annotations in the current Revit view. Supports dimensioning between elements (walls, doors, windows) by element IDs, or between two points with automatic reference detection. All coordinates are in millimeters (mm).",
+    "Create individual dimension annotations in the current Revit view, between named elements " +
+      "(walls, doors, windows) by element id, or between two points with automatic reference detection. " +
+      "All coordinates are in millimetres (mm). Use this only for one-off dimensions you place yourself. " +
+      "For a room's interior width/depth chains use dimension_room_walls; for the exterior ladder along " +
+      "the facade (openings/piers → inter-axis → overall) use dimension_grids — both build whole chains " +
+      "in one call and pick their own references, which this tool does not.",
     {
       dimensions: z
         .array(

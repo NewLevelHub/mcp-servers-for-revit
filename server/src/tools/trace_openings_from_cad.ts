@@ -146,8 +146,12 @@ async function resolveDonorWallTypeId(
           categoryList: ["OST_Walls"],
           familyNameFilter: display,
           limit: 20,
-        })) as FamilyTypeItem[];
-        const list = Array.isArray(types) ? types : [];
+        })) as
+          | FamilyTypeItem[]
+          | { items?: FamilyTypeItem[]; Response?: FamilyTypeItem[] };
+        // The command answers with a paged AIResult now; a bare-array read would
+        // silently see an empty list and fall back to a guessed wall type.
+        const list = Array.isArray(types) ? types : types?.items ?? types?.Response ?? [];
         const exact = list.find(
           (t) => (t.name ?? t.Name ?? "") === display
         );

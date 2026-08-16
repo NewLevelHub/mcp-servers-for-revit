@@ -6,7 +6,10 @@ import { normalizeCategoryNames } from "../utils/revitCategories.js";
 export function registerGetAvailableFamilyTypesTool(server: McpServer) {
   server.tool(
     "get_available_family_types",
-    "Get available family types in the current Revit project. You can filter by category and family name, and limit the number of returned types.",
+    "Get available family types in the current Revit project, filtered by category and family name. " +
+      "Paginated: the reply carries TotalCount (all matches), HasMore, Offset and Limit alongside the " +
+      "page in Response. When HasMore is true the list is NOT the whole catalogue — either narrow " +
+      "categoryList/familyNameFilter or fetch the next page with offset.",
     {
       categoryList: z
         .array(z.string())
@@ -27,7 +30,13 @@ export function registerGetAvailableFamilyTypesTool(server: McpServer) {
       limit: z
         .number()
         .optional()
-        .describe("Maximum number of family types to return"),
+        .describe("Page size — maximum number of family types to return (default 100)."),
+      offset: z
+        .number()
+        .optional()
+        .describe(
+          "Number of matches to skip before the page. Use with limit to read past the first page when HasMore is true."
+        ),
     },
     async (args, extra) => {
       const requested = [
@@ -62,6 +71,7 @@ export function registerGetAvailableFamilyTypesTool(server: McpServer) {
         categoryList: categories,
         familyNameFilter: args.familyNameFilter || "",
         limit: args.limit || 100,
+        offset: args.offset || 0,
       };
 
       try {

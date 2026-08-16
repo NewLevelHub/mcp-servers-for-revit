@@ -5,7 +5,9 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerTagAllWallsTool(server: McpServer) {
   server.tool(
     "tag_all_walls",
-    "Create tags for all walls in the current active view. Tags will be placed at the middle point of each wall.",
+    "Narrow shortcut: tag EVERY wall in the active view, at each wall's middle point. " +
+      "No way to choose which walls, which view, or any other category — for that use tag_elements " +
+      "(category or elementIds, any category, any view), which is the general tool and covers walls too.",
     {
       useLeader: z
         .boolean()
@@ -42,6 +44,9 @@ export function registerTagAllWallsTool(server: McpServer) {
               }`,
             },
           ],
+          // toolOutcome normalises thrown errors and JSON refusals; a plain-text
+          // failure returned from here would otherwise read as a success.
+          isError: true,
         };
       }
     }

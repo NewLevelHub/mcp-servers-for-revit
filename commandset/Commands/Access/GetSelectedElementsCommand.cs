@@ -31,15 +31,17 @@ namespace RevitMCPCommandSet.Commands.Access
                 {
                     // 解析参数
                     int? limit = parameters?["limit"]?.Value<int>();
+                    int? offset = parameters?["offset"]?.Value<int>();
 
                     // 设置数量限制
                     _handler.Limit = limit;
+                    _handler.Offset = offset;
                     _handler.Prepare();
 
                     // 触发外部事件并等待完成
                     if (RaiseAndWaitForCompletion(15000))
                     {
-                        return _handler.ResultElements;
+                        return _handler.Result;
                     }
                     else
                     {

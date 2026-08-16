@@ -5,7 +5,9 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerTagAllRoomsTool(server: McpServer) {
   server.tool(
     "tag_all_rooms",
-    "Create tags for all rooms in the current active view. Tags will be placed at the center point of each room, displaying the room name and number.",
+    "Narrow shortcut: tag rooms in the active view (all of them, or the roomIds given) with the room " +
+      "name and number at each room's centre. Room-only and active-view-only — for any other category, " +
+      "or to tag in a named view, use tag_elements, which is the general tool and covers rooms too.",
     {
       useLeader: z
         .boolean()
@@ -46,6 +48,9 @@ export function registerTagAllRoomsTool(server: McpServer) {
               }`,
             },
           ],
+          // toolOutcome normalises thrown errors and JSON refusals; a plain-text
+          // failure returned from here would otherwise read as a success.
+          isError: true,
         };
       }
     }

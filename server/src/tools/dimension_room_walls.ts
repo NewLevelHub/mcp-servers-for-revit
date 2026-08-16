@@ -5,7 +5,12 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerDimensionRoomWallsTool(server: McpServer) {
   server.tool(
     "dimension_room_walls",
-    "Create chained wall dimensions (width + depth) for a room on the active floor plan — matches working-doc practice: interior finish-face chains inside the room. Default placement 'interior'. Prefer dimensionType 'ADSK_Основной_2.5 мм' from the project template; empty name auto-picks that style when present. Use placement 'exterior' ONLY on explicit request (axes/facade). Offset in mm.",
+    "Create chained wall dimensions (width + depth) for ONE room on the active floor plan — matches " +
+      "working-doc practice: interior finish-face chains inside the room. Default placement 'interior'. " +
+      "Prefer dimensionType 'ADSK_Основной_2.5 мм' from the project template; empty name auto-picks that " +
+      "style when present. Use placement 'exterior' ONLY on explicit request (axes/facade). Offset in mm. " +
+      "For the building's exterior ladder along the facade use dimension_grids instead; for a single " +
+      "dimension between two elements or points use create_dimensions.",
     {
       roomId: z
         .number()

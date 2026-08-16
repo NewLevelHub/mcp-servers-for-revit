@@ -36,7 +36,8 @@ const noteSchema = z.object({
     .string()
     .optional()
     .describe(
-      "TextNoteType from the project (prefer ADSK_Замечания). Falls back to batch textTypeName / project default."
+      "TextNoteType from the project. Omit for the project's normal (black) text type. " +
+        "Name ADSK_Замечания only for norm remarks — it is red by the ADSK template."
     ),
   widthMm: z
     .number()
@@ -72,10 +73,13 @@ export function registerCreateTextNotesTool(server: McpServer) {
   server.tool(
     "create_text_notes",
     "Place Annotate → Text notes on the active floor plan (or viewId), optionally with a leader (выноска) " +
-      "to an element or explicit leaderToMm. Prefer text type ADSK_Замечания from the project template " +
-      "(get_document_styles; text height from type, e.g. 2.5 mm). Coordinates in mm. " +
+      "to an element or explicit leaderToMm. Coordinates in mm. Text style defaults to the project's " +
+      "normal black type — name textTypeName only to override (ADSK_Замечания is the red norm style). " +
       "placement=outside (default): text за планом — nearer left edge → left margin, nearer right → right margin; " +
       "placement=near: offset beside the element. clearPrevious removes prior MCP-ANN notes. " +
+      "Batch tool for plans: many notes at once, placed outside the drawing, with clearPrevious. " +
+      "For ONE note at an exact point on a detail/drafting view use create_text_note (singular). " +
+      "For element marks use tag_elements — a text note is not a tag. " +
       "For norm findings use annotate_norm_findings. Complementary to create_filled_regions.",
     {
       notes: z
@@ -112,9 +116,10 @@ export function registerCreateTextNotesTool(server: McpServer) {
       textTypeName: z
         .string()
         .optional()
-        .default("ADSK_Замечания")
         .describe(
-          "Default TextNoteType name for notes that omit textTypeName. Must exist in the project (e.g. height 2.5 mm)."
+          "Default TextNoteType name for notes that omit textTypeName. Omit this too and Revit's own " +
+            "default text type is used (black). ADSK_Замечания is the norm-control style and is RED by " +
+            "the ADSK template — name it only for remarks, never for ordinary captions."
         ),
       placement: z
         .enum(["outside", "near"])
@@ -140,7 +145,9 @@ export function registerCreateTextNotesTool(server: McpServer) {
         .positive()
         .optional()
         .describe(
-          "Sets TextNoteType TEXT_SIZE in paper mm (default 2.5). Keeps font/color from ADSK_Замечания (GOST Common, red)."
+          "Overwrites TEXT_SIZE (paper mm) ON THE PROJECT'S TEXT TYPE — it changes every note of that " +
+            "type, not just these. Omit unless the architect asked to restyle the type; the type's own " +
+            "height is used then."
         ),
       viewId: z
         .number()
@@ -157,11 +164,16 @@ export function registerCreateTextNotesTool(server: McpServer) {
             clearPrevious: args.clearPrevious ?? true,
             clearOnly: args.clearOnly ?? false,
             commentTag: args.commentTag ?? "MCP-ANN",
-            textTypeName: args.textTypeName ?? "ADSK_Замечания",
+            // Empty, not ADSK_Замечания: the Revit side then picks the project's
+            // normal black type. The old default painted every caption in the
+            // norm-control red and cost a round trip to redo.
+            textTypeName: args.textTypeName ?? "",
             placement: args.placement ?? "outside",
             marginMm: args.marginMm ?? 0,
             paperWidthMm: args.paperWidthMm ?? 0,
-            textSizeMm: args.textSizeMm ?? 2.5,
+            // 0 means "leave the project's text type alone" — a size here is
+            // written onto the shared TextNoteType, not onto these notes.
+            textSizeMm: args.textSizeMm ?? 0,
             viewId: args.viewId ?? -1,
           });
         });

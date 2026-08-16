@@ -8,7 +8,9 @@ export function registerTagElementsTool(server: McpServer) {
     "tag_elements",
     "Place real Revit tags (marks) on elements in a view, by category or by element ids. " +
       "Use this for door/window/wall marks instead of drawing text notes — a tag shows the " +
-      "element's own Mark parameter and updates with the model. Tags the active view by default.",
+      "element's own Mark parameter and updates with the model. Tags the active view by default. " +
+      "This is the general tagging tool: prefer it over tag_all_walls / tag_all_rooms, which only " +
+      "do their one category in the active view.",
     {
       category: z
         .string()

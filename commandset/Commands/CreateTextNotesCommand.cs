@@ -31,8 +31,11 @@ namespace RevitMCPCommandSet.Commands
                 bool clearOnly = parameters?["clearOnly"]?.Value<bool>() ?? false;
                 string commentTag = parameters?["commentTag"]?.Value<string>()
                                     ?? CreateTextNotesEventHandler.DefaultCommentTag;
+                // Empty on purpose: the handler then resolves the project's normal
+                // (black) text type. Defaulting to ADSK_Замечания here painted every
+                // ordinary caption in the norm-control red.
                 string textTypeName = parameters?["textTypeName"]?.Value<string>()
-                                      ?? CreateTextNotesEventHandler.DefaultTextTypeName;
+                                      ?? string.Empty;
                 string placement = parameters?["placement"]?.Value<string>()
                                    ?? CreateTextNotesEventHandler.DefaultPlacement;
                 double marginMm = parameters?["marginMm"]?.Value<double>() ?? 0;

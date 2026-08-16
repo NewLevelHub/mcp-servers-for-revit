@@ -5,7 +5,12 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerDimensionGridsTool(server: McpServer) {
   server.tool(
     "dimension_grids",
-    "Create exterior dimension chains on the active floor plan. Offsets are measured from the FULL building envelope (all walls including loggias/balconies/entrances), NOT from grid axis coordinates. Three tiers by default: openings/piers (innermost) → inter-axis → overall. Numbers at bottom, letters at left. Preferred after create_grid / when grids already exist. Type ADSK_Основной_2.5 мм by default.",
+    "Create the EXTERIOR dimension ladder for the whole building on the active floor plan. Offsets are " +
+      "measured from the FULL building envelope (all walls including loggias/balconies/entrances), NOT " +
+      "from grid axis coordinates. Three tiers by default: openings/piers (innermost) → inter-axis → " +
+      "overall. Numbers at bottom, letters at left. Preferred after create_grid / when grids already " +
+      "exist. Type ADSK_Основной_2.5 мм by default. For chains inside a single room use " +
+      "dimension_room_walls; for one dimension between two elements or points use create_dimensions.",
     {
       gridIds: z
         .array(z.number().int().positive())

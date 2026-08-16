@@ -11,7 +11,11 @@ const pointSchema = z.object({
 export function registerCreateTextNoteTool(server: McpServer) {
   server.tool(
     "create_text_note",
-    "Create a text note (annotation / выноска) on a view — used for node annotations on detail and drafting views. Position in model/view coordinates (mm), text type by name (see get_document_styles), optional wrapping width, and an optional straight leader pointing at leaderEnd.",
+    "Create ONE text note (annotation / выноска) at an exact position on any view — meant for node " +
+      "annotations on detail and drafting views. Position in model/view coordinates (mm), text type by " +
+      "name (see get_document_styles), optional wrapping width, and an optional straight leader pointing " +
+      "at leaderEnd. For several notes on a floor plan, or for notes auto-placed outside the drawing " +
+      "with leaders and clearPrevious, use create_text_notes (plural) instead — one call, not N.",
     {
       viewId: z.number().int().optional().describe("Target view element id."),
       viewUniqueId: z.string().optional().describe("Target view uniqueId."),
@@ -66,6 +70,9 @@ export function registerCreateTextNoteTool(server: McpServer) {
               }`,
             },
           ],
+          // toolOutcome normalises thrown errors and JSON refusals; a plain-text
+          // failure returned from here would otherwise read as a success.
+          isError: true,
         };
       }
     }

@@ -17,14 +17,19 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
     public const string DefaultCommentTag = "MCP-ANN";
     /// <summary>Fallback when Comments is read-only on TextNote (some ADSK templates).</summary>
     private const string TextMarkerSuffix = "\u200B\u200B";
-    public const string DefaultTextTypeName = "ADSK_Замечания";
+    /// <summary>
+    /// The norm-control style. RED by the ADSK template — used only when a caller
+    /// names it. It used to be the default, so every mark and caption came out red
+    /// and the architect asked for a redo.
+    /// </summary>
+    public const string RemarksTextTypeName = "ADSK_Замечания";
     /// <summary>Margin beyond plan+grids to the text column (model mm).</summary>
     public const double DefaultOutsideMarginMm = 4000;
     /// <summary>Legacy near-element offset (model mm).</summary>
     public const double DefaultNearOffsetMm = 1500;
     /// <summary>Paper-space text box width (mm on sheet). Converted via view.Scale.</summary>
     public const double DefaultPaperWidthMm = 70;
-    /// <summary>Desired TextNoteType height (paper mm). Applied to the type if different.</summary>
+    /// <summary>Fallback height (paper mm) when the type does not report one.</summary>
     public const double DefaultTextSizeMm = 2.5;
     /// <summary>Extra gap between stacked notes (paper mm → model via scale).</summary>
     public const double DefaultStackGapPaperMm = 2.0;
@@ -40,12 +45,19 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
     private bool _clearPrevious = true;
     private bool _clearOnly;
     private string _commentTag = DefaultCommentTag;
-    private string _defaultTextTypeName = DefaultTextTypeName;
+    /// <summary>Empty means "resolve the project's normal text type" — see <see cref="ResolveTextNoteTypeId"/>.</summary>
+    private string _defaultTextTypeName = string.Empty;
     private long _viewId = -1;
     private string _placement = DefaultPlacement;
     private double _marginMm = DefaultOutsideMarginMm;
     private double _paperWidthMm = DefaultPaperWidthMm;
     private double _textSizeMm = DefaultTextSizeMm;
+    /// <summary>
+    /// True only when the caller passed textSizeMm. TEXT_SIZE lives on the shared
+    /// TextNoteType, so writing it on every call silently re-heights the template
+    /// type for the whole project.
+    /// </summary>
+    private bool _textSizeRequested;
 
     public object ResultInfo { get; private set; }
 
@@ -72,7 +84,7 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
         _clearOnly = clearOnly;
         _commentTag = string.IsNullOrWhiteSpace(commentTag) ? DefaultCommentTag : commentTag.Trim();
         _defaultTextTypeName = string.IsNullOrWhiteSpace(defaultTextTypeName)
-            ? DefaultTextTypeName
+            ? string.Empty
             : defaultTextTypeName.Trim();
         _viewId = viewId;
         _placement = string.IsNullOrWhiteSpace(placement)
@@ -80,7 +92,8 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
             : placement.Trim().ToLowerInvariant();
         _marginMm = marginMm > 0 ? marginMm : DefaultOutsideMarginMm;
         _paperWidthMm = paperWidthMm > 0 ? paperWidthMm : DefaultPaperWidthMm;
-        _textSizeMm = textSizeMm > 0 ? textSizeMm : DefaultTextSizeMm;
+        _textSizeRequested = textSizeMm > 0;
+        _textSizeMm = _textSizeRequested ? textSizeMm : DefaultTextSizeMm;
         _resetEvent.Reset();
     }
 
@@ -168,8 +181,13 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
                 if (_clearPrevious)
                     deletedIds = ClearPreviousAnnotations(view, aggressive: false);
 
-                // Paper height 2.5 mm on ADSK_Замечания (keeps GOST Common / red from type).
-                EnsureTextSizeMm(sharedTypeId, _textSizeMm);
+                // Only on explicit request: TEXT_SIZE belongs to the shared
+                // TextNoteType, so setting it here restyles every note of that type
+                // in the project. Otherwise the type keeps the template's height.
+                if (_textSizeRequested)
+                    EnsureTextSizeMm(sharedTypeId, _textSizeMm);
+                else
+                    _textSizeMm = ReadTextSizeMm(sharedTypeId);
 
                 var autoIndex = 0;
                 for (var i = 0; i < resolved.Count; i++)
@@ -333,6 +351,9 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
                 viewId = view.Id.GetValue(),
                 commentTag = _commentTag,
                 textTypesUsed = usedTypeNames.ToList(),
+                // The architect reads colour off the sheet, so say it here rather
+                // than leaving the model to assume the type it asked for.
+                textTypeColor = DescribeTextColor(Doc.GetElement(sharedTypeId) as TextNoteType),
                 textSizeMm = _textSizeMm,
                 paperWidthMm = _paperWidthMm,
                 viewScale = scale,
@@ -821,6 +842,20 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
         }
     }
 
+    /// <summary>Type's own paper height, so stacking math matches what Revit draws.</summary>
+    private double ReadTextSizeMm(ElementId typeId)
+    {
+        if (Doc.GetElement(typeId) is not TextNoteType type)
+            return DefaultTextSizeMm;
+
+        var p = type.get_Parameter(BuiltInParameter.TEXT_SIZE);
+        if (p == null || !p.HasValue)
+            return DefaultTextSizeMm;
+
+        var mm = p.AsDouble() * 304.8;
+        return mm > 0 ? mm : DefaultTextSizeMm;
+    }
+
     private void EnsureTextSizeMm(ElementId typeId, double sizeMm)
     {
         if (sizeMm <= 0 || typeId == ElementId.InvalidElementId)
@@ -879,6 +914,10 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
             .Cast<TextNoteType>()
             .ToList();
 
+        if (types.Count == 0)
+            throw new InvalidOperationException(
+                "No TextNoteType in the project. Use a template with text styles.");
+
         if (!string.IsNullOrEmpty(preferred))
         {
             var exact = types.FirstOrDefault(t =>
@@ -891,25 +930,102 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
             if (partial != null)
                 return partial.Id;
 
-            // Soft preference for «Замечания» / Remarks when preferred missing
-            if (preferred.IndexOf("Замеч", StringComparison.OrdinalIgnoreCase) >= 0
-                || preferred.IndexOf("Remark", StringComparison.OrdinalIgnoreCase) >= 0)
+            // Only when the caller asked for a remarks style by name — never as a
+            // fallback for an unrelated missing name.
+            if (LooksLikeRemarksName(preferred))
             {
-                var remarks = types.FirstOrDefault(t =>
-                    t.Name.IndexOf("Замеч", StringComparison.OrdinalIgnoreCase) >= 0
-                    || t.Name.IndexOf("Remark", StringComparison.OrdinalIgnoreCase) >= 0);
+                var remarks = types.FirstOrDefault(t => LooksLikeRemarksName(t.Name));
                 if (remarks != null)
                     return remarks.Id;
             }
         }
 
+        return ResolveNeutralTextNoteTypeId(types);
+    }
+
+    /// <summary>
+    /// The type an architect gets from the ribbon: the project default, unless that
+    /// one is red. Red is reserved for norm remarks, and picking it for an ordinary
+    /// caption is the whole of Д5 — the note has to be redone by hand.
+    /// </summary>
+    private ElementId ResolveNeutralTextNoteTypeId(List<TextNoteType> types)
+    {
         var defaultId = Doc.GetDefaultElementTypeId(ElementTypeGroup.TextNoteType);
+        if (defaultId != ElementId.InvalidElementId
+            && Doc.GetElement(defaultId) is TextNoteType projectDefault
+            && !IsRedTextType(projectDefault)
+            && !LooksLikeRemarksName(projectDefault.Name))
+        {
+            return projectDefault.Id;
+        }
+
+        // Ordered by name: FilteredElementCollector order is not guaranteed, and an
+        // arbitrary pick would put the same drawing in a different style run to run.
+        var neutral = types
+            .Where(t => !IsRedTextType(t) && !LooksLikeRemarksName(t.Name))
+            .OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+        if (neutral != null)
+            return neutral.Id;
+
+        // Nothing neutral in the template — the project default still beats an
+        // arbitrary pick, and the result payload reports the colour either way.
         if (defaultId != ElementId.InvalidElementId && Doc.GetElement(defaultId) is TextNoteType)
             return defaultId;
 
-        return types.FirstOrDefault()?.Id
-               ?? throw new InvalidOperationException(
-                   "No TextNoteType in the project. Use a template with text styles (e.g. ADSK_Замечания).");
+        return types[0].Id;
+    }
+
+    private static bool LooksLikeRemarksName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return false;
+        return name.IndexOf("Замеч", StringComparison.OrdinalIgnoreCase) >= 0
+               || name.IndexOf("Remark", StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    /// <summary>
+    /// TextNoteType colour sits on BuiltInParameter.LINE_COLOR, packed as
+    /// R | G&lt;&lt;8 | B&lt;&lt;16. A template that does not expose it reads as
+    /// "unknown", and unknown must not disqualify a type — the name check still applies.
+    /// </summary>
+    private static bool IsRedTextType(TextNoteType type)
+    {
+        var rgb = TryGetTextColorRgb(type);
+        if (rgb == null)
+            return false;
+
+        var (r, g, b) = rgb.Value;
+        return r >= 128 && g < 96 && b < 96;
+    }
+
+    private static (int R, int G, int B)? TryGetTextColorRgb(TextNoteType type)
+    {
+        try
+        {
+            var p = type?.get_Parameter(BuiltInParameter.LINE_COLOR);
+            if (p == null || p.StorageType != StorageType.Integer || !p.HasValue)
+                return null;
+
+            var packed = p.AsInteger();
+            if (packed < 0)
+                return null;
+
+            return (packed & 0xFF, (packed >> 8) & 0xFF, (packed >> 16) & 0xFF);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Hex colour of a text type for the result payload, or "" when unknown.</summary>
+    private static string DescribeTextColor(TextNoteType type)
+    {
+        var rgb = TryGetTextColorRgb(type);
+        return rgb == null
+            ? string.Empty
+            : $"#{rgb.Value.R:X2}{rgb.Value.G:X2}{rgb.Value.B:X2}";
     }
 
     private double ClampTextWidth(ElementId typeId, double requestedFeet)

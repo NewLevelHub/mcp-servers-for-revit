@@ -11,8 +11,12 @@ namespace RevitMCPCommandSet.Services
 {
     public class GetSelectedElementsEventHandler : IExternalEventHandler, IWaitableExternalEventHandler
     {
-        // 执行结果
-        public List<Models.Common.ElementInfo> ResultElements { get; private set; }
+        /// <summary>
+        /// Paged envelope, not a bare list: Take(Limit) used to drop the rest of the
+        /// selection without saying so, and "selected 12 elements" then meant a
+        /// silently different set than the architect had highlighted.
+        /// </summary>
+        public AIResult<List<Models.Common.ElementInfo>> Result { get; private set; }
 
         // 状态同步对象
         public bool TaskCompleted { get; private set; }
@@ -20,6 +24,7 @@ namespace RevitMCPCommandSet.Services
 
         // 限制返回的元素数量
         public int? Limit { get; set; }
+        public int? Offset { get; set; }
 
         // 实现IWaitableExternalEventHandler接口
                 /// <summary>
@@ -45,33 +50,61 @@ namespace RevitMCPCommandSet.Services
 
                 // 获取当前选中的元素
                 var selectedIds = uiDoc.Selection.GetElementIds();
-                var selectedElements = selectedIds.Select(id => doc.GetElement(id)).ToList();
+                var selectedElements = selectedIds
+                    .Select(id => doc.GetElement(id))
+                    .Where(element => element != null)
+                    .ToList();
 
-                // 应用数量限制
-                if (Limit.HasValue && Limit.Value > 0)
-                {
-                    selectedElements = selectedElements.Take(Limit.Value).ToList();
-                }
+                var total = selectedElements.Count;
+                var offset = Offset.HasValue && Offset.Value > 0 ? Offset.Value : 0;
+                var limit = Limit.HasValue && Limit.Value > 0 ? Limit.Value : int.MaxValue;
 
-                // 转换为ElementInfo列表
-                ResultElements = selectedElements.Select(element => new ElementInfo
-                {
+                var page = selectedElements
+                    .Skip(offset)
+                    .Take(limit)
+                    .Select(element => new ElementInfo
+                    {
 #if REVIT2024_OR_GREATER
-                    Id = element.Id.Value,
+                        Id = element.Id.Value,
 #else
-                    Id = element.Id.IntegerValue,
+                        Id = element.Id.IntegerValue,
 #endif
-                    UniqueId = element.UniqueId,
-                    Name = element.Name,
-                    Category = element.Category?.Name
-                }).ToList();
+                        UniqueId = element.UniqueId,
+                        Name = element.Name,
+                        Category = element.Category?.Name
+                    })
+                    .ToList();
+
+                var hasMore = offset + page.Count < total;
+
+                Result = new AIResult<List<ElementInfo>>
+                {
+                    // An empty selection is an answer, not a failure.
+                    Success = true,
+                    Message = total == 0
+                        ? "В Revit ничего не выделено."
+                        : hasMore
+                            ? $"Выделено элементов: {total}, показано {page.Count} начиная с {offset}. "
+                              + $"Есть ещё: повторите с offset={offset + page.Count} или увеличьте limit."
+                            : $"Выделено элементов: {total} (показаны все).",
+                    Response = page,
+                    TotalCount = total,
+                    HasMore = hasMore,
+                    Offset = offset,
+                    Limit = limit == int.MaxValue ? (int?)null : limit
+                };
             }
             catch (Exception ex)
             {
                 // No TaskDialog.Show: this runs inside an ExternalEvent with nobody able
                 // to click it during an agent-driven turn — it would hang the chat.
                 System.Diagnostics.Trace.WriteLine($"get_selected_elements failed: {ex}");
-                ResultElements = new List<Models.Common.ElementInfo>();
+                Result = new AIResult<List<ElementInfo>>
+                {
+                    Success = false,
+                    Message = ex.Message,
+                    Response = new List<ElementInfo>()
+                };
             }
             finally
             {

@@ -5,16 +5,23 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerGetSelectedElementsTool(server: McpServer) {
   server.tool(
     "get_selected_elements",
-    "Get elements currently selected in Revit. You can limit the number of returned elements.",
+    "Get elements currently selected in Revit. Paginated: the reply carries TotalCount (the whole " +
+      "selection), HasMore, Offset and Limit alongside the page in Response. When HasMore is true the " +
+      "list is NOT the whole selection — read the next page with offset before acting on it.",
     {
       limit: z
         .number()
         .optional()
-        .describe("Maximum number of elements to return"),
+        .describe("Page size — maximum number of elements to return (default 100)."),
+      offset: z
+        .number()
+        .optional()
+        .describe("Number of selected elements to skip before the page. Use when HasMore is true."),
     },
     async (args, extra) => {
       const params = {
         limit: args.limit || 100,
+        offset: args.offset || 0,
       };
 
       try {
@@ -40,6 +47,9 @@ export function registerGetSelectedElementsTool(server: McpServer) {
               }`,
             },
           ],
+          // toolOutcome normalises thrown errors and JSON refusals; a plain-text
+          // failure returned from here would otherwise read as a success.
+          isError: true,
         };
       }
     }
