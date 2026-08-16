@@ -28,10 +28,18 @@ namespace revit_mcp_plugin.UI.Assistant
         /// <summary>REV-127: load the original user request into the input box.</summary>
         public event EventHandler<RetryEventArgs> EditRequested;
 
+        /// <summary>
+        /// The two accuracy tags come from the architects' own review: "стены выстраиваются
+        /// с отклонениями от исходной геометрии" and "неверное определение привязок" were
+        /// their top complaints and had nowhere to go — they landed in "(без тега)" or, worse,
+        /// under "не тот инструмент", where a wrong tool is not what went wrong at all.
+        /// </summary>
         private static readonly string[] DislikeReasons =
         {
             "не понял запрос",
             "не тот инструмент",
+            "построил неточно",
+            "не те привязки",
             "сломал модель",
             "выдумал нормы",
             "не довёл до конца",

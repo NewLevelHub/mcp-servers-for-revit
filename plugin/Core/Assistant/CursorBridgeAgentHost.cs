@@ -224,17 +224,52 @@ namespace revit_mcp_plugin.Core.Assistant
         /// </param>
         private static string DescribeFailure(Exception ex, int toolCallCount)
         {
+            if (IsStaleEngineFailure(ex))
+            {
+                var head = "Движок ассистента потерял связь с Cursor. Откройте Настройки → Ассистент "
+                         + "→ «Перезапустить движок» и повторите запрос — Revit закрывать не нужно.";
+                return toolCallCount == 0
+                    ? head + " В проекте ничего не изменилось."
+                    : head + $" До обрыва успело выполниться действий: {toolCallCount} — посмотрите чертёж.";
+            }
+
             if (IsTransportFailure(ex))
             {
+                var tail = " Если повторяется — Настройки → Ассистент → «Перезапустить движок».";
                 return toolCallCount == 0
                     ? "Связь с моделью оборвалась — ход не начался, в проекте ничего не изменилось. "
-                      + "Проверьте интернет и повторите запрос."
+                      + "Проверьте интернет и повторите запрос." + tail
                     : $"Связь с моделью оборвалась после {toolCallCount} выполненных действий — "
                       + "часть работы могла остаться в проекте. Проверьте интернет, посмотрите чертёж "
-                      + "и повторите запрос.";
+                      + "и повторите запрос." + tail;
             }
 
             return "Ассистент не смог выполнить запрос: " + InnermostMessage(ex);
+        }
+
+        /// <summary>
+        /// Cursor answers "Authentication error. If you are logged in, try logging out and
+        /// back in." on a bridge process whose session went stale, and it keeps answering it
+        /// on every turn even though the key itself is still valid (verified against
+        /// api.cursor.com while the panel was failing). EnsureRunning reuses a live process
+        /// whose settings did not change, so without this the architect is told to log in
+        /// somewhere they never logged in, and only closing Revit clears it.
+        /// Matched on the message: it arrives as a plain bridge error, not an HTTP status.
+        /// </summary>
+        private static bool IsStaleEngineFailure(Exception ex)
+        {
+            for (var e = ex; e != null; e = e.InnerException)
+            {
+                var message = e.Message;
+                if (string.IsNullOrEmpty(message)) continue;
+                if (message.IndexOf("Authentication error", StringComparison.OrdinalIgnoreCase) >= 0
+                    || message.IndexOf("logging out and back in", StringComparison.OrdinalIgnoreCase) >= 0
+                    || message.IndexOf("Unauthorized", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private static bool IsTransportFailure(Exception ex)
