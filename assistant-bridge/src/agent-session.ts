@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import { Agent, JsonlLocalAgentStore } from "@cursor/sdk";
-import type { LocalAgentStore, ModelSelection, Run, SDKCustomTool } from "@cursor/sdk";
+import type { LocalAgentStore, ModelSelection, Run, SDKCustomTool, TokenUsage } from "@cursor/sdk";
 import type { BridgeConfig } from "./config.js";
 import { AUTO_MODEL_ID, modelLabel } from "./config.js";
 
@@ -61,6 +61,28 @@ type SessionRecord = {
   emitter?: SseEmitter;
   /** Confirmations awaiting an answer from the Revit panel, by requestId. */
   pendingConfirms: Map<string, (approved: boolean) => void>;
+};
+
+/**
+ * Stage timestamps for one turn. "Слишком долго" is the most common complaint and
+ * the least actionable one: the old log had only start and end, so a 12-second wait
+ * could not be told apart from a slow model, a cold agent or a fat prompt. Each mark
+ * below cuts one of those off the list of suspects.
+ */
+type TurnMarks = {
+  startedAt: number;
+  /** Agent claimed (or built) and session ready. */
+  sessionReadyAt?: number;
+  /** Cursor accepted the send and handed back a run. */
+  runStartedAt?: number;
+  /** First event of any kind off the stream — the end of pure setup latency. */
+  firstEventAt?: number;
+  /** First visible character; everything before this is silence for the architect. */
+  firstTextAt?: number;
+  /** False when the turn had to build or claim an agent rather than reuse a session. */
+  sessionReused?: boolean;
+  /** Reported once at turn end; the only measure of how heavy the prompt really is. */
+  usage?: TokenUsage;
 };
 
 /** Generic wrappers Cursor reports instead of the real MCP tool name. */
@@ -537,6 +559,7 @@ export class AgentSessionManager {
     // screenshot of the panel's busy timer. Log turn boundaries so latency is a
     // grep away — bytes in, ms to first text, ms to done, per session.
     const turnStartedAt = Date.now();
+    const marks: TurnMarks = { startedAt: turnStartedAt };
     let firstTextLoggedAt: number | null = null;
     console.error(
       `[assistant-bridge] turn start session=${sessionId} chars=${message.length}` +
@@ -544,7 +567,10 @@ export class AgentSessionManager {
     );
 
     emit.status("Подключаю Cursor…");
+    // Checked before the await: getOrCreateSession registers the session itself.
+    marks.sessionReused = this.sessions.has(sessionId) && !req.reset;
     const session = await this.getOrCreateSession(sessionId, !!req.reset);
+    marks.sessionReadyAt = Date.now();
     session.emitter = emit;
 
     const promptText = REVIT_SYSTEM_PREFIX + message;
@@ -578,9 +604,16 @@ export class AgentSessionManager {
         requestedModel,
         this.isHeavyRequest(message, images.length > 0) ? "default" : this.config.mcpToolProfile,
       );
+      marks.runStartedAt = Date.now();
       session.activeRun = run;
 
       for await (const event of run.stream()) {
+        if (marks.firstEventAt === undefined) marks.firstEventAt = Date.now();
+
+        if (event.type === "usage") {
+          marks.usage = event.usage;
+        }
+
         if (event.type === "system" && event.model) {
           selectedModel = event.model;
         }
@@ -601,6 +634,7 @@ export class AgentSessionManager {
               finalSegment += block.text;
               if (firstTextLoggedAt === null) {
                 firstTextLoggedAt = Date.now();
+                marks.firstTextAt = firstTextLoggedAt;
                 console.error(
                   `[assistant-bridge] turn first-text session=${sessionId} ` +
                     `+${firstTextLoggedAt - turnStartedAt}ms`,
@@ -658,7 +692,7 @@ export class AgentSessionManager {
       if (result.model) selectedModel = result.model;
 
       if (result.status === "cancelled") {
-        this.logTurnEnd(sessionId, turnStartedAt, "cancelled", doneSummary.length);
+        this.logTurnEnd(sessionId, marks, "cancelled", doneSummary.length);
         emit.done({
           reply: reply.trim() || "Остановлено.",
           model: this.describeModel(selectedModel, requestedModel),
@@ -668,7 +702,7 @@ export class AgentSessionManager {
       }
 
       if (result.status === "error") {
-        this.logTurnEnd(sessionId, turnStartedAt, "error", doneSummary.length);
+        this.logTurnEnd(sessionId, marks, "error", doneSummary.length);
         emit.error(result.error?.message ?? `Cursor agent завершился с ошибкой. run=${result.id}`);
         return;
       }
@@ -677,14 +711,14 @@ export class AgentSessionManager {
       // duplicates the steps journal.
       const answer = finalSegment.trim() || reply.trim() || "Готово.";
 
-      this.logTurnEnd(sessionId, turnStartedAt, "done", doneSummary.length);
+      this.logTurnEnd(sessionId, marks, "done", doneSummary.length);
       emit.done({
         reply: answer,
         model: this.describeModel(selectedModel, requestedModel),
         doneSummary: [...new Set(doneSummary)],
       });
     } catch (err) {
-      this.logTurnEnd(sessionId, turnStartedAt, "threw", doneSummary.length);
+      this.logTurnEnd(sessionId, marks, "threw", doneSummary.length);
       throw err;
     } finally {
       session.activeRun = undefined;
@@ -696,13 +730,28 @@ export class AgentSessionManager {
 
   private logTurnEnd(
     sessionId: string,
-    turnStartedAt: number,
+    marks: TurnMarks,
     outcome: "done" | "cancelled" | "error" | "threw",
     toolCalls: number,
   ): void {
+    // Kept verbatim: existing log tooling greps this line.
     console.error(
       `[assistant-bridge] turn ${outcome} session=${sessionId} ` +
-        `+${Date.now() - turnStartedAt}ms tools=${toolCalls}`,
+        `+${Date.now() - marks.startedAt}ms tools=${toolCalls}`,
+    );
+
+    const at = (t: number | undefined) => (t === undefined ? "—" : `+${t - marks.startedAt}ms`);
+    const u = marks.usage;
+    console.error(
+      `[assistant-bridge] turn timing session=${sessionId}` +
+        ` agent=${at(marks.sessionReadyAt)}${marks.sessionReused ? "(reused)" : "(claimed)"}` +
+        ` run=${at(marks.runStartedAt)}` +
+        ` first-event=${at(marks.firstEventAt)}` +
+        ` first-text=${at(marks.firstTextAt)}` +
+        (u
+          ? ` tokens=in:${u.inputTokens} out:${u.outputTokens}` +
+            ` cacheRead:${u.cacheReadTokens} cacheWrite:${u.cacheWriteTokens} total:${u.totalTokens}`
+          : " tokens=—"),
     );
   }
 
