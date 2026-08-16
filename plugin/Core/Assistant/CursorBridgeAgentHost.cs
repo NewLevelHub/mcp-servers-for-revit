@@ -173,7 +173,11 @@ namespace revit_mcp_plugin.Core.Assistant
                         }
                     }
                 }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                // Any exception, not just OperationCanceledException: tearing down the
+                // SSE read mid-flight surfaces as IOException, which used to fall through
+                // to the generic branch below and show the architect a raw .NET string
+                // instead of "Остановлено.".
+                catch (Exception) when (cancellationToken.IsCancellationRequested)
                 {
                     MarkRunningStepsCancelled(steps, pendingCalls, turnLog, turnSw);
                     turnLog.Outcome = "cancelled";
@@ -184,11 +188,15 @@ namespace revit_mcp_plugin.Core.Assistant
                 {
                     MarkRunningStepsCancelled(steps, pendingCalls, turnLog, turnSw);
                     turnLog.Outcome = "failed";
-                    turnLog.Reply = ex.Message;
+                    var shown = DescribeFailure(ex, turnLog.ToolCalls.Count);
+                    turnLog.Reply = shown;
+                    // The technical chain stays in the log, where it is useful, instead of
+                    // in the chat, where it is not.
+                    turnLog.FailureDetail = FailureDetail(ex);
                     return new AgentTurnResult
                     {
                         Failed = true,
-                        Reply = ex.Message,
+                        Reply = shown,
                         Model = model,
                     };
                 }
@@ -201,6 +209,65 @@ namespace revit_mcp_plugin.Core.Assistant
                     AssistantTurnLogger.Write(turnLog);
                 }
             }
+        }
+
+        /// <summary>
+        /// A sentence the architect can act on, instead of the exception text.
+        /// "The read operation failed, see inner exception." is literally an
+        /// instruction to look somewhere they cannot see, and it arrives in the chat
+        /// styled exactly like the assistant's answer.
+        /// </summary>
+        /// <param name="toolCallCount">
+        /// Whether anything already ran matters: a turn that died before the first
+        /// call changed nothing, but one that died after three calls may have left
+        /// the model half-edited, and saying "ничего не произошло" would be a lie.
+        /// </param>
+        private static string DescribeFailure(Exception ex, int toolCallCount)
+        {
+            if (IsTransportFailure(ex))
+            {
+                return toolCallCount == 0
+                    ? "Связь с моделью оборвалась — ход не начался, в проекте ничего не изменилось. "
+                      + "Проверьте интернет и повторите запрос."
+                    : $"Связь с моделью оборвалась после {toolCallCount} выполненных действий — "
+                      + "часть работы могла остаться в проекте. Проверьте интернет, посмотрите чертёж "
+                      + "и повторите запрос.";
+            }
+
+            return "Ассистент не смог выполнить запрос: " + InnermostMessage(ex);
+        }
+
+        private static bool IsTransportFailure(Exception ex)
+        {
+            for (var e = ex; e != null; e = e.InnerException)
+            {
+                if (e is IOException
+                    || e is HttpRequestException
+                    || e is TaskCanceledException
+                    || e is System.Net.Sockets.SocketException)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>Innermost message — the outer one is usually "see inner exception".</summary>
+        private static string InnermostMessage(Exception ex)
+        {
+            var e = ex;
+            while (e.InnerException != null)
+                e = e.InnerException;
+            return e.Message;
+        }
+
+        /// <summary>Full exception chain for the turn log.</summary>
+        private static string FailureDetail(Exception ex)
+        {
+            var parts = new List<string>();
+            for (var e = ex; e != null; e = e.InnerException)
+                parts.Add(e.GetType().Name + ": " + e.Message);
+            return string.Join(" <- ", parts);
         }
 
         private void ReloadSettings()
