@@ -33,6 +33,11 @@ namespace revit_mcp_plugin.Core.Assistant
         public string Reply;
         public List<string> DoneSummary = new List<string>();
         public string Outcome; // ok | failed | cancelled | maxRounds
+        /// <summary>
+        /// Exception chain when Outcome is "failed". Reply carries what the architect
+        /// was shown; this keeps the technical detail that used to be shown instead.
+        /// </summary>
+        public string FailureDetail;
         public long TotalMs;
         public int PromptTokens;
         public int CompletionTokens;
@@ -90,6 +95,9 @@ namespace revit_mcp_plugin.Core.Assistant
                     ["rounds"] = entry.Rounds,
                     ["reply"] = Truncate(entry.Reply, 2000),
                     ["outcome"] = entry.Outcome,
+                    // Read back by FeedbackExporter: a complaint about a failed turn is
+                    // useless without the exception the architect was never shown.
+                    ["failureDetail"] = Truncate(entry.FailureDetail, 1000),
                     ["totalMs"] = entry.TotalMs,
                     ["promptTokens"] = entry.PromptTokens,
                     ["completionTokens"] = entry.CompletionTokens,
@@ -147,20 +155,27 @@ namespace revit_mcp_plugin.Core.Assistant
         /// Returns false when the write failed, so the UI can tell the architect their feedback
         /// was not actually saved instead of silently swallowing it.
         /// </summary>
-        public static bool WriteRatingPatch(string turnId, int rating, string reason, string comment)
+        public static bool WriteRatingPatch(string turnId, int rating, string reason, string comment, string shotPath = null)
         {
             try
             {
+                var patch = new JObject
+                {
+                    ["rating"] = rating,
+                    ["reason"] = reason,
+                    ["comment"] = comment,
+                    ["ts"] = DateTime.UtcNow.ToString("O"),
+                };
+
+                // File name only: the shot travels inside the export package, where the
+                // architect's absolute path under %AppData% means nothing.
+                if (!string.IsNullOrWhiteSpace(shotPath))
+                    patch["shot"] = Path.GetFileName(shotPath);
+
                 var jo = new JObject
                 {
                     ["turnId"] = turnId,
-                    ["ratingPatch"] = new JObject
-                    {
-                        ["rating"] = rating,
-                        ["reason"] = reason,
-                        ["comment"] = comment,
-                        ["ts"] = DateTime.UtcNow.ToString("O"),
-                    }
+                    ["ratingPatch"] = patch,
                 };
                 AppendLine(jo.ToString(Formatting.None));
                 return true;

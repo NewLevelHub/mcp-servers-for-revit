@@ -146,7 +146,7 @@
 
         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
           <Button x:Name="ExportFeedbackButton" Content="📊 0"
-                  ToolTip="Выгрузить жалобы (дизлайки) в .md-отчёт"
+                  ToolTip="Собрать жалобы со скриншотами в архив и отправить разработчику"
                   Margin="0,0,6,0" Padding="8,5" FontSize="11" FontWeight="SemiBold"
                   Cursor="Hand" Click="ExportFeedbackButton_Click"
                   Background="#2F5D8A" Foreground="White" BorderThickness="0" Visibility="Collapsed">

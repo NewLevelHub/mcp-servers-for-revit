@@ -7,6 +7,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using revit_mcp_plugin.Core.Assistant;
 
 namespace revit_mcp_plugin.UI.Assistant
@@ -59,6 +60,10 @@ namespace revit_mcp_plugin.UI.Assistant
         private string _selectedReason;
         private readonly List<Button> _reasonChips = new List<Button>();
         private TextBox _commentBox;
+        private Button _shotBtn;
+        private Border _shotPreview;
+        private Image _shotThumb;
+        private string _shotPath;
         private Button _sendBtn;
         private TextBlock _feedbackStatusText;
         private readonly string _metaFooter;
@@ -303,6 +308,28 @@ namespace revit_mcp_plugin.UI.Assistant
             _commentBox.TextChanged += (s, e) => UpdateSendEnabled();
             stack.Children.Add(_commentBox);
 
+            _shotBtn = new Button
+            {
+                Content = "📷 Приложить скрин",
+                Margin = new Thickness(0, 6, 0, 0),
+                Padding = new Thickness(8, 4, 8, 4),
+                FontSize = 11,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Background = Brushes.White,
+                Foreground = new SolidColorBrush(Color.FromRgb(0x1A, 0x27, 0x44)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0xD5, 0xDE, 0xE8)),
+                BorderThickness = new Thickness(1),
+                Cursor = Cursors.Hand,
+                ToolTip = "Снимок окна Revit в текущем виде — попадёт в отчёт вместе с жалобой",
+            };
+            AutomationProperties.SetName(_shotBtn, "Приложить скриншот к дизлайку");
+            _shotBtn.Template = BuildSimpleRoundedButtonTemplate(12);
+            _shotBtn.Click += (s, e) => CaptureShot();
+            stack.Children.Add(_shotBtn);
+
+            _shotPreview = BuildShotPreview();
+            stack.Children.Add(_shotPreview);
+
             _sendBtn = new Button
             {
                 Content = "Отправить",
@@ -326,13 +353,121 @@ namespace revit_mcp_plugin.UI.Assistant
             return form;
         }
 
+        private Border BuildShotPreview()
+        {
+            _shotThumb = new Image
+            {
+                MaxWidth = 150,
+                MaxHeight = 90,
+                Stretch = Stretch.Uniform,
+                Margin = new Thickness(0, 0, 6, 0),
+            };
+
+            var remove = new Button
+            {
+                Content = "убрать",
+                Padding = new Thickness(7, 3, 7, 3),
+                FontSize = 10.5,
+                VerticalAlignment = VerticalAlignment.Top,
+                Background = Brushes.White,
+                Foreground = new SolidColorBrush(Color.FromRgb(0xB0, 0x2A, 0x2A)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0xD5, 0xDE, 0xE8)),
+                BorderThickness = new Thickness(1),
+                Cursor = Cursors.Hand,
+            };
+            AutomationProperties.SetName(remove, "Убрать скриншот");
+            remove.Template = BuildSimpleRoundedButtonTemplate(10);
+            remove.Click += (s, e) => ClearShot();
+
+            var row = new StackPanel { Orientation = Orientation.Horizontal };
+            row.Children.Add(new Border
+            {
+                CornerRadius = new CornerRadius(6),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0xD5, 0xDE, 0xE8)),
+                BorderThickness = new Thickness(1),
+                ClipToBounds = true,
+                Child = _shotThumb,
+            });
+            row.Children.Add(remove);
+
+            return new Border
+            {
+                Visibility = Visibility.Collapsed,
+                Margin = new Thickness(0, 6, 0, 0),
+                Child = row,
+            };
+        }
+
         /// <summary>
-        /// Enabled when there is a tag OR a comment — a tag alone used to be required,
-        /// which made a comment-only report impossible to send (Д19).
+        /// Grabs the Revit window as it looks right now. The panel and the open form are
+        /// part of the frame on purpose — it shows which answer the complaint is about.
+        /// </summary>
+        private void CaptureShot()
+        {
+            ClearShot();
+
+            // Let WPF finish painting the pressed button first, or the shot catches the
+            // form half-rendered.
+            try { Dispatcher.Invoke(new Action(() => { }), DispatcherPriority.Render); }
+            catch { /* not fatal */ }
+
+            var path = FeedbackScreenshot.Capture(_turnId);
+            if (string.IsNullOrEmpty(path))
+            {
+                _shotBtn.Content = "📷 Не удалось снять экран";
+                return;
+            }
+
+            _shotPath = path;
+            try
+            {
+                var bmp = new BitmapImage();
+                bmp.BeginInit();
+                bmp.CacheOption = BitmapCacheOption.OnLoad; // do not hold the file open
+                bmp.UriSource = new Uri(path);
+                bmp.DecodePixelWidth = 150;
+                bmp.EndInit();
+                bmp.Freeze();
+                _shotThumb.Source = bmp;
+                _shotPreview.Visibility = Visibility.Visible;
+            }
+            catch { /* the file is saved either way; only the preview is lost */ }
+
+            _shotBtn.Content = "📷 Скрин приложен";
+            UpdateSendEnabled();
+        }
+
+        /// <summary>Drops the pending shot and deletes its file — see <see cref="ResetShotUi"/>.</summary>
+        private void ClearShot()
+        {
+            if (!string.IsNullOrEmpty(_shotPath))
+            {
+                try { File.Delete(_shotPath); } catch { /* leave the orphan, purge sweeps it */ }
+            }
+            ResetShotUi();
+        }
+
+        /// <summary>
+        /// Forgets the shot without touching the file. Used after submit, where ownership
+        /// has passed to the rating patch that now names it.
+        /// </summary>
+        private void ResetShotUi()
+        {
+            _shotPath = null;
+            if (_shotThumb != null) _shotThumb.Source = null;
+            if (_shotPreview != null) _shotPreview.Visibility = Visibility.Collapsed;
+            if (_shotBtn != null) _shotBtn.Content = "📷 Приложить скрин";
+        }
+
+        /// <summary>
+        /// Enabled when there is a tag, a comment OR a screenshot — a tag alone used to be
+        /// required, which made a comment-only report impossible to send (Д19).
         /// </summary>
         private void UpdateSendEnabled()
         {
-            var enabled = _selectedReason != null || !string.IsNullOrWhiteSpace(_commentBox?.Text);
+            var enabled = _selectedReason != null
+                || !string.IsNullOrWhiteSpace(_commentBox?.Text)
+                || !string.IsNullOrEmpty(_shotPath);
             if (_sendBtn != null)
                 _sendBtn.IsEnabled = enabled;
             ApplySendButtonEnabledStyle(enabled);
@@ -499,14 +634,21 @@ namespace revit_mcp_plugin.UI.Assistant
                 ApplyChipStyle(c, selected: false);
             if (_commentBox != null)
                 _commentBox.Text = string.Empty;
+            ClearShot();
             UpdateSendEnabled();
         }
 
         private void SubmitDislike()
         {
             var comment = _commentBox?.Text?.Trim();
-            if (_selectedReason == null && string.IsNullOrEmpty(comment)) return;
-            FeedbackSubmitted?.Invoke(this, new FeedbackEventArgs(_turnId, -1, _selectedReason, string.IsNullOrEmpty(comment) ? null : comment));
+            var shot = _shotPath;
+            if (_selectedReason == null && string.IsNullOrEmpty(comment) && string.IsNullOrEmpty(shot)) return;
+
+            // Hand the file over before HideDislikeForm runs, otherwise ClearShot deletes
+            // the very screenshot the rating patch has just been told to reference.
+            ResetShotUi();
+            FeedbackSubmitted?.Invoke(this, new FeedbackEventArgs(
+                _turnId, -1, _selectedReason, string.IsNullOrEmpty(comment) ? null : comment, shot));
             HideDislikeForm();
             ApplyRatingButtonStyle(_dislikeBtn, active: true);
         }
@@ -711,13 +853,16 @@ namespace revit_mcp_plugin.UI.Assistant
         public int Rating { get; }
         public string Reason { get; }
         public string Comment { get; }
+        /// <summary>Full path to the attached screenshot under Logs/feedback-shots, or null.</summary>
+        public string ShotPath { get; }
 
-        public FeedbackEventArgs(string turnId, int rating, string reason, string comment)
+        public FeedbackEventArgs(string turnId, int rating, string reason, string comment, string shotPath = null)
         {
             TurnId = turnId;
             Rating = rating;
             Reason = reason;
             Comment = comment;
+            ShotPath = shotPath;
         }
     }
 

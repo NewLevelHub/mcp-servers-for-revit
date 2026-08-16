@@ -45,6 +45,8 @@ namespace revit_mcp_plugin.UI
             CursorApiKeyBox.Password = s.AssistantCursorApiKey ?? "";
             NodePathBox.Text = s.AssistantNodePath ?? "";
             BridgePortBox.Text = (s.AssistantBridgePort > 0 ? s.AssistantBridgePort : 8790).ToString();
+            FeedbackAuthorBox.Text = s.AssistantFeedbackAuthor ?? "";
+            FeedbackDropDirBox.Text = s.AssistantFeedbackDropDir ?? "";
 
             // Normalize first: stored "auto-smart:*" ids are rejected by the Cursor API.
             var cursorModel = CursorModelCatalog.Normalize(s.AssistantCursorModel);
@@ -78,6 +80,8 @@ namespace revit_mcp_plugin.UI
             s.AssistantCursorApiKey = CursorApiKeyBox.Password ?? "";
             s.AssistantCursorModel = SelectedCursorModelId();
             s.AssistantNodePath = (NodePathBox.Text ?? "").Trim();
+            s.AssistantFeedbackAuthor = (FeedbackAuthorBox.Text ?? "").Trim();
+            s.AssistantFeedbackDropDir = (FeedbackDropDirBox.Text ?? "").Trim();
 
             int port;
             if (int.TryParse((BridgePortBox.Text ?? "").Trim(), out port) && port > 0 && port < 65536)
@@ -106,8 +110,15 @@ namespace revit_mcp_plugin.UI
             try
             {
                 // Starting the bridge is the honest test: it validates Node, paths and the key.
-                await Task.Run(() => AssistantBridgeLauncher.EnsureRunning(s)).ConfigureAwait(true);
-                SetStatus("Движок запущен, ассистент готов", ok: true);
+                // Stop first — EnsureRunning keeps a live process whose settings did not change,
+                // so a bridge that has gone sour (Cursor answering "Authentication error" on
+                // every turn) would otherwise survive until Revit itself is closed.
+                await Task.Run(() =>
+                {
+                    AssistantBridgeLauncher.Stop();
+                    AssistantBridgeLauncher.EnsureRunning(s);
+                }).ConfigureAwait(true);
+                SetStatus("Движок перезапущен, ассистент готов", ok: true);
             }
             catch (Exception ex)
             {

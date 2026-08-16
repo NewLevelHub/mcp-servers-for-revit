@@ -85,6 +85,26 @@
         </StackPanel>
       </Border>
 
+      <Border Background="#F7FAFC" BorderBrush="#D5DEE8" BorderThickness="1"
+              CornerRadius="12" Padding="16" Margin="0,0,0,14">
+        <StackPanel>
+          <TextBlock Text="Сбор отзывов" FontSize="15" FontWeight="SemiBold"
+                     Foreground="#1A2744" Margin="0,0,0,10"/>
+
+          <TextBlock Text="Кто пользуется (ФИО)" Style="{StaticResource FieldLabel}"/>
+          <TextBox x:Name="FeedbackAuthorBox" Style="{StaticResource FieldBox}"
+                   ToolTip="Иванов И."/>
+          <TextBlock Style="{StaticResource Hint}"
+                     Text="Подписывает жалобы. Пусто — подставится имя пользователя Windows."/>
+
+          <TextBlock Text="Общая папка для жалоб" Style="{StaticResource FieldLabel}" Margin="0,14,0,4"/>
+          <TextBox x:Name="FeedbackDropDirBox" Style="{StaticResource FieldBox}"
+                   ToolTip="\\server\share\revit-ai-feedback"/>
+          <TextBlock Style="{StaticResource Hint}"
+                     Text="Сетевая папка или папка Яндекс.Диска / OneDrive. Жалобы со скриншотами уезжают туда сами. Пусто — архивы копятся только на этом компьютере."/>
+        </StackPanel>
+      </Border>
+
       <Expander Header="Дополнительно" FontSize="13" Foreground="#1A2744" Margin="0,0,0,14">
         <Border Background="#F7FAFC" BorderBrush="#D5DEE8" BorderThickness="1"
                 CornerRadius="12" Padding="16" Margin="0,8,0,0">
@@ -108,7 +128,8 @@
         <Button Content="Сохранить" Width="128" Height="36" Click="SaveButton_Click"
                 Background="#1A2744" Foreground="White" FontWeight="SemiBold" BorderThickness="0"
                 Cursor="Hand"/>
-        <Button x:Name="TestButton" Content="Проверить связь" Width="150" Height="36" Margin="10,0,0,0"
+        <Button x:Name="TestButton" Content="Перезапустить движок" Width="180" Height="36" Margin="10,0,0,0"
+                ToolTip="Поднимает движок заново — помогает, если ассистент начал отвечать «Authentication error»"
                 Click="TestButton_Click" Background="White" Foreground="#1A2744"
                 BorderBrush="#D5DEE8" BorderThickness="1" Cursor="Hand"/>
         <TextBlock x:Name="SaveStatusText" Margin="14,0,0,0" VerticalAlignment="Center"

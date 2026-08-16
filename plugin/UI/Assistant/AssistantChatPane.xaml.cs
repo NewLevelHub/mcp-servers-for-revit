@@ -181,6 +181,7 @@ namespace revit_mcp_plugin.UI.Assistant
         {
             RefreshContextAndBanner();
             RefreshFeedbackBadge();
+            FlushFeedbackInBackground();
             WarmUpEngine();
         }
 
@@ -218,14 +219,19 @@ namespace revit_mcp_plugin.UI.Assistant
         {
             try
             {
-                var path = Core.Assistant.FeedbackExporter.Export();
-                if (path != null)
+                var result = Core.Assistant.FeedbackExporter.Export();
+                if (result == null)
                 {
-                    AddBotMessage($"Отчёт сохранён:\n{path}\n\nПуть скопирован в буфер обмена.");
+                    AddBotMessage(
+                        "Нет невыгруженных жалоб.\n\nСобранные ранее пакеты лежат в папке:\n"
+                        + Core.Assistant.FeedbackExporter.GetPackagesDirectory());
                 }
                 else
                 {
-                    AddBotMessage("Нет невыгруженных дизлайков.");
+                    // Clipboard is STA-only, so it belongs here and not inside Export,
+                    // which also runs on the background flush.
+                    try { System.Windows.Clipboard.SetText(result.PackagePath); } catch { /* may be locked */ }
+                    AddBotMessage(DescribeExport(result));
                 }
                 RefreshFeedbackBadge();
             }
@@ -233,6 +239,51 @@ namespace revit_mcp_plugin.UI.Assistant
             {
                 AddBotMessage("Ошибка выгрузки: " + ex.Message);
             }
+        }
+
+        private static string DescribeExport(Core.Assistant.FeedbackExportResult result)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"Собрал {result.Count} жалоб(ы) в один архив:");
+            sb.AppendLine(result.PackagePath);
+
+            if (result.Delivered)
+            {
+                sb.AppendLine();
+                sb.AppendLine("Отправлено в общую папку — от вас больше ничего не нужно.");
+            }
+            else if (!string.IsNullOrEmpty(result.DeliveryError))
+            {
+                sb.AppendLine();
+                sb.AppendLine("Общая папка сейчас недоступна (" + result.DeliveryError
+                    + "). Архив остался на компьютере и уйдёт сам, когда папка появится.");
+            }
+            else
+            {
+                sb.AppendLine();
+                sb.AppendLine("Путь скопирован в буфер обмена — пришлите архив разработчику.");
+            }
+
+            return sb.ToString().TrimEnd();
+        }
+
+        /// <summary>
+        /// Ships whatever is pending in the background. The architect is here to draw, not
+        /// to remember to press an export button, so the panel does it on open and after
+        /// every complaint — but only when a collection folder is configured.
+        /// </summary>
+        private void FlushFeedbackInBackground()
+        {
+            Task.Run(() =>
+            {
+                try { Core.Assistant.FeedbackExporter.TryAutoFlush(); }
+                catch { /* never surfaces as a chat error */ }
+            })
+            .ContinueWith(
+                _ => RefreshFeedbackBadge(),
+                System.Threading.CancellationToken.None,
+                TaskContinuationOptions.None,
+                TaskScheduler.FromCurrentSynchronizationContext());
         }
 
         private void RefreshFeedbackBadge()
@@ -1194,9 +1245,13 @@ namespace revit_mcp_plugin.UI.Assistant
             if (e == null || string.IsNullOrWhiteSpace(e.TurnId))
                 return;
 
-            var ok = Core.Assistant.AssistantTurnLogger.WriteRatingPatch(e.TurnId, e.Rating, e.Reason, e.Comment);
+            var ok = Core.Assistant.AssistantTurnLogger.WriteRatingPatch(
+                e.TurnId, e.Rating, e.Reason, e.Comment, e.ShotPath);
             (sender as ChatBubble)?.ShowFeedbackResult(ok);
             RefreshFeedbackBadge();
+
+            if (ok && e.Rating < 0)
+                FlushFeedbackInBackground();
         }
 
         private void OnBubbleRetry(object sender, RetryEventArgs e)

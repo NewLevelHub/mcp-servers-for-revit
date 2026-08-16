@@ -114,5 +114,20 @@ namespace revit_mcp_plugin.Configuration
         /// </summary>
         [JsonProperty("assistantMaxPreviousUserTurns")]
         public int AssistantMaxPreviousUserTurns { get; set; } = 12;
+
+        /// <summary>
+        /// Where complaint packages are mirrored so they reach the maintainer without the
+        /// architect doing anything: a UNC share (\\server\share\revit-ai-feedback) or a
+        /// cloud-synced folder (Яндекс.Диск / OneDrive). Empty = keep them local only.
+        /// </summary>
+        [JsonProperty("assistantFeedbackDropDir")]
+        public string AssistantFeedbackDropDir { get; set; } = "";
+
+        /// <summary>
+        /// Name shown on the package so a complaint can be traced back to a person.
+        /// Empty falls back to the Windows account name.
+        /// </summary>
+        [JsonProperty("assistantFeedbackAuthor")]
+        public string AssistantFeedbackAuthor { get; set; } = "";
     }
 }

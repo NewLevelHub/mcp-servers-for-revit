@@ -1,20 +1,55 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Text;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using revit_mcp_plugin.Configuration;
 using revit_mcp_plugin.Utils;
 
 namespace revit_mcp_plugin.Core.Assistant
 {
+    /// <summary>Outcome of one export, so the panel can say what actually happened.</summary>
+    public sealed class FeedbackExportResult
+    {
+        /// <summary>Full path of the .zip written under Logs/Feedback.</summary>
+        public string PackagePath;
+        public int Count;
+        /// <summary>True when the package reached <see cref="DropDir"/>.</summary>
+        public bool Delivered;
+        /// <summary>Configured collection folder, or null when the architect works offline.</summary>
+        public string DropDir;
+        /// <summary>Why the copy failed; null on success or when no drop dir is set.</summary>
+        public string DeliveryError;
+    }
+
     /// <summary>
-    /// Reads assistant session logs, collects dislike entries, generates a Markdown report,
-    /// and marks exported entries so they aren't duplicated on re-export.
+    /// Reads assistant session logs, collects dislike entries, packs them into a single
+    /// .zip (report + machine-readable jsonl + screenshots) and mirrors it to the shared
+    /// collection folder. Exported entries are marked so re-export never duplicates them.
     /// </summary>
     public static class FeedbackExporter
     {
         private const string ExportedMarkerFile = "feedback-exported-ids.txt";
+        private const string PackagesFolderName = "Feedback";
+        private const int ShotRetentionDays = 30;
+
+        /// <summary>
+        /// Panel load and a submitted dislike can both kick off a flush at once; without
+        /// this they would read the same pending set and race on the exported-ids file.
+        /// </summary>
+        private static readonly object ExportGate = new object();
+
+        /// <summary>Where finished .zip packages accumulate on the architect's machine.</summary>
+        public static string GetPackagesDirectory()
+        {
+            var dir = Path.Combine(PathManager.GetLogsDirectoryPath(), PackagesFolderName);
+            Directory.CreateDirectory(dir);
+            return dir;
+        }
 
         /// <summary>Returns the number of un-exported dislikes across all session logs.</summary>
         public static int CountPendingDislikes()
@@ -28,31 +63,171 @@ namespace revit_mcp_plugin.Core.Assistant
         }
 
         /// <summary>
-        /// Generates a Markdown report of all pending dislikes, saves it to the given directory
-        /// (or Logs/ by default), marks entries as exported, and returns the file path.
+        /// Packs all pending dislikes into a .zip under Logs/Feedback, copies it to the
+        /// configured drop folder, and marks the entries exported. Returns null when
+        /// there was nothing to send.
         /// </summary>
-        public static string Export(string targetDir = null)
+        public static FeedbackExportResult Export()
         {
-            var exported = LoadExportedIds();
-            var dislikes = CollectDislikes(exported);
-            if (dislikes.Count == 0) return null;
+            lock (ExportGate)
+            {
+                var exported = LoadExportedIds();
+                var dislikes = CollectDislikes(exported);
+                if (dislikes.Count == 0)
+                {
+                    // Still worth a sweep: an earlier package may have been written while the
+                    // share was down.
+                    MirrorPendingPackages();
+                    return null;
+                }
 
-            var dir = targetDir ?? PathManager.GetLogsDirectoryPath();
-            Directory.CreateDirectory(dir);
+                var packagePath = WritePackage(dislikes);
 
-            var md = BuildReport(dislikes);
-            var fileName = $"assistant-feedback_{DateTime.Now:yyyyMMdd-HHmm}.md";
-            var path = Path.Combine(dir, fileName);
-            File.WriteAllText(path, md, Encoding.UTF8);
+                foreach (var d in dislikes)
+                    exported.Add(d.TurnId);
+                SaveExportedIds(exported);
 
-            // Mark as exported
-            foreach (var d in dislikes)
-                exported.Add(d.TurnId);
-            SaveExportedIds(exported);
+                PurgeOldShots();
 
-            try { System.Windows.Clipboard.SetText(path); } catch { /* clipboard may be locked */ }
+                var result = new FeedbackExportResult
+                {
+                    PackagePath = packagePath,
+                    Count = dislikes.Count,
+                    DropDir = ResolveDropDir(),
+                };
+
+                if (!string.IsNullOrEmpty(result.DropDir))
+                {
+                    try
+                    {
+                        CopyToDropDir(packagePath, result.DropDir);
+                        result.Delivered = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        result.DeliveryError = ex.Message;
+                    }
+                }
+
+                MirrorPendingPackages();
+                return result;
+            }
+        }
+
+        /// <summary>
+        /// Runs an export without touching the UI. Only fires when a drop folder is set:
+        /// packaging silently in the local-only case would clear the badge and leave the
+        /// architect with no sign that anything is waiting to be handed over.
+        /// </summary>
+        public static void TryAutoFlush()
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(ResolveDropDir())) return;
+                Export();
+            }
+            catch { /* delivery must never surface as a chat error */ }
+        }
+
+        /// <summary>Collection folder from settings, or null when unset / unreachable-by-config.</summary>
+        public static string ResolveDropDir()
+        {
+            try
+            {
+                var dir = (PluginSettingsStore.LoadSettings().AssistantFeedbackDropDir ?? "").Trim();
+                return string.IsNullOrEmpty(dir) ? null : dir;
+            }
+            catch { return null; }
+        }
+
+        // ── Package writing ──────────────────────────────────────────────────────
+
+        private static string WritePackage(List<DislikeEntry> dislikes)
+        {
+            var stamp = DateTime.Now.ToString("yyyyMMdd-HHmm");
+            var name = $"feedback_{Sanitize(AuthorName())}_{Sanitize(Environment.MachineName)}_{stamp}.zip";
+            var path = Path.Combine(GetPackagesDirectory(), name);
+
+            // A second export inside the same minute would otherwise overwrite the first.
+            path = MakeUnique(path);
+
+            var shotsDir = Path.Combine(PathManager.GetLogsDirectoryPath(), FeedbackScreenshot.ShotsFolderName);
+
+            using (var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
+            using (var zip = new ZipArchive(fs, ZipArchiveMode.Create))
+            {
+                WriteTextEntry(zip, "report.md", BuildReport(dislikes));
+                WriteTextEntry(zip, "raw.jsonl", BuildRawJsonl(dislikes));
+
+                foreach (var d in dislikes)
+                {
+                    if (string.IsNullOrEmpty(d.Shot)) continue;
+                    var src = Path.Combine(shotsDir, d.Shot);
+                    if (!File.Exists(src)) continue;
+                    try { zip.CreateEntryFromFileSafe(src, "shots/" + d.Shot); }
+                    catch { /* one unreadable shot must not lose the whole package */ }
+                }
+            }
 
             return path;
+        }
+
+        private static void WriteTextEntry(ZipArchive zip, string entryName, string content)
+        {
+            var entry = zip.CreateEntry(entryName, CompressionLevel.Optimal);
+            using (var stream = entry.Open())
+            using (var writer = new StreamWriter(stream, new UTF8Encoding(true)))
+            {
+                writer.Write(content);
+            }
+        }
+
+        private static string MakeUnique(string path)
+        {
+            if (!File.Exists(path)) return path;
+            var dir = Path.GetDirectoryName(path);
+            var stem = Path.GetFileNameWithoutExtension(path);
+            var ext = Path.GetExtension(path);
+            for (int i = 2; i < 100; i++)
+            {
+                var candidate = Path.Combine(dir, $"{stem}-{i}{ext}");
+                if (!File.Exists(candidate)) return candidate;
+            }
+            return Path.Combine(dir, $"{stem}-{Guid.NewGuid():N}{ext}");
+        }
+
+        // ── Delivery ─────────────────────────────────────────────────────────────
+
+        private static void CopyToDropDir(string packagePath, string dropDir)
+        {
+            Directory.CreateDirectory(dropDir);
+            var target = Path.Combine(dropDir, Path.GetFileName(packagePath));
+            File.Copy(packagePath, target, overwrite: true);
+        }
+
+        /// <summary>
+        /// Copies any local package the drop folder does not have yet. This is what makes
+        /// a complaint filed while the VPN was down still arrive the next morning —
+        /// filenames carry machine and timestamp, so the copy is idempotent.
+        /// </summary>
+        private static void MirrorPendingPackages()
+        {
+            var dropDir = ResolveDropDir();
+            if (string.IsNullOrEmpty(dropDir)) return;
+
+            try
+            {
+                Directory.CreateDirectory(dropDir);
+                foreach (var local in Directory.GetFiles(GetPackagesDirectory(), "feedback_*.zip"))
+                {
+                    var target = Path.Combine(dropDir, Path.GetFileName(local));
+                    if (File.Exists(target) && new FileInfo(target).Length == new FileInfo(local).Length)
+                        continue;
+                    try { File.Copy(local, target, overwrite: true); }
+                    catch { /* try the next one; this one retries on the next flush */ }
+                }
+            }
+            catch { /* share unreachable — packages stay local and retry later */ }
         }
 
         // ── Internal data ────────────────────────────────────────────────────────
@@ -65,12 +240,16 @@ namespace revit_mcp_plugin.Core.Assistant
             public string DocTitle;
             public string ViewName;
             public string UserText;
+            public string Reply;
             public string Reason;
             public string Comment;
+            public string Shot;
             public List<string> ToolChain = new List<string>();
             public int Rounds;
             public long TotalMs;
             public string Outcome;
+            public string FailureDetail;
+            public JObject RawTurn;
         }
 
         // ── Collect dislikes by joining session entries + rating patches ─────────
@@ -86,7 +265,7 @@ namespace revit_mcp_plugin.Core.Assistant
 
             foreach (var file in Directory.GetFiles(dir, "assistant-sessions_*.jsonl").OrderBy(f => f))
             {
-                foreach (var line in File.ReadAllLines(file, Encoding.UTF8))
+                foreach (var line in ReadLinesSafe(file))
                 {
                     if (string.IsNullOrWhiteSpace(line)) continue;
                     try
@@ -120,16 +299,20 @@ namespace revit_mcp_plugin.Core.Assistant
                 var entry = new DislikeEntry
                 {
                     TurnId = tid,
-                    Ts = turn != null && DateTime.TryParse(turn["ts"]?.ToString(), out var dt) ? dt : DateTime.MinValue,
+                    Ts = ParseTimestamp(turn?["ts"]),
                     Model = turn?["model"]?.ToString() ?? "?",
                     DocTitle = turn?["docTitle"]?.ToString(),
                     ViewName = turn?["viewName"]?.ToString(),
                     UserText = turn?["userText"]?.ToString() ?? "?",
+                    Reply = turn?["reply"]?.ToString(),
                     Reason = patch["reason"]?.ToString(),
                     Comment = patch["comment"]?.ToString(),
+                    Shot = patch["shot"]?.ToString(),
                     Rounds = turn?["rounds"]?.Value<int>() ?? 0,
                     TotalMs = turn?["totalMs"]?.Value<long>() ?? 0,
                     Outcome = turn?["outcome"]?.ToString(),
+                    FailureDetail = turn?["failureDetail"]?.ToString(),
+                    RawTurn = turn,
                 };
 
                 if (turn?["toolCalls"] is JArray tc)
@@ -157,6 +340,48 @@ namespace revit_mcp_plugin.Core.Assistant
             return result.OrderBy(d => d.Ts).ToList();
         }
 
+        /// <summary>
+        /// The turn log stores UTC ("…Z"). Newtonsoft hands that back as a Kind=Utc DateTime
+        /// whose ToString() drops the marker, so re-parsing the printed form used to date a
+        /// complaint filed at 22:14 as 17:14 — five hours off, in the one field the architect
+        /// would check first.
+        /// </summary>
+        private static DateTime ParseTimestamp(JToken token)
+        {
+            if (token == null || token.Type == JTokenType.Null) return DateTime.MinValue;
+
+            if (token.Type == JTokenType.Date)
+            {
+                var value = token.Value<DateTime>();
+                return value.Kind == DateTimeKind.Utc ? value.ToLocalTime() : value;
+            }
+
+            var raw = token.ToString();
+            if (DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture,
+                    DateTimeStyles.RoundtripKind, out var offset))
+                return offset.LocalDateTime;
+
+            return DateTime.TryParse(raw, out var plain) ? plain : DateTime.MinValue;
+        }
+
+        /// <summary>The log file is open for append while Revit runs, so plain ReadAllLines throws.</summary>
+        private static IEnumerable<string> ReadLinesSafe(string file)
+        {
+            var lines = new List<string>();
+            try
+            {
+                using (var fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var reader = new StreamReader(fs, Encoding.UTF8))
+                {
+                    string line;
+                    while ((line = reader.ReadLine()) != null)
+                        lines.Add(line);
+                }
+            }
+            catch { /* unreadable file contributes nothing */ }
+            return lines;
+        }
+
         // ── Markdown report ──────────────────────────────────────────────────────
 
         private static string BuildReport(List<DislikeEntry> dislikes)
@@ -164,7 +389,12 @@ namespace revit_mcp_plugin.Core.Assistant
             var sb = new StringBuilder();
             sb.AppendLine($"# Жалобы на AI-ассистент · {DateTime.Now:dd.MM.yyyy HH:mm}");
             sb.AppendLine();
-            sb.AppendLine($"Всего дизлайков: **{dislikes.Count}**");
+            sb.AppendLine($"- Автор: **{AuthorName()}**");
+            sb.AppendLine($"- Компьютер: `{Environment.MachineName}`");
+            sb.AppendLine($"- Всего дизлайков в пакете: **{dislikes.Count}**");
+            var shots = dislikes.Count(d => !string.IsNullOrEmpty(d.Shot));
+            if (shots > 0)
+                sb.AppendLine($"- Со скриншотами: **{shots}** (папка `shots/`)");
             sb.AppendLine();
 
             var byReason = dislikes.GroupBy(d => d.Reason ?? "(без тега)").OrderByDescending(g => g.Count());
@@ -177,11 +407,22 @@ namespace revit_mcp_plugin.Core.Assistant
                 foreach (var d in group)
                 {
                     sb.AppendLine($"### {idx}. «{Truncate(d.UserText, 80)}»");
-                    sb.AppendLine($"- Вид: {d.ViewName ?? "—"} · модель {d.Model} · {d.Rounds} раунд(ов) · {d.TotalMs / 1000.0:F1} с");
+                    sb.AppendLine($"- Когда: {(d.Ts == DateTime.MinValue ? "—" : d.Ts.ToString("dd.MM.yyyy HH:mm"))}");
+                    sb.AppendLine($"- Проект: {d.DocTitle ?? "—"} · вид: {d.ViewName ?? "—"}");
+                    sb.AppendLine($"- Модель {d.Model} · {d.Rounds} раунд(ов) · {d.TotalMs / 1000.0:F1} с");
                     if (d.ToolChain.Count > 0)
                         sb.AppendLine($"- Цепочка: {string.Join(" → ", d.ToolChain)}");
                     if (!string.IsNullOrEmpty(d.Comment))
                         sb.AppendLine($"- Комментарий: «{d.Comment}»");
+                    if (!string.IsNullOrEmpty(d.Reply))
+                        sb.AppendLine($"- Ответ ассистента: «{Truncate(d.Reply, 300)}»");
+                    if (!string.IsNullOrEmpty(d.FailureDetail))
+                        sb.AppendLine($"- Техническая ошибка: `{Truncate(d.FailureDetail, 300)}`");
+                    if (!string.IsNullOrEmpty(d.Shot))
+                    {
+                        sb.AppendLine();
+                        sb.AppendLine($"![скрин]({"shots/" + d.Shot})");
+                    }
                     sb.AppendLine($"- turnId: `{d.TurnId}` · outcome: {d.Outcome}");
                     sb.AppendLine();
                     idx++;
@@ -189,6 +430,76 @@ namespace revit_mcp_plugin.Core.Assistant
             }
 
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// The full turn next to its rating, one JSON object per line — this is the copy
+        /// meant to be read by a tool, not by a person.
+        /// </summary>
+        private static string BuildRawJsonl(List<DislikeEntry> dislikes)
+        {
+            var sb = new StringBuilder();
+            foreach (var d in dislikes)
+            {
+                var jo = new JObject
+                {
+                    ["turnId"] = d.TurnId,
+                    ["author"] = AuthorName(),
+                    ["machine"] = Environment.MachineName,
+                    ["reason"] = d.Reason,
+                    ["comment"] = d.Comment,
+                    ["shot"] = string.IsNullOrEmpty(d.Shot) ? null : "shots/" + d.Shot,
+                    ["turn"] = d.RawTurn,
+                };
+                sb.AppendLine(jo.ToString(Formatting.None));
+            }
+            return sb.ToString();
+        }
+
+        private static string AuthorName()
+        {
+            try
+            {
+                var configured = (PluginSettingsStore.LoadSettings().AssistantFeedbackAuthor ?? "").Trim();
+                if (!string.IsNullOrEmpty(configured)) return configured;
+            }
+            catch { /* fall through */ }
+            return Environment.UserName;
+        }
+
+        private static string Sanitize(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return "unknown";
+            var invalid = Path.GetInvalidFileNameChars();
+            var chars = value.Trim().ToCharArray();
+            for (int i = 0; i < chars.Length; i++)
+            {
+                if (Array.IndexOf(invalid, chars[i]) >= 0 || chars[i] == ' ')
+                    chars[i] = '-';
+            }
+            return new string(chars);
+        }
+
+        // ── Housekeeping ─────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Shots abandoned by a cancelled complaint have no patch pointing at them, and the
+        /// session-log purge does not know about them.
+        /// </summary>
+        private static void PurgeOldShots()
+        {
+            try
+            {
+                var dir = Path.Combine(PathManager.GetLogsDirectoryPath(), FeedbackScreenshot.ShotsFolderName);
+                if (!Directory.Exists(dir)) return;
+                var cutoff = DateTime.Now.AddDays(-ShotRetentionDays);
+                foreach (var f in Directory.GetFiles(dir, "*.png"))
+                {
+                    if (File.GetLastWriteTime(f) < cutoff)
+                        File.Delete(f);
+                }
+            }
+            catch { /* best-effort */ }
         }
 
         // ── Exported IDs persistence ─────────────────────────────────────────────
@@ -226,6 +537,24 @@ namespace revit_mcp_plugin.Core.Assistant
         {
             if (string.IsNullOrEmpty(s) || s.Length <= max) return s;
             return s.Substring(0, max) + "…";
+        }
+    }
+
+    internal static class ZipArchiveExtensions
+    {
+        /// <summary>
+        /// CreateEntryFromFile lives in System.IO.Compression.FileSystem, which this addin
+        /// does not carry; opening the file with FileShare.Read also lets a shot be zipped
+        /// while something else still holds it.
+        /// </summary>
+        internal static void CreateEntryFromFileSafe(this ZipArchive zip, string sourcePath, string entryName)
+        {
+            var entry = zip.CreateEntry(entryName, CompressionLevel.Optimal);
+            using (var src = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (var dst = entry.Open())
+            {
+                src.CopyTo(dst);
+            }
         }
     }
 }
