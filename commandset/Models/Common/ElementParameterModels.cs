@@ -82,3 +82,54 @@ public class ElementsParametersBatchResult
     [JsonProperty("results")]
     public List<ElementParametersResult> Results { get; set; } = new();
 }
+
+/// <summary>One element and the parameters to write on it, for the batch write.</summary>
+public class ElementParameterEdit
+{
+    public long ElementId { get; set; }
+
+    /// <summary>Parameter name (Russian or English — see ElementParameterHelper) → new value.</summary>
+    public Dictionary<string, object?> Parameters { get; set; } = new();
+}
+
+/// <summary>Outcome of writing one parameter on one element.</summary>
+public class ParameterWriteResult
+{
+    [JsonProperty("success")]
+    public bool Success { get; set; }
+
+    [JsonProperty("message")]
+    public string Message { get; set; } = string.Empty;
+
+    [JsonProperty("elementId")]
+    public long ElementId { get; set; }
+
+    /// <summary>The name as asked for — kept so the model can match a miss to its own argument.</summary>
+    [JsonProperty("requestedName")]
+    public string RequestedName { get; set; } = string.Empty;
+
+    /// <summary>The name Revit actually resolved it to (may differ: «Марка» → Mark).</summary>
+    [JsonProperty("parameterName")]
+    public string ParameterName { get; set; } = string.Empty;
+
+    [JsonProperty("newDisplayValue")]
+    public string NewDisplayValue { get; set; } = string.Empty;
+}
+
+public class SetElementsParametersResult
+{
+    [JsonProperty("success")]
+    public bool Success { get; set; }
+
+    [JsonProperty("message")]
+    public string Message { get; set; } = string.Empty;
+
+    [JsonProperty("updatedCount")]
+    public int UpdatedCount { get; set; }
+
+    [JsonProperty("failedCount")]
+    public int FailedCount { get; set; }
+
+    [JsonProperty("results")]
+    public List<ParameterWriteResult> Results { get; set; } = new();
+}

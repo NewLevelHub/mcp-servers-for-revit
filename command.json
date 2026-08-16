@@ -284,6 +284,11 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "set_elements_parameters",
+      "description": "Записать параметры нескольких элементов (пакетно, до 100 id, одна транзакция)",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "get_room_geometry_metrics",
       "description": "Геометрия помещения: ширина, глубина, площадь, ширина коридора",
       "assemblyPath": "RevitMCPCommandSet.dll"

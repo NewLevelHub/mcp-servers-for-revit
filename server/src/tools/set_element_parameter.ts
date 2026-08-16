@@ -5,7 +5,9 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerSetElementParameterTool(server: McpServer) {
   server.tool(
     "set_element_parameter",
-    "Write a parameter value on a Revit element by element id and parameter name. Supports string, number, boolean (yes/no), and element id values. Runs inside a Revit transaction.",
+    "Write ONE parameter on ONE Revit element. Supports string, number, boolean (yes/no), and element id " +
+      "values. Runs inside a Revit transaction. For more than one element or more than one parameter use " +
+      "set_elements_parameters — it does the whole batch in a single call instead of one round trip each.",
     {
       elementId: z
         .number()
@@ -50,6 +52,10 @@ export function registerSetElementParameterTool(server: McpServer) {
               }`,
             },
           ],
+          // Without this a dropped connection or a timeout reaches the model as a
+          // successful result: toolOutcome can only normalise thrown errors and
+          // JSON bodies, and this branch returns neither.
+          isError: true,
         };
       }
     }

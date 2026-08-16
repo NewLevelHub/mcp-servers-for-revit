@@ -78,6 +78,10 @@ const LITE_ALLOWLIST = new Set([
   "ensure_wall_type",
   "number_rooms",
   "set_element_parameter",
+  // The batch form has to be listed wherever the singular one is: its description
+  // tells the model to prefer the batch, and a request with no heavy-task hint
+  // never escalates past `lite`, so pointing at a hidden tool would cost a turn.
+  "set_elements_parameters",
   "operate_element",
   "delete_element",
 ]);
