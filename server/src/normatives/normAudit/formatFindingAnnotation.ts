@@ -6,20 +6,42 @@ import type { NormAuditFinding } from "./types.js";
  * Never copies the full source.quote.
  */
 export function formatFindingAnnotation(finding: NormAuditFinding): string {
+  const { name, detail, source } = annotationParts(finding);
+  return joinAnnotation(name, detail, source);
+}
+
+interface AnnotationParts {
+  name: string;
+  detail: string;
+  source: string;
+}
+
+function annotationParts(finding: NormAuditFinding): AnnotationParts {
   const name = (finding.name || `id ${finding.elementId}`).trim();
   const doc = (finding.source?.document || "").trim();
   const clause = (finding.source?.clause || "").trim();
-  const sourceBit = [doc, clause].filter(Boolean).join(" ").trim();
 
   const comparison = formatComparison(finding);
-  const parts = [name];
-  if (comparison) parts.push(comparison);
-  else if (finding.note?.trim()) parts.push(finding.note.trim());
-  else if (finding.metric?.trim()) parts.push(finding.metric.trim());
+  const detail =
+    comparison ?? (finding.note?.trim() || finding.metric?.trim() || "");
 
-  let text = parts.join(": ");
-  if (sourceBit) text = `${text} · ${sourceBit}`;
-  return text;
+  return {
+    name,
+    detail,
+    source: [doc, clause].filter(Boolean).join(" ").trim(),
+  };
+}
+
+/** Pass name=null for a continuation line — the element is already named above. */
+function joinAnnotation(
+  name: string | null,
+  detail: string,
+  source: string
+): string {
+  const parts = [name, detail].filter(Boolean) as string[];
+  const head = parts.join(": ");
+  if (!source) return head;
+  return head ? `${head} · ${source}` : source;
 }
 
 function formatComparison(finding: NormAuditFinding): string | null {
@@ -41,6 +63,14 @@ function formatComparison(finding: NormAuditFinding): string | null {
   return metric ? `${metric} ${values}` : values;
 }
 
+/**
+ * One note per element, not per finding. A stair failing both march width and
+ * tread used to get two notes whose leaders landed on the same point, drawing
+ * two lines on top of each other across the plan.
+ *
+ * Findings on one element stack as lines inside a single note; the element name
+ * is printed once, so line 2+ reads «проступь 250 < 300 мм · СП РК …».
+ */
 export function findingsToAnnotationNotes(
   findings: NormAuditFinding[],
   options?: {
@@ -51,6 +81,7 @@ export function findingsToAnnotationNotes(
 ): Array<{
   text: string;
   elementId: number;
+  findingCount: number;
   textTypeName?: string;
   offsetMm?: number;
 }> {
@@ -58,14 +89,52 @@ export function findingsToAnnotationNotes(
     options?.statuses ?? (["violation", "nearLimit"] as const)
   );
 
-  return findings
-    .filter((f) => statuses.has(f.status) && f.elementId > 0)
-    .map((f) => ({
-      text: formatFindingAnnotation(f),
-      elementId: f.elementId,
-      ...(options?.textTypeName
-        ? { textTypeName: options.textTypeName }
-        : {}),
-      ...(options?.offsetMm != null ? { offsetMm: options.offsetMm } : {}),
-    }));
+  const grouped = new Map<
+    number,
+    {
+      elementId: number;
+      name: string;
+      lines: string[];
+      /** Named form of every line already added — dedup key, see below. */
+      seen: Set<string>;
+      findingCount: number;
+    }
+  >();
+
+  for (const finding of findings) {
+    if (!statuses.has(finding.status) || !(finding.elementId > 0)) continue;
+
+    const { name, detail, source } = annotationParts(finding);
+    // Dedup on the named form: the rendered line drops the name from line 2+,
+    // so comparing rendered lines would never match the first one.
+    const named = joinAnnotation(name, detail, source);
+
+    const entry = grouped.get(finding.elementId);
+    if (!entry) {
+      grouped.set(finding.elementId, {
+        elementId: finding.elementId,
+        name,
+        lines: [named],
+        seen: new Set([named]),
+        findingCount: 1,
+      });
+      continue;
+    }
+
+    entry.findingCount += 1;
+    if (entry.seen.has(named)) continue;
+    entry.seen.add(named);
+    // Repeat the name only when this finding calls the element something else.
+    entry.lines.push(
+      joinAnnotation(name === entry.name ? null : name, detail, source)
+    );
+  }
+
+  return [...grouped.values()].map((entry) => ({
+    text: entry.lines.join("\n"),
+    elementId: entry.elementId,
+    findingCount: entry.findingCount,
+    ...(options?.textTypeName ? { textTypeName: options.textTypeName } : {}),
+    ...(options?.offsetMm != null ? { offsetMm: options.offsetMm } : {}),
+  }));
 }

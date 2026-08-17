@@ -122,4 +122,65 @@ describe("findingsToAnnotationNotes", () => {
     );
     assert.ok(notes[0].text.includes("A:"));
   });
+
+  it("stacks findings on one element into a single note", () => {
+    // A stair failing both march width and tread used to get two notes, and two
+    // leaders drawn on top of each other to the same point.
+    const notes = findingsToAnnotationNotes([
+      finding({
+        elementId: 77,
+        name: "Лестница",
+        checkType: "stair_width",
+        metric: "ширина марша",
+        actualMm: 1200,
+        requiredMm: 1350,
+        source: {
+          document: "SP RK 3.06-31-2005",
+          clause: "п. 9.7",
+          quote: "…",
+        },
+      }),
+      finding({
+        elementId: 77,
+        name: "Лестница",
+        checkType: "stair_riser_tread",
+        metric: "проступь",
+        actualMm: 250,
+        requiredMm: 300,
+        source: { document: "СП РК 3.06-101", clause: "п. 4.3.2.27", quote: "…" },
+      }),
+    ]);
+
+    assert.equal(notes.length, 1);
+    assert.equal(notes[0].elementId, 77);
+    assert.equal(notes[0].findingCount, 2);
+    assert.deepEqual(notes[0].text.split("\n"), [
+      "Лестница: ширина марша 1200 < 1350 мм · SP RK 3.06-31-2005 п. 9.7",
+      // Name printed once — line 2 carries only the metric and its source.
+      "проступь 250 < 300 мм · СП РК 3.06-101 п. 4.3.2.27",
+    ]);
+  });
+
+  it("drops a duplicate finding instead of repeating the line", () => {
+    const notes = findingsToAnnotationNotes([
+      finding({
+        elementId: 5,
+        name: "Дверь",
+        metric: "ширина",
+        actualMm: 800,
+        requiredMm: 900,
+      }),
+      finding({
+        elementId: 5,
+        name: "Дверь",
+        metric: "ширина",
+        actualMm: 800,
+        requiredMm: 900,
+      }),
+    ]);
+
+    assert.equal(notes.length, 1);
+    assert.equal(notes[0].findingCount, 2);
+    assert.equal(notes[0].text.split("\n").length, 1);
+  });
 });

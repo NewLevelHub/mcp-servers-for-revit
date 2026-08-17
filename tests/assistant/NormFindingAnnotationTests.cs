@@ -73,6 +73,80 @@ public class NormFindingAnnotationTests
     }
 
     [Fact]
+    public void Findings_on_one_element_stack_into_a_single_note()
+    {
+        // A stair failing both march width and tread used to get two notes, and
+        // two leaders drawn on top of each other to the same point.
+        var findings = JArray.Parse("""
+            [
+              {
+                "status": "violation",
+                "elementId": 77,
+                "name": "Лестница",
+                "metric": "ширина марша",
+                "actualMm": 1200,
+                "requiredMm": 1350,
+                "source": { "document": "SP RK 3.06-31-2005", "clause": "п. 9.7" }
+              },
+              {
+                "status": "violation",
+                "elementId": 77,
+                "name": "Лестница",
+                "metric": "проступь",
+                "actualMm": 250,
+                "requiredMm": 300,
+                "source": { "document": "СП РК 3.06-101", "clause": "п. 4.3.2.27" }
+              }
+            ]
+            """);
+
+        var grouped = NormAnnotationText.GroupByElement(findings);
+
+        var note = Assert.Single(grouped);
+        Assert.Equal(77, note.ElementId);
+        Assert.Equal(
+            new[]
+            {
+                "Лестница: ширина марша 1200 < 1350 мм · SP RK 3.06-31-2005 п. 9.7",
+                // Name printed once — line 2 carries only the metric and its source.
+                "проступь 250 < 300 мм · СП РК 3.06-101 п. 4.3.2.27"
+            },
+            note.Lines);
+    }
+
+    [Fact]
+    public void Duplicate_finding_does_not_repeat_the_line()
+    {
+        var findings = JArray.Parse("""
+            [
+              { "status": "violation", "elementId": 5, "name": "Дверь",
+                "metric": "ширина", "actualMm": 800, "requiredMm": 900 },
+              { "status": "violation", "elementId": 5, "name": "Дверь",
+                "metric": "ширина", "actualMm": 800, "requiredMm": 900 }
+            ]
+            """);
+
+        var note = Assert.Single(NormAnnotationText.GroupByElement(findings));
+        Assert.Single(note.Lines);
+    }
+
+    [Fact]
+    public void Compliant_findings_and_missing_ids_are_left_out()
+    {
+        var findings = JArray.Parse("""
+            [
+              { "status": "compliant", "elementId": 1, "name": "OK" },
+              { "status": "violation", "elementId": 0, "name": "Без id" },
+              { "status": "nearLimit", "elementId": 9, "name": "Тамбур",
+                "actualMm": 1600, "requiredMm": 1650 }
+            ]
+            """);
+
+        var note = Assert.Single(NormAnnotationText.GroupByElement(findings));
+        Assert.Equal(9, note.ElementId);
+    }
+
+    [Fact]
     public void Float_mm_noise_rounds_to_whole_millimeters()
     {
         var finding = new JObject

@@ -35,24 +35,12 @@ namespace revit_mcp_plugin.Core.Assistant
             var leader = !style.Equals("text_only", StringComparison.OrdinalIgnoreCase);
 
             var notes = new JArray();
-            foreach (JToken f in findings)
+            foreach (var group in NormAnnotationText.GroupByElement(findings))
             {
-                var status = f["status"]?.ToString() ?? "";
-                if (!status.Equals("violation", StringComparison.OrdinalIgnoreCase)
-                    && !status.Equals("nearLimit", StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                var elementId = JTokenParsing.GetLong(f["elementId"])
-                    ?? JTokenParsing.GetLong(f["ElementId"])
-                    ?? JTokenParsing.GetLong(f["id"])
-                    ?? 0;
-                if (elementId <= 0)
-                    continue;
-
                 notes.Add(new JObject
                 {
-                    ["text"] = NormAnnotationText.Format(f),
-                    ["elementId"] = elementId,
+                    ["text"] = string.Join("\n", group.Lines),
+                    ["elementId"] = group.ElementId,
                     ["leader"] = leader
                 });
             }

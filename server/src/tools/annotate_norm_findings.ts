@@ -32,7 +32,9 @@ export function registerAnnotateNormFindingsTool(server: McpServer) {
     "annotate_norm_findings",
     "Place short Text + leader annotations on the active plan for norm-audit findings " +
       "(from run_norm_audit). Text template: «{name}: {actual} < {required} · {document} {clause}» — " +
-      "never pastes full quotes. Uses create_text_notes (ADSK_Замечания, placement=outside): " +
+      "never pastes full quotes. One note per element, not per finding: several findings on the " +
+      "same element stack as lines in one note with one leader. " +
+      "Uses create_text_notes (ADSK_Замечания, placement=outside): " +
       "text за планом — слева если нарушение ближе к левому краю, справа если к правому. " +
       "After «покажи нарушения и подпиши»: run_norm_audit → create_filled_regions → annotate_norm_findings. " +
       "style=text_only skips leaders.",
@@ -82,11 +84,16 @@ export function registerAnnotateNormFindingsTool(server: McpServer) {
       try {
         const findings = args.findings as NormAuditFinding[];
         const withLeader = (args.style ?? "leader") !== "text_only";
-        const notes = findingsToAnnotationNotes(findings, {
+        const grouped = findingsToAnnotationNotes(findings, {
           statuses: args.statuses as NormAuditFinding["status"][] | undefined,
           textTypeName: args.textTypeName ?? "ADSK_Замечания",
           offsetMm: args.offsetMm,
-        }).map((n) => ({ ...n, leader: withLeader }));
+        });
+        const findingCount = grouped.reduce((sum, n) => sum + n.findingCount, 0);
+        const notes = grouped.map(({ findingCount: _ignored, ...note }) => ({
+          ...note,
+          leader: withLeader,
+        }));
 
         if (notes.length === 0) {
           return {
@@ -130,6 +137,7 @@ export function registerAnnotateNormFindingsTool(server: McpServer) {
               text: JSON.stringify(
                 {
                   annotatedCount: notes.length,
+                  findingCount,
                   style: args.style ?? "leader",
                   result: response,
                 },
