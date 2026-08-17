@@ -178,28 +178,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  npm-publish:
-    runs-on: ubuntu-latest
-    needs: build
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Upgrade npm
-        run: npm install -g npm@latest
-
-      - name: Install and build
-        working-directory: server
-        run: |
-          npm ci
-          npm run build
-
-      - name: Publish to npm
-        working-directory: server
-        run: npm publish --access public
+# There used to be an npm-publish job here. It pushed server/ to npm as
+# mcp-server-for-revit, which this fork has no credentials for and no reason to do -
+# the architects get the server inside the runtime payload, not from a registry. It
+# failed on every release, and a pipeline that is always partly red teaches you to
+# scroll past red. Recover it from git history if publishing ever becomes the plan.

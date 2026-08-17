@@ -297,8 +297,10 @@ mcp-servers-for-revit/
 A single `v*` tag drives the entire release. The [release workflow](.github/workflows/release.yml) automatically:
 
 - Builds the Revit plugin + command set for Revit 2023-2026
-- Creates a GitHub release with `mcp-servers-for-revit-vX.Y.Z-Revit<year>.zip` assets
-- Publishes the MCP server to npm as [`mcp-server-for-revit`](https://www.npmjs.com/package/mcp-server-for-revit)
+- Seeds the norm library from `normatives/*.pdf` and refuses to ship it empty
+- Packages the assistant runtime (bridge + MCP server + norm library) as one asset
+- Creates a GitHub release with `mcp-servers-for-revit-vX.Y.Z-Revit<year>.zip`, the
+  runtime, and a `manifest.json` the [auto-updater](docs/auto-update.md) reads
 
 To create a release:
 
