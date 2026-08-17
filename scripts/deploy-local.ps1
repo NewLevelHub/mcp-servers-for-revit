@@ -276,4 +276,23 @@ if ($stale.Count -gt 0) {
     Write-Error ("Развёрнуто НЕ всё: " + ($stale -join ", ") + ". В Revit пойдёт старая версия.")
 }
 
+# Ту же отметку пишет апдейтер на машинах архитекторов; с ней жалоба из панели несёт
+# версию сборки, и видно, доехало исправление до человека или нет.
+try {
+    $sha = (git -C $repo rev-parse --short HEAD 2>$null)
+    $stamp = [ordered]@{
+        version     = if ($sha) { "dev-$sha" } else { "dev" }
+        installedAt = (Get-Date).ToUniversalTime().ToString("o")
+        source      = "deploy-local"
+    }
+    [IO.File]::WriteAllText(
+        (Join-Path $addinRoot "version.json"),
+        ($stamp | ConvertTo-Json),
+        (New-Object System.Text.UTF8Encoding($false)))
+    Write-Host "Отметка версии: $($stamp.version)" -ForegroundColor Gray
+}
+catch {
+    Write-Warning "Не удалось записать version.json: $($_.Exception.Message)"
+}
+
 Write-Host "Готово. Запускайте Revit." -ForegroundColor Green

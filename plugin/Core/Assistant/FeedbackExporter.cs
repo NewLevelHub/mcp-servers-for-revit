@@ -391,6 +391,8 @@ namespace revit_mcp_plugin.Core.Assistant
             sb.AppendLine();
             sb.AppendLine($"- Автор: **{AuthorName()}**");
             sb.AppendLine($"- Компьютер: `{Environment.MachineName}`");
+            // Без версии непонятно, баг это или машина, до которой исправление ещё не доехало.
+            sb.AppendLine($"- Версия сборки: `{BuildVersion.Current}`");
             sb.AppendLine($"- Всего дизлайков в пакете: **{dislikes.Count}**");
             var shots = dislikes.Count(d => !string.IsNullOrEmpty(d.Shot));
             if (shots > 0)
@@ -446,6 +448,7 @@ namespace revit_mcp_plugin.Core.Assistant
                     ["turnId"] = d.TurnId,
                     ["author"] = AuthorName(),
                     ["machine"] = Environment.MachineName,
+                    ["build"] = BuildVersion.Current,
                     ["reason"] = d.Reason,
                     ["comment"] = d.Comment,
                     ["shot"] = string.IsNullOrEmpty(d.Shot) ? null : "shots/" + d.Shot,
