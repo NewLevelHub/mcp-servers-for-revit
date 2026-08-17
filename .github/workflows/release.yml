@@ -17,10 +17,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # The Cursor SDK the bridge is built against requires >= 22.13, and the native
+      # better-sqlite3 binding baked into the runtime payload is ABI-locked to the major
+      # version used here - a payload built on 22 will not load on a machine running 24.
+      # Keep this equal to the Node the architects run; the manifest records it so the
+      # updater refuses a mismatch instead of installing a silently dead norm library.
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 24
 
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
@@ -31,13 +36,34 @@ jobs:
         uses: microsoft/setup-msbuild@v2
 
       # ---------------------------------------------------------------
-      # Build MCP Server (TypeScript)
+      # Build MCP Server (TypeScript) and seed the norm library.
+      # server/revit-data.db is gitignored, so nothing carries it into CI. A runtime
+      # packaged around an empty database still answers every norm audit - with
+      # "no violations", on models that have them. Build it here from the PDFs.
       # ---------------------------------------------------------------
       - name: Build MCP Server
         working-directory: server
         run: |
           npm ci
           npm run build
+
+      - name: Seed norm library
+        working-directory: server
+        run: |
+          npm run seed:norms
+          npm run seed:residential-norms
+
+      - name: Verify norm library is not empty
+        working-directory: server
+        shell: pwsh
+        run: |
+          $script = "const D=require('better-sqlite3');" +
+            "console.log(new D('revit-data.db',{readonly:true}).prepare('SELECT COUNT(*) c FROM norm_rules').get().c);"
+          $rules = node -e $script
+          Write-Host "norm_rules: $rules"
+          if (-not $rules -or [int]$rules -lt 1) {
+            throw "Norm library is empty - the release would report 0 violations on every model."
+          }
 
       # ---------------------------------------------------------------
       # Build Plugin + CommandSet via combined solution
@@ -66,16 +92,53 @@ jobs:
         run: dotnet build mcp-servers-for-revit.sln -c "Release R26"
 
       # ---------------------------------------------------------------
+      # Stage the assistant runtime: bridge + MCP server + rules bundle +
+      # norm library. Identical bytes for every Revit version, so it ships
+      # as one asset instead of seven copies of node_modules.
+      # ---------------------------------------------------------------
+      - name: Stage assistant runtime
+        shell: pwsh
+        run: ./scripts/build-assistant-cursor.ps1 -StagingOnly
+
+      # ---------------------------------------------------------------
       # Create Release Assets
       # The AddIn output already contains the complete deployable layout
       # (plugin + commandset) thanks to the DeployCommandSet build target.
+      # manifest.json is what the auto-updater on an architect's machine reads.
       # ---------------------------------------------------------------
       - name: Create release assets
+        shell: pwsh
         run: |
           $version = "${{ github.ref_name }}"
           $outputDir = "release-assets"
-          New-Item -ItemType Directory -Force -Path $outputDir
+          New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 
+          function New-Zip {
+            param([string]$SourceDir, [string]$ZipPath)
+            # Compress-Archive walks node_modules file by file and takes minutes over it;
+            # ZipFile does the same tree in seconds. includeBaseDirectory:$false keeps the
+            # entries relative to $SourceDir, which is the layout both installers expect.
+            [System.IO.Compression.ZipFile]::CreateFromDirectory(
+              (Resolve-Path $SourceDir).Path,
+              (Join-Path (Get-Location) $ZipPath),
+              [System.IO.Compression.CompressionLevel]::Optimal,
+              $false)
+          }
+
+          function Get-AssetInfo {
+            param([string]$Path)
+            [ordered]@{
+              asset     = Split-Path -Leaf $Path
+              sha256    = (Get-FileHash $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+              sizeBytes = (Get-Item $Path).Length
+            }
+          }
+
+          $runtimeZip = "$outputDir/mcp-servers-for-revit-$version-runtime.zip"
+          New-Zip -SourceDir "staging/assistant-cursor" -ZipPath $runtimeZip
+          Write-Host "Created $runtimeZip"
+
+          $plugins = [ordered]@{}
           $revitVersions = @(
             @{ Config = "Release R20"; Year = "2020" },
             @{ Config = "Release R21"; Year = "2021" },
@@ -88,20 +151,34 @@ jobs:
 
           foreach ($rv in $revitVersions) {
             $addinDir = "plugin/bin/AddIn $($rv.Year) $($rv.Config)"
-            if (Test-Path $addinDir) {
-              $zipName = "$outputDir/mcp-servers-for-revit-$version-Revit$($rv.Year).zip"
-              Compress-Archive -Path "$addinDir/*" -DestinationPath $zipName
-              Write-Host "Created $zipName"
-            } else {
+            if (-not (Test-Path $addinDir)) {
               Write-Host "Warning: AddIn output not found: $addinDir"
+              continue
             }
+            $zipName = "$outputDir/mcp-servers-for-revit-$version-Revit$($rv.Year).zip"
+            New-Zip -SourceDir $addinDir -ZipPath $zipName
+            Write-Host "Created $zipName"
+            $plugins[$rv.Year] = Get-AssetInfo $zipName
           }
-        shell: pwsh
+
+          if ($plugins.Count -eq 0) { throw "No AddIn output was packaged." }
+
+          $manifest = [ordered]@{
+            version       = $version
+            published     = (Get-Date).ToUniversalTime().ToString("o")
+            builtWithNode = (node -v)
+            minNode       = "22.13.0"
+            runtime       = Get-AssetInfo $runtimeZip
+            plugins       = $plugins
+          }
+          $manifestPath = "$outputDir/manifest.json"
+          $manifest | ConvertTo-Json -Depth 6 | Set-Content $manifestPath -Encoding utf8
+          Get-Content $manifestPath | Write-Host
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: release-assets/*.zip
+          files: release-assets/*
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
