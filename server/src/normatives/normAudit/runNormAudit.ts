@@ -1,6 +1,7 @@
 import type { Database } from "better-sqlite3";
 import {
   AUDIT_SCOPE_NOTE,
+  requestsAccessibilityScope,
   selectPhase1Checkers,
   selectSkippedRules,
   type NormAuditCheckerDef,
@@ -48,6 +49,7 @@ import {
   resolveStairRiserTreadLimitsFromLibrary,
   resolveRampLimitsFromLibrary,
   resolveRailingHeightLimitFromLibrary,
+  type StairRuleScope,
 } from "./resolveVerticalCirculation.js";
 import {
   highlightAuditViolations,
@@ -238,10 +240,12 @@ export interface NormAuditDeps {
     source: NormAuditSource;
   }) => Promise<RailingHeightRunnerResult>;
   resolveStairWidth?: (
-    db: Database
+    db: Database,
+    scope?: StairRuleScope
   ) => ReturnType<typeof resolveStairWidthLimitFromLibrary>;
   resolveStairRiserTread?: (
-    db: Database
+    db: Database,
+    scope?: StairRuleScope
   ) => ReturnType<typeof resolveStairRiserTreadLimitsFromLibrary>;
   resolveRamp?: (
     db: Database
@@ -288,6 +292,8 @@ async function runOneChecker(
     levelName: string;
     includeCompliant: boolean;
     nearLimitToleranceMm: number;
+    /** True only when topics ask for МГН — see requestsAccessibilityScope. */
+    includeAccessibility: boolean;
     deps: Required<
       Pick<
         NormAuditDeps,
@@ -1069,7 +1075,9 @@ async function runOneChecker(
             warnings: ["stair_width: нет подключения к библиотеке норм"],
           };
         }
-        const limit = ctx.deps.resolveStairWidth!(ctx.deps.db);
+        const limit = ctx.deps.resolveStairWidth!(ctx.deps.db, {
+          includeAccessibility: ctx.includeAccessibility,
+        });
         if (!limit) {
           return {
             findings: [],
@@ -1077,13 +1085,21 @@ async function runOneChecker(
               checkType: checker.checkType,
               status: "skipped",
               checkedCount: 0,
-              message:
-                "В библиотеке нет числовой нормы ширины марша — сделайте seed или extract 3.06.",
+              message: ctx.includeAccessibility
+                ? "В библиотеке нет числовой нормы ширины марша — сделайте seed или extract 3.06."
+                : "В библиотеке нет нормы ширины марша для обычного жилья " +
+                  "(нормы МГН СП РК 3.06-101 не применяются — для них topics=[\"мгн\"]).",
             },
             warnings: [
               "stair_width: правило ширины марша не найдено в библиотеке (skipped, не violation)",
             ],
           };
+        }
+        if (limit.skippedMgnRules) {
+          warnings.push(
+            `Обычное жильё: не применялись ${limit.skippedMgnRules} правил(а) ширины марша из СП РК 3.06-101 (МГН). ` +
+              `Для МГН запустите с topics=["мгн"].`
+          );
         }
         const result = await ctx.deps.runStairWidth!({
           levelName: ctx.levelName,
@@ -1136,7 +1152,9 @@ async function runOneChecker(
             warnings: ["stair_riser_tread: нет подключения к библиотеке норм"],
           };
         }
-        const limits = ctx.deps.resolveStairRiserTread!(ctx.deps.db);
+        const limits = ctx.deps.resolveStairRiserTread!(ctx.deps.db, {
+          includeAccessibility: ctx.includeAccessibility,
+        });
         if (!limits) {
           return {
             findings: [],
@@ -1144,13 +1162,21 @@ async function runOneChecker(
               checkType: checker.checkType,
               status: "skipped",
               checkedCount: 0,
-              message:
-                "В библиотеке нет норм подступенка/проступи — сделайте seed (3.06).",
+              message: ctx.includeAccessibility
+                ? "В библиотеке нет норм подступенка/проступи — сделайте seed (3.06)."
+                : "В библиотеке нет норм подступенка/проступи для обычного жилья " +
+                  "(нормы МГН СП РК 3.06-101 не применяются — для них topics=[\"мгн\"]).",
             },
             warnings: [
               "stair_riser_tread: правила riser/tread не найдены (skipped, не violation)",
             ],
           };
+        }
+        if (limits.skippedMgnRules) {
+          warnings.push(
+            `Обычное жильё: не применялись ${limits.skippedMgnRules} правил(а) подступенка/проступи из СП РК 3.06-101 (МГН, проступь ≥ 300 мм). ` +
+              `Общая норма — ≥ 250 мм. Для МГН запустите с topics=["мгн"].`
+          );
         }
         const source =
           limits.riserSource ??
@@ -1386,6 +1412,7 @@ export async function runNormAudit(
 
   const checkers = selectPhase1Checkers(topics);
   const skippedRules = selectSkippedRules(topics);
+  const includeAccessibility = requestsAccessibilityScope(topics);
 
   let revitSnapshot: NormAuditRevitSnapshot | undefined;
   const prefetchWarnings: string[] = [];
@@ -1469,6 +1496,7 @@ export async function runNormAudit(
       levelName,
       includeCompliant,
       nearLimitToleranceMm,
+      includeAccessibility,
       deps: resolvedDeps,
     });
     findings.push(...part.findings);

@@ -295,6 +295,26 @@ export function topicMatchesHints(
   );
 }
 
+/** Topics that put the audit into МГН / accessibility scope. */
+export const ACCESSIBILITY_TOPIC_HINTS = [
+  "мгн",
+  "доступност",
+  "инвалид",
+  "коляск",
+  "мүгедек",
+  "accessibility",
+] as const;
+
+/**
+ * Strict opt-in, unlike topicMatchesHints: no topics means «full audit», which
+ * runs ordinary-housing scope — the same rule the optInOnly МГН checkers follow.
+ * Used to decide whether СП РК 3.06-101 may supply stair geometry limits.
+ */
+export function requestsAccessibilityScope(topics?: string[]): boolean {
+  if (!topics || topics.length === 0) return false;
+  return topicMatchesHints(topics, ACCESSIBILITY_TOPIC_HINTS);
+}
+
 export function selectPhase1Checkers(
   topics?: string[]
 ): NormAuditCheckerDef[] {

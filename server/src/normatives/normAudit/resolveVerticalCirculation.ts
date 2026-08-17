@@ -43,20 +43,58 @@ function collect(db: Database, topics: readonly string[]): StoredNormRule[] {
   return [...seen.values()];
 }
 
+/**
+ * МГН stair clauses live in СП РК 3.06-101 (the catalog carries it as both
+ * «СП РК 3.06-101» and «СП РК 3.06-101-2012»). They are stricter than the
+ * general ones — проступь ≥ 300 мм against ≥ 250 мм, марш ≥ 1,35 м for открытые
+ * лестницы — so applying them to ordinary housing reports a violation the
+ * general code does not have. That is exactly what run_norm_audit did while its
+ * own checklist reported «проверки МГН по умолчанию выключены».
+ *
+ * Matched on the document only. PDF extraction bleeds МГН wording
+ * («кресло-коляска», «инвалида-колясочника») into unrelated quotes — п. 9.7 of
+ * SP RK 3.06-31-2005 is a live example — so a keyword match would drop good rules.
+ */
+const ACCESSIBILITY_DOCUMENT_RE = /3\.06-101/;
+
+export function isAccessibilityRule(rule: StoredNormRule): boolean {
+  return ACCESSIBILITY_DOCUMENT_RE.test(rule.source?.document ?? "");
+}
+
+export interface StairRuleScope {
+  /**
+   * Include МГН sources. Default false — ordinary housing, matching the
+   * `optInOnly` МГН checkers in checklist.ts.
+   */
+  includeAccessibility?: boolean;
+}
+
+/** Drops МГН rules unless asked for, and reports how many were dropped. */
+function scopeRules(
+  rules: StoredNormRule[],
+  scope?: StairRuleScope
+): { kept: StoredNormRule[]; skippedMgnRules: number } {
+  if (scope?.includeAccessibility) return { kept: rules, skippedMgnRules: 0 };
+  const kept = rules.filter((rule) => !isAccessibilityRule(rule));
+  return { kept, skippedMgnRules: rules.length - kept.length };
+}
+
 export interface ResolvedStairWidthLimit {
   minWidthMm: number;
   source: NormAuditSource;
   rule: StoredNormRule;
+  /** МГН candidates dropped because scope is ordinary housing. */
+  skippedMgnRules?: number;
 }
 
 export function resolveStairWidthLimitFromLibrary(
-  db: Database
+  db: Database,
+  scope?: StairRuleScope
 ): ResolvedStairWidthLimit | null {
-  const rules = collect(db, [
-    "ширина марша лестницы",
-    "ширина марша",
-    "лестничный марш",
-  ]);
+  const { kept: rules, skippedMgnRules } = scopeRules(
+    collect(db, ["ширина марша лестницы", "ширина марша", "лестничный марш"]),
+    scope
+  );
   const ranked = rules
     .map((rule) => {
       const minMm = lengthMinMm(rule);
@@ -80,7 +118,12 @@ export function resolveStairWidthLimitFromLibrary(
   if (!best) return null;
   const minWidthMm = lengthMinMm(best);
   if (minWidthMm == null) return null;
-  return { minWidthMm, source: toAuditSource(best.source), rule: best };
+  return {
+    minWidthMm,
+    source: toAuditSource(best.source),
+    rule: best,
+    skippedMgnRules,
+  };
 }
 
 export interface ResolvedStairRiserTreadLimits {
@@ -90,6 +133,8 @@ export interface ResolvedStairRiserTreadLimits {
   treadSource?: NormAuditSource;
   riserRule?: StoredNormRule;
   treadRule?: StoredNormRule;
+  /** МГН candidates dropped because scope is ordinary housing. */
+  skippedMgnRules?: number;
 }
 
 /** Bench / seating / rest furniture — not stair geometry (REV false positive). */
@@ -174,27 +219,30 @@ export function scoreStairTreadRule(rule: StoredNormRule): number {
 }
 
 export function pickBestStairRiserRule(
-  rules: StoredNormRule[]
+  rules: StoredNormRule[],
+  scope?: StairRuleScope
 ): StoredNormRule | null {
-  const ranked = rules
-    .map((rule) => ({ rule, score: scoreStairRiserRule(rule) }))
+  const ranked = scopeRules(rules, scope)
+    .kept.map((rule) => ({ rule, score: scoreStairRiserRule(rule) }))
     .filter((e) => e.score > 0)
     .sort((a, b) => b.score - a.score);
   return ranked[0]?.rule ?? null;
 }
 
 export function pickBestStairTreadRule(
-  rules: StoredNormRule[]
+  rules: StoredNormRule[],
+  scope?: StairRuleScope
 ): StoredNormRule | null {
-  const ranked = rules
-    .map((rule) => ({ rule, score: scoreStairTreadRule(rule) }))
+  const ranked = scopeRules(rules, scope)
+    .kept.map((rule) => ({ rule, score: scoreStairTreadRule(rule) }))
     .filter((e) => e.score > 0)
     .sort((a, b) => b.score - a.score);
   return ranked[0]?.rule ?? null;
 }
 
 export function resolveStairRiserTreadLimitsFromLibrary(
-  db: Database
+  db: Database,
+  scope?: StairRuleScope
 ): ResolvedStairRiserTreadLimits | null {
   const riserRules = collect(db, [
     "высота подступенка",
@@ -207,8 +255,15 @@ export function resolveStairRiserTreadLimitsFromLibrary(
     "глубина ступени",
   ]);
 
-  const riserRule = pickBestStairRiserRule(riserRules);
-  const treadRule = pickBestStairTreadRule(treadRules);
+  // Counted before picking: on an ordinary-housing run the МГН проступь 300 мм
+  // is often the only numeric candidate, and the caller has to be able to say so
+  // instead of reporting a bare "нормы не найдены".
+  const skippedMgnRules =
+    scopeRules(riserRules, scope).skippedMgnRules +
+    scopeRules(treadRules, scope).skippedMgnRules;
+
+  const riserRule = pickBestStairRiserRule(riserRules, scope);
+  const treadRule = pickBestStairTreadRule(treadRules, scope);
 
   let maxRiserMm: number | undefined;
   if (riserRule) {
@@ -227,6 +282,7 @@ export function resolveStairRiserTreadLimitsFromLibrary(
     treadSource: treadRule ? toAuditSource(treadRule.source) : undefined,
     riserRule: riserRule ?? undefined,
     treadRule: treadRule ?? undefined,
+    skippedMgnRules,
   };
 }
 

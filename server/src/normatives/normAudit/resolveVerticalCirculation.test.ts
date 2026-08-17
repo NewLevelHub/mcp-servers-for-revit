@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { StoredNormRule } from "../rulesStore.js";
 import {
+  isAccessibilityRule,
   pickBestStairRiserRule,
   pickBestStairTreadRule,
   scoreStairRiserRule,
@@ -97,6 +98,79 @@ describe("pickBestStairTreadRule", () => {
       },
     });
     assert.ok(scoreStairTreadRule(tooDeep) <= 0);
+  });
+});
+
+describe("МГН scope for stair geometry", () => {
+  // Real false positive: -1 этаж of an ordinary house was reported as
+  // «проступь 250 < 300 мм · СП РК 3.06-101 п. 4.3.2.27» while the same audit
+  // said МГН checks were off. 250 mm meets the general norm.
+  const mgnTread = rule({
+    id: "mgn-tread-300",
+    object: "ширина",
+    type: "min_value",
+    value: 0.3,
+    unit: "m",
+    normalized: { exact: 300 },
+    source: {
+      document: "СП РК 3.06-101",
+      clause: "п. 4.3.2.27",
+      quote:
+        "Ширина лестничных маршей открытых лестниц должна быть не менее 1,35 м. " +
+        "Ширина проступей должна быть для наружных лестниц не менее 0,4 м, для внутренних лестниц - не менее 0,3 м.",
+    },
+  });
+
+  const generalTread = rule({
+    id: "general-tread-250",
+    object: "ширина проступи",
+    type: "min_value",
+    value: 0.25,
+    unit: "m",
+    normalized: { min: 250 },
+    source: {
+      document: "СП РК 3.02-101-2012",
+      clause: "п. 9.15",
+      quote: "Ширина проступи лестничного марша должна быть не менее 0,25 м.",
+    },
+  });
+
+  it("drops МГН tread rules for ordinary housing", () => {
+    assert.ok(isAccessibilityRule(mgnTread));
+    assert.equal(pickBestStairTreadRule([mgnTread]), null);
+  });
+
+  it("prefers the general tread rule over the МГН one", () => {
+    const picked = pickBestStairTreadRule([mgnTread, generalTread]);
+    assert.equal(picked?.id, "general-tread-250");
+  });
+
+  it("applies the МГН rule when accessibility scope is requested", () => {
+    const picked = pickBestStairTreadRule([mgnTread], {
+      includeAccessibility: true,
+    });
+    assert.equal(picked?.id, "mgn-tread-300");
+  });
+
+  it("keeps a general rule whose quote carries МГН text from PDF extraction", () => {
+    // п. 9.7 of SP RK 3.06-31-2005 really does bleed «кресло-коляска» into its
+    // quote. Matching on wording instead of document would drop it.
+    const evacuationWidth = rule({
+      id: "evac-march-1350",
+      object: "ширина марша лестницы",
+      type: "min_value",
+      value: 1.35,
+      unit: "m",
+      normalized: { exact: 1350 },
+      source: {
+        document: "SP RK 3.06-31-2005",
+        clause: "п. 9.7",
+        quote:
+          "Ширина марша лестницы, предназначенной для эвакуации, должна быть не менее 1,35 м. " +
+          "– велоколяска; 2 – кресло-коляска; 3 – кресло с поручнем для пересадки",
+      },
+    });
+    assert.equal(isAccessibilityRule(evacuationWidth), false);
   });
 });
 

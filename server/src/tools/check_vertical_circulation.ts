@@ -23,7 +23,8 @@ export function registerCheckVerticalCirculationTool(server: McpServer) {
   server.tool(
     "check_vertical_circulation",
     "Check stair width, riser/tread, ramp slope/width, railing height (REV-59). " +
-      "Limits from the norm library unless overridden. " +
+      "Limits from the norm library unless overridden; МГН limits from СП РК 3.06-101 " +
+      "(проступь ≥ 300 мм) are excluded unless housingType=mgn. " +
       "Also available inside run_norm_audit as checkTypes stair_width, " +
       "stair_riser_tread, ramp_slope_width, railing_height.",
     {
@@ -54,8 +55,18 @@ export function registerCheckVerticalCirculationTool(server: McpServer) {
         })
         .optional(),
       includeCompliant: z.boolean().optional().default(false),
+      housingType: z
+        .enum(["ordinary", "mgn"])
+        .optional()
+        .default("ordinary")
+        .describe(
+          "'ordinary' (default) ignores СП РК 3.06-101 (МГН) stair limits; 'mgn' applies them."
+        ),
     },
     async (args) => {
+      const stairScope = {
+        includeAccessibility: (args.housingType ?? "ordinary") === "mgn",
+      };
       const checks = args.checks ?? [
         "stair_width",
         "stair_riser_tread",
@@ -84,7 +95,7 @@ export function registerCheckVerticalCirculationTool(server: McpServer) {
           let minWidthMm = args.minStairWidthMm;
           let source = manualSource;
           if (minWidthMm === undefined) {
-            const resolved = resolveStairWidthLimitFromLibrary(db);
+            const resolved = resolveStairWidthLimitFromLibrary(db, stairScope);
             if (!resolved) {
               sections.push(
                 "### Ширина марша — skipped (нет нормы в библиотеке)"
@@ -115,7 +126,10 @@ export function registerCheckVerticalCirculationTool(server: McpServer) {
           let minTreadMm = args.minTreadMm;
           let source = manualSource;
           if (maxRiserMm === undefined && minTreadMm === undefined) {
-            const resolved = resolveStairRiserTreadLimitsFromLibrary(db);
+            const resolved = resolveStairRiserTreadLimitsFromLibrary(
+              db,
+              stairScope
+            );
             if (!resolved) {
               sections.push(
                 "### Подступенок/проступь — skipped (нет нормы в библиотеке)"
