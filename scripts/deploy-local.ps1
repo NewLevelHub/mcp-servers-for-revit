@@ -97,14 +97,26 @@ else {
 # previous build) while Cursor or Revit still holds a server process. Clients respawn the
 # server on reconnect, so stopping it here costs nothing. Runs even with -SkipServer, because
 # build-assistant-cursor.ps1 below builds server/ too.
-$serverEntryPattern = "$([regex]::Escape((Split-Path -Leaf $repo)))/server/build/index\.js"
+#
+# The deployed assistant-bridge counts too. It is a child of Revit but outlives it often
+# enough to matter, and it holds Addins/.../assistant-bridge/dist open - so the deploy died
+# on Remove-Item halfway through, *after* the plugin DLL was already replaced. That leaves
+# the machine with a new plugin and yesterday's bridge, and the only clue is one red line
+# buried under a screen of npm warnings.
+$stalePatterns = @(
+    "$([regex]::Escape((Split-Path -Leaf $repo)))/server/build/index\.js",
+    "revit_mcp_plugin/(assistant-bridge|mcp-server)/"
+)
 $staleServers = Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -and ($_.CommandLine -replace '\\', '/') -match $serverEntryPattern }
+    Where-Object {
+        $cmd = ($_.CommandLine -replace '\\', '/')
+        $cmd -and ($stalePatterns | Where-Object { $cmd -match $_ })
+    }
 
 foreach ($staleServer in $staleServers) {
     try {
         Stop-Process -Id $staleServer.ProcessId -Force -ErrorAction Stop
-        Write-Host "Stopped running MCP server (PID $($staleServer.ProcessId)) - it locks better_sqlite3.node" -ForegroundColor Gray
+        Write-Host "Stopped stale node.exe (PID $($staleServer.ProcessId)) - it locks files this deploy replaces" -ForegroundColor Gray
     }
     catch {
         Write-Warning "Could not stop node.exe PID $($staleServer.ProcessId): $($_.Exception.Message)"
