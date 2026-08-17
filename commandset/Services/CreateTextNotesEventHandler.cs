@@ -1,4 +1,5 @@
 using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Architecture;
 using Autodesk.Revit.UI;
 using RevitMCPCommandSet.Models.Annotation;
 using RevitMCPCommandSet.Services.AnnotationComponents;
@@ -33,6 +34,8 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
     public const double DefaultTextSizeMm = 2.5;
     /// <summary>Extra gap between stacked notes (paper mm → model via scale).</summary>
     public const double DefaultStackGapPaperMm = 2.0;
+    /// <summary>Horizontal landing («полка») at the text end of a leader, paper mm.</summary>
+    public const double DefaultLeaderShoulderPaperMm = 6.0;
     public const string DefaultPlacement = "outside";
 
     private UIApplication _uiApp;
@@ -250,8 +253,8 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
                         var end = new XYZ(p.LeaderEnd.X, p.LeaderEnd.Y, view.Origin.Z);
                         // Start from plan-facing edge of the text box (not just Coord).
                         var from = LeaderStartFromNote(p.Note, p.Side, view);
-                        var lineId = DrawDetailLeader(view, from, end);
-                        if (lineId == null)
+                        var lineIds = DrawLeaderWithShoulder(view, from, end, p.Side, scale);
+                        if (lineIds.Count == 0)
                         {
                             errors.Add($"Leader missing for note id {p.Note.Id.GetValue()} ({p.Side})");
                             continue;
@@ -259,7 +262,8 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
 
                         createdLines.Add(new
                         {
-                            lineId = lineId.Value,
+                            lineId = lineIds[0],
+                            lineIds,
                             textNoteId = p.Note.Id.GetValue(),
                             side = p.Side,
                             fromMm = new
@@ -730,7 +734,8 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
             }
             else
             {
-                hasLeader = DrawDetailLeader(view, created.Coord, leaderEnd) != null;
+                hasLeader = DrawLeaderWithShoulder(
+                    view, created.Coord, leaderEnd, side, scale).Count > 0;
                 AttachTextNoteLeader(created, leaderEnd);
             }
         }
@@ -759,6 +764,79 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
                     y = Math.Round(leaderEnd.Y * 304.8, 1)
                 }
         };
+    }
+
+    /// <summary>
+    /// Leader as Revit draws one: a horizontal landing at the text, then a single
+    /// diagonal to the element. One straight line from the text column to a target
+    /// deep in the plan crosses walls and rooms at an arbitrary angle and does not
+    /// read as a leader at all.
+    /// Both segments are tagged MCP-ANN; ExpandConnectedLeaderSegments already
+    /// clears multi-segment leaders.
+    /// </summary>
+    private List<long> DrawLeaderWithShoulder(View view, XYZ from, XYZ to, string side, int scale)
+    {
+        var ids = new List<long>();
+        if (from == null || to == null || from.DistanceTo(to) < 1e-6)
+            return ids;
+
+        var z = view.Origin.Z;
+        var start = new XYZ(from.X, from.Y, z);
+        var end = new XYZ(to.X, to.Y, z);
+
+        var shoulderFt = (DefaultLeaderShoulderPaperMm * Math.Max(scale, 1)) / 304.8;
+        var elbowX = ComputeLeaderElbowX(start.X, end.X, side, shoulderFt);
+
+        // Target closer than the landing itself: a plain line beats a hook.
+        if (elbowX == null)
+        {
+            var single = DrawDetailLeader(view, start, end);
+            if (single != null)
+                ids.Add(single.Value);
+            return ids;
+        }
+
+        var elbow = new XYZ(elbowX.Value, start.Y, z);
+
+        var landing = DrawDetailLeader(view, start, elbow);
+        if (landing != null)
+            ids.Add(landing.Value);
+
+        var diagonal = DrawDetailLeader(view, elbow, end);
+        if (diagonal != null)
+            ids.Add(diagonal.Value);
+
+        return ids;
+    }
+
+    /// <summary>
+    /// X of the leader elbow, in feet: the landing runs from the text toward the
+    /// plan. Returns null when the target is no further away than the landing —
+    /// the caller then draws one straight line instead of a hook.
+    /// Side comes from the outside column ("left"/"right"); anything else is
+    /// «near» placement, which has no column, so the landing aims at the target.
+    /// </summary>
+    public static double? ComputeLeaderElbowX(
+        double startXFt,
+        double endXFt,
+        string side,
+        double shoulderFt)
+    {
+        if (shoulderFt <= 0)
+            return null;
+
+        double towardPlan;
+        if (string.Equals(side, "left", StringComparison.OrdinalIgnoreCase))
+            towardPlan = 1.0;
+        else if (string.Equals(side, "right", StringComparison.OrdinalIgnoreCase))
+            towardPlan = -1.0;
+        else
+            towardPlan = endXFt >= startXFt ? 1.0 : -1.0;
+
+        if (Math.Abs(endXFt - startXFt) <= shoulderFt)
+            return null;
+
+        return startXFt + towardPlan * shoulderFt;
     }
 
     /// <summary>
@@ -886,6 +964,17 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
         if (element == null)
             return null;
 
+        // Stairs.Location is null, so without this the generic bbox fallback below
+        // aims at the centre of the whole multi-storey element — for an L-shaped or
+        // two-flight stair that point sits in the well, not on the treads, and the
+        // leader ends in empty space next to the stair.
+        if (element is Stairs stairs)
+        {
+            var onRun = TryGetStairsRunPoint(stairs, view);
+            if (onRun != null)
+                return onRun;
+        }
+
         if (element.Location is LocationPoint locPoint)
             return locPoint.Point;
 
@@ -899,6 +988,55 @@ public class CreateTextNotesEventHandler : IExternalEventHandler, IWaitableExter
         var bbox = element.get_BoundingBox(view) ?? element.get_BoundingBox(null);
         if (bbox != null)
             return (bbox.Min + bbox.Max) / 2.0;
+
+        return null;
+    }
+
+    /// <summary>
+    /// Midpoint of the stairs path of the run nearest this plan's level. The path
+    /// runs along the treads, so the point is always on the stair — unlike a
+    /// bounding-box centre. A stair can span storeys, hence picking by elevation.
+    /// </summary>
+    private XYZ TryGetStairsRunPoint(Stairs stairs, View view)
+    {
+        try
+        {
+            var planZ = (view as ViewPlan)?.GenLevel?.Elevation ?? view.Origin.Z;
+
+            StairsRun best = null;
+            var bestDelta = double.MaxValue;
+            foreach (var runId in stairs.GetStairsRuns())
+            {
+                if (Doc.GetElement(runId) is not StairsRun run)
+                    continue;
+                var delta = Math.Abs(run.BaseElevation - planZ);
+                if (delta >= bestDelta)
+                    continue;
+                bestDelta = delta;
+                best = run;
+            }
+
+            if (best == null)
+                return null;
+
+            // CurveLoop, not a list — enumerate it.
+            var firstPathCurve = best.GetStairsPath()?.FirstOrDefault();
+            if (firstPathCurve != null)
+            {
+                var point = firstPathCurve.Evaluate(0.5, true);
+                return new XYZ(point.X, point.Y, planZ);
+            }
+
+            // No path (imported / edited-in-place run) — the run's own box is still
+            // far tighter than the whole stair's.
+            var runBox = best.get_BoundingBox(view) ?? best.get_BoundingBox(null);
+            if (runBox != null)
+                return (runBox.Min + runBox.Max) / 2.0;
+        }
+        catch
+        {
+            // Fall through to the generic element point.
+        }
 
         return null;
     }
