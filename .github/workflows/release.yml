@@ -69,16 +69,14 @@ jobs:
       # Build Plugin + CommandSet via combined solution
       # The commandset's DeployCommandSet target automatically copies
       # its output into the plugin's AddIn layout.
+      #
+      # 2023 is the floor, and it is not a preference - the command set calls API that
+      # does not exist earlier: GeometryInstance.GetSymbolGeometryId/GetDocument (2023),
+      # IndependentTag.GetTaggedLocalElementIds and ColorFillScheme (2022). The R20-R22
+      # configurations stayed in the solution and never compiled, because until v1.1.0
+      # this workflow had never run - the repository had no tags at all. Shipping them
+      # would mean shipping compatibility shims nobody can test on any machine here.
       # ---------------------------------------------------------------
-      - name: Build Revit 2020 (.NET Framework 4.8)
-        run: msbuild mcp-servers-for-revit.sln -p:Configuration="Release R20" -restore
-
-      - name: Build Revit 2021 (.NET Framework 4.8)
-        run: msbuild mcp-servers-for-revit.sln -p:Configuration="Release R21" -restore
-
-      - name: Build Revit 2022 (.NET Framework 4.8)
-        run: msbuild mcp-servers-for-revit.sln -p:Configuration="Release R22" -restore
-
       - name: Build Revit 2023 (.NET Framework 4.8)
         run: msbuild mcp-servers-for-revit.sln -p:Configuration="Release R23" -restore
 
@@ -140,9 +138,6 @@ jobs:
 
           $plugins = [ordered]@{}
           $revitVersions = @(
-            @{ Config = "Release R20"; Year = "2020" },
-            @{ Config = "Release R21"; Year = "2021" },
-            @{ Config = "Release R22"; Year = "2022" },
             @{ Config = "Release R23"; Year = "2023" },
             @{ Config = "Release R24"; Year = "2024" },
             @{ Config = "Release R25"; Year = "2025" },

@@ -10,7 +10,7 @@
 
 
 
-- **Autodesk Revit** 2020–2026
+- **Autodesk Revit** 2023–2026
 
 - **Node.js 18+** — [nodejs.org](https://nodejs.org/) (только установить, команды в терминале не нужны)
 

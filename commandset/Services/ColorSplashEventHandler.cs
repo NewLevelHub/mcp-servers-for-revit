@@ -72,7 +72,21 @@ namespace RevitMCPCommandSet.Services
 
                 if (isRooms)
                 {
+#if REVIT2022_OR_GREATER
                     ColoringResults = ApplyRoomColorFillScheme(activeView, category);
+#else
+                    // ColorFillScheme завели только в API Revit 2022. Раскрасить помещения
+                    // переопределениями вида на 2020-2021 можно, но это не цветовая схема:
+                    // легенда останется пустой, а картинка будет похожа ровно настолько,
+                    // чтобы подмену никто не заметил. Отказываем вслух.
+                    ColoringResults = new
+                    {
+                        success = false,
+                        message =
+                            "Цветовая схема помещений доступна начиная с Revit 2022. " +
+                            "В этой версии раскрасить помещения по параметру нечем."
+                    };
+#endif
                 }
                 else
                 {
@@ -113,6 +127,7 @@ namespace RevitMCPCommandSet.Services
             return null;
         }
 
+#if REVIT2022_OR_GREATER
         /// <summary>
         /// True room area fill via ColorFillScheme (View → Color Scheme).
         /// </summary>
@@ -386,6 +401,7 @@ namespace RevitMCPCommandSet.Services
                 return null;
             }
         }
+#endif
 
         private static Parameter FindParameter(Element element, string parameterName)
         {

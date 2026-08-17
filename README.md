@@ -30,7 +30,7 @@ The **MCP Server** (TypeScript) translates tool calls from AI clients into WebSo
 ## Requirements
 
 - **Node.js 18+** (for the MCP server)
-- **Autodesk Revit 2020 - 2026** (any supported version)
+- **Autodesk Revit 2023 - 2026** (any supported version)
 
 ## Quick Start (Using a Release)
 
@@ -264,10 +264,15 @@ The server compiles TypeScript to `server/build/`. During development you can ru
 
 ### Revit Plugin + Command Set
 
-Open `mcp-servers-for-revit.sln` in Visual Studio. The solution contains both the plugin and command set projects. Build configurations target Revit 2020-2026:
+Open `mcp-servers-for-revit.sln` in Visual Studio. The solution contains both the plugin and command set projects. Build configurations target Revit 2023-2026:
 
-- **Revit 2020-2024**: .NET Framework 4.8 (`Release R20` through `Release R24`)
+- **Revit 2023-2024**: .NET Framework 4.8 (`Release R23`, `Release R24`)
 - **Revit 2025-2026**: .NET 8 (`Release R25`, `Release R26`)
+
+The solution still carries `R20`-`R22` configurations, but they do not compile: the command
+set calls API introduced in Revit 2022 and 2023 (`ColorFillScheme`,
+`IndependentTag.GetTaggedLocalElementIds`, `GeometryInstance.GetSymbolGeometryId`). They are
+kept only as a starting point should older versions ever be needed; the release builds 2023+.
 
 Building the solution automatically assembles the complete deployable layout in `plugin/bin/AddIn <year> <config>/` - the command set is copied into the plugin's `Commands/` folder as part of the build.
 
@@ -291,7 +296,7 @@ mcp-servers-for-revit/
 
 A single `v*` tag drives the entire release. The [release workflow](.github/workflows/release.yml) automatically:
 
-- Builds the Revit plugin + command set for Revit 2020-2026
+- Builds the Revit plugin + command set for Revit 2023-2026
 - Creates a GitHub release with `mcp-servers-for-revit-vX.Y.Z-Revit<year>.zip` assets
 - Publishes the MCP server to npm as [`mcp-server-for-revit`](https://www.npmjs.com/package/mcp-server-for-revit)
 
