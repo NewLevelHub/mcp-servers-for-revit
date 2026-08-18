@@ -25,36 +25,110 @@ Some MCP tools never call Revit (norm library). Some Revit commands are **intern
 | Profile | Behavior |
 |---------|----------|
 | `default` (unset) | All tools with a `register*` export **except** `DEFAULT_DENYLIST` |
-| `lite` | Same set, but only `LITE_ALLOWLIST` (~20 tools) is **listed**; the rest are registered and hidden |
+| `lite` | Same set registered, but only `LITE_TOOLS` (22 tools) is **listed**; the rest are hidden |
+| `lite+<groups>` | `LITE_TOOLS` plus the named groups, e.g. `lite+sheets,annotation` (REV-41) |
 | `norms` | Only `extract_norm_rules_from_pdf`, `query_norm_rules`, `save_norm_rule` |
 | `full` | Everything including legacy SQLite helpers |
 
-### `lite` and per-turn profile switching (REV-157)
+### `lite`, tool groups and per-turn switching (REV-157, REV-41)
 
-The full catalog serialises to ~188 KB of JSON schema — about 50k tokens the
+The full catalog serialises to ~194 KB of JSON schema — about 51k tokens the
 model reads before writing its first character, on **every** turn. That is the
-main reason a one-line question took ~12 s in the in-Revit chat. `lite` lists 20
-everyday tools (28 KB, ~8k tokens) and hides the other 70.
+main reason a one-line question took ~12 s in the in-Revit chat.
+
+`lite` lists the everyday set and hides the rest. `lite+<groups>` adds back only
+what a task needs. The set and the group map are in
+`server/src/utils/toolCatalog.ts`; `toolCatalog.test.ts` fails if a new tool file
+is in neither, so nothing can go missing silently.
+
+| Group | Contents |
+|-------|----------|
+| `norms` | the `check_*` family, `run_norm_audit`, `apply_norm_result`, the rule library, and the geometry readers they feed on |
+| `quality` | `get_model_warnings`, `check_sheet_readiness` — model health before issue |
+| `schedules` | schedules and ведомости, `validate_schedule`, bulk data export |
+| `sheets` | sheets, title blocks, view placement, auto-layout, ТЭП table |
+| `annotation` | dimensions, tags, text notes, filled regions, node details |
+| `cad` | `get_cad_link_geometry` + `trace_*_from_cad` |
+| `modeling` | grids, stairs, railings, floor openings, framing, family loading |
+| `advanced` | `send_code_to_revit`, `say_hello` |
+
+Measured on this build (`tools/list` over stdio, ~3.8 B/token):
+
+| Profile | Tools | Bytes | ≈ tokens |
+|---------|------:|------:|---------:|
+| `default` | 92 | 193 893 | 51 024 |
+| `lite` | 22 | 32 001 | 8 421 |
+| `lite+cad` | 26 | 49 353 | 12 988 |
+| `lite+sheets` | 29 | 50 383 | 13 259 |
+| `lite+modeling` | 31 | 57 776 | 15 204 |
+| `lite+annotation` | 35 | 62 164 | 16 359 |
+| `lite+schedules` | 36 | 62 963 | 16 569 |
+| `lite+norms` | 43 | 69 824 | 18 375 |
+| `lite+sheets,annotation` | 42 | 80 546 | 21 196 |
+| `lite+all` | 92 | 193 893 | 51 024 |
+
+An unknown group name is logged and ignored, never fatal — a typo in an env var
+must not cost the Revit connection.
 
 The assistant-bridge picks the profile **per turn** and passes it through
-`agent.send(message, { mcpServers })`: `lite` for questions and everyday edits,
-`default` when the request looks like real work (DWG, layout, norms, schedules,
-sheets, images, long prompts — `isHeavyRequest` in `agent-session.ts`). The
-conversation and its history stay on the same agent across the switch.
+`agent.send(message, { mcpServers })` — `pickToolProfile` in `agent-session.ts`:
 
-Verified against Cursor SDK 1.0.24 on a live model:
+- everyday question or edit → `lite`;
+- heavy request whose wording names what it needs → `lite+<groups>`, mapped by
+  `HINT_TOOL_GROUPS` (e.g. "проставь размеры" → `lite+annotation`);
+- heavy request with nothing to go on (an image, a long brief) → `default`.
+
+The conversation and its history stay on the same agent across the switch.
+
+#### The profile is fixed when the connection opens
+
+Verified against Cursor SDK 1.0.24 on a live model (REV-157), and re-confirmed
+2026-08-18 against the clients' own issue trackers:
 
 - Per-send `mcpServers` **works** — a turn asking for `get_cad_link_geometry`
   reached it in a session whose previous turns ran on `lite`.
-- Runtime unhiding does **not** work. `RegisteredTool.enable()` emits
-  `notifications/tools/list_changed`, but Cursor snapshots the MCP catalog when
-  the agent is created: the newly enabled tool fails with
-  `Tool mcp-server-for-revit-local-<name> was not found`, on that run **and** on
-  the next send in the same session. Do not reintroduce an in-conversation
-  escalation tool without re-testing this.
+- Runtime unhiding does **not** work, in any client. `RegisteredTool.enable()`
+  does emit `notifications/tools/list_changed`, but no current client acts on it:
+  Cursor IDE and CLI and Claude Code all snapshot the catalog at session start.
+  The newly enabled tool comes back as `not found` / `disabled` for the rest of
+  that session.
+
+So **do not add an `expand_toolset`-style escalation tool.** One was written and
+removed on 2026-08-18 for exactly this reason; the group profiles above are the
+working form of the same idea. Re-test the client behaviour before trying again:
+
+- [Cursor — list_changed not acted on mid-session](https://forum.cursor.com/t/mcp-notifications-tools-list-changed-not-acted-on-mid-session/161459)
+- [claude-code#13646 — tool list not refreshed on list_changed](https://github.com/anthropics/claude-code/issues/13646)
 
 Cursor IDE and any other client keep the `default` profile unless they set the
-env var.
+env var — and they should, until the escalation limit above is lifted: with a
+static catalog, a hidden tool stays unreachable for the whole session.
+
+## Model health before issue (REV-47)
+
+Two tools answer "is this ready to go out", which is a different question from
+"does it meet СП/ГОСТ" — hence their own `quality` group rather than `norms`.
+
+| Tool | Revit command | What it reads |
+|------|---------------|---------------|
+| `get_model_warnings` | `get_model_warnings` | `Document.GetWarnings()` — the «Просмотр предупреждений» list, folded by warning text, biggest group first |
+| `check_sheet_readiness` | *(server-only)* | sheets via `ai_element_filter` + `get_elements_parameters`: blank штамп lines, missing/duplicate sheet numbers, blank sheet names |
+
+Both are read-only and open no transaction.
+
+`check_sheet_readiness` shares `SHEET_FIELD_ALIASES` with `fill_title_block`, so a
+штамп this can check is one that can be filled — hand its output straight to
+`fill_title_block`. It reports `field_absent` separately from `empty_field`:
+the first means the title block has no such line (wrong template), the second
+means nobody typed a name. Telling an architect to "fill in Н.контроль" on a
+штамп without that line wastes their time.
+
+A sheet whose parameters cannot be read is listed under `unreadableSheets` and
+left ungraded rather than reported as "everything blank".
+
+**Not covered yet:** views that sit on no sheet, and schedules with zero rows.
+Both need a new Revit read; `check_sheet_readiness` deliberately stayed
+server-only so it ships with a server update and no plugin reinstall.
 
 ### Legacy / full-only (keep files, not in default)
 

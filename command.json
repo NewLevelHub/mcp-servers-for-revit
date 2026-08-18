@@ -104,6 +104,11 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "get_model_warnings",
+      "description": "Предупреждения Revit: группы, количество, категории и примеры элементов",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "export_tep_data",
       "description": "ТЭП: площадь застройки, общая площадь, этажность, площади по уровням, объём",
       "assemblyPath": "RevitMCPCommandSet.dll"

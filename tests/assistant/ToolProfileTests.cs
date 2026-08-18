@@ -31,9 +31,15 @@ public class ToolProfileTests
     [Fact]
     public void Full_catalog_unfiltered_exceeds_cap()
     {
+        // The point of the profiles: the whole catalog does not fit in one request.
+        // This used to also assert an exact count, which went stale at 72 while the
+        // catalog grew to 81 — and nobody saw it, because CI does not run these tests.
+        // A number that has to be edited every time a tool is added guards nothing.
         var all = ToolCatalog.GetOpenAiTools();
-        Assert.True(all.Count > ToolCatalog.MaxToolsPerRequest);
-        Assert.Equal(72, all.Count);
+        Assert.True(
+            all.Count > ToolCatalog.MaxToolsPerRequest,
+            $"catalog has {all.Count} tools, cap is {ToolCatalog.MaxToolsPerRequest} — " +
+            "if the catalog now fits, the profile machinery is no longer needed");
     }
 
     [Fact]
@@ -174,7 +180,17 @@ public class ToolProfileTests
             .Select(t => t["function"]?["name"]?.ToString())
             .Where(n => n != null)
             .ToList();
-        Assert.True(names.Count <= 72);
+        // The name promises "no exact duplicates", but the check used to be a count
+        // ceiling of 72 — which never tested uniqueness and went stale anyway. A tool
+        // listed twice is a real fault: it wastes a slot against MaxToolsPerRequest
+        // and gives the model two identical things to choose between.
+        var duplicates = names
+            .GroupBy(n => n)
+            .Where(g => g.Count() > 1)
+            .Select(g => g.Key)
+            .ToList();
+        Assert.True(duplicates.Count == 0, $"listed twice: {string.Join(", ", duplicates)}");
+
         Assert.DoesNotContain("tag_all_rooms", names);
         Assert.DoesNotContain("tag_all_walls", names);
         Assert.DoesNotContain("color_elements", names);

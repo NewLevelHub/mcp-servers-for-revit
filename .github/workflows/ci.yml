@@ -1,0 +1,88 @@
+# Runs on every push and pull request.
+#
+# release.yml only fires on a `v*` tag, so until this file existed nothing was
+# checked between releases: the 413 Node tests, the tool-registry drift check and
+# the 224 plugin tests all ran on developer machines only. Two plugin assertions
+# had been failing against a stale hard-coded tool count for long enough that
+# nobody remembered, because nothing was watching (found 2026-08-18, REV-47).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  server:
+    name: MCP server
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Kept equal to the Node in release.yml: better-sqlite3 is ABI-locked, and a
+      # test pass on a different major says nothing about the shipped runtime.
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        working-directory: server
+        run: npm ci
+
+      # Builds first (the test script compiles), so a type error fails here with the
+      # compiler's own message rather than as a confusing missing-module error.
+      - name: Test
+        working-directory: server
+        run: npm test
+
+      - name: Tool registry drift check
+        working-directory: server
+        run: npm run check:tool-registry
+
+      - name: Build assistant bridge
+        working-directory: assistant-bridge
+        run: |
+          npm ci
+          npm run build
+
+  plugin:
+    name: Revit plugin
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      # The two configurations release.yml actually ships from.
+      - name: Build Revit 2023
+        run: msbuild mcp-servers-for-revit.sln -p:Configuration="Release R23" -restore
+
+      - name: Build Revit 2024
+        run: msbuild mcp-servers-for-revit.sln -p:Configuration="Release R24" -restore
+
+      # global.json pins the repo to Microsoft.Testing.Platform, but this project is
+      # still on VSTest (xunit 2.9 + xunit.runner.visualstudio), so a plain
+      # `dotnet test` refuses to run it. Moving it aside is the documented workaround
+      # until the project is migrated; tests/commandset is not run at all — it is a
+      # TUnit-on-Revit harness that needs a real Revit install.
+      - name: Test plugin (assistant)
+        shell: pwsh
+        run: |
+          Move-Item global.json global.json.ci-bak
+          try {
+            dotnet test tests/assistant/RevitMCPPlugin.Assistant.Tests.csproj `
+              -c "Release R24" -v minimal --nologo
+          } finally {
+            Move-Item global.json.ci-bak global.json
+          }

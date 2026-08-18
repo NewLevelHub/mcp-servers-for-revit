@@ -568,6 +568,16 @@ namespace revit_mcp_plugin.Core.Assistant
                     "Для двери/окна нужна стена-хост.",
                     "Укажите стену или создайте проём в существующей стене.");
             }
+            // Builds from 2026-08 on answer with CommandAvailability.DescribeMissing,
+            // which already names the specific cause and the fix — pass it through
+            // rather than overwriting it with the generic "включите в Настройках".
+            if (msg.IndexOf("выключена в настройках", StringComparison.OrdinalIgnoreCase) >= 0
+                || msg.IndexOf("отсутствует в этой сборке", StringComparison.OrdinalIgnoreCase) >= 0
+                || msg.IndexOf("не поддерживается в Revit", StringComparison.OrdinalIgnoreCase) >= 0
+                || msg.IndexOf("не загрузилась при запуске", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return new FailureHint($"Команда «{label}» недоступна.", msg);
+            }
             if (msg.IndexOf("Method not found", StringComparison.OrdinalIgnoreCase) >= 0
                 || msg.IndexOf("未找到方法", StringComparison.OrdinalIgnoreCase) >= 0)
             {

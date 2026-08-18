@@ -91,50 +91,70 @@ const GENERIC_TOOL_NAMES = new Set(["mcp", "CallMcpTool", "call_mcp_tool"]);
 const CONFIRM_TIMEOUT_MS = 5 * 60 * 1000;
 
 const MAX_JOURNAL_CHARS = 2000;
+/**
+ * Which tool group each hint needs (REV-41). A heavy turn used to jump straight
+ * to `default` — the whole 92-tool catalog, ~51k tokens of schema — even when the
+ * architect only asked for a dimension. Naming the groups instead keeps a
+ * dimension turn at ~16k and a sheet turn at ~13k.
+ *
+ * Hints absent from this map still count as heavy for the model router; they
+ * just add no group of their own. When nothing matches, {@link pickToolProfile}
+ * falls back to `default` rather than guessing — a heavy turn that reaches for a
+ * hidden tool is the one failure this must not produce.
+ */
+const HINT_TOOL_GROUPS: ReadonlyArray<readonly [string, string]> = [
+  ["предупрежд", "quality"],
+  ["к выдаче", "quality"],
+  ["готов ли", "quality"],
+  ["dwg", "cad"],
+  ["cad", "cad"],
+  ["подложк", "cad"],
+  ["перечерт", "cad"],
+  ["обвед", "cad"],
+  ["планировк", "modeling"],
+  ["нормоконтрол", "norms"],
+  ["нарушен", "norms"],
+  ["по нормам", "norms"],
+  ["аудит", "norms"],
+  ["эвакуац", "norms"],
+  ["спецификац", "schedules"],
+  ["ведомост", "schedules"],
+  ["экспликац", "schedules"],
+  ["квартирограф", "schedules"],
+  ["тэп", "sheets"],
+  ["на лист", "sheets"],
+  ["штамп", "sheets"],
+  ["узел", "annotation"],
+  ["узлы", "annotation"],
+  ["размер", "annotation"],
+  ["марк", "annotation"],
+  ["выноск", "annotation"],
+  ["подпиш", "annotation"],
+  ["отметк", "annotation"],
+  ["заливк", "annotation"],
+  ["покрас", "annotation"],
+  ["ось", "modeling"],
+  ["оси", "modeling"],
+  ["сетк", "modeling"],
+];
 
 /**
  * Requests worth the auto router's extra hop: multi-step work where a wrong
  * plan costs the architect far more than the routing delay. Everything else —
  * questions, a wall, a room, a parameter — goes to the fast model (REV-157).
+ *
+ * Every hint in {@link HINT_TOOL_GROUPS} is heavy by construction. Keeping the two
+ * lists in sync by hand did not survive contact: a word in the group map but not
+ * here leaves the turn on `lite` with the very tool it asked for hidden.
  */
 const HEAVY_TASK_HINTS = [
-  "dwg",
-  "cad",
-  "подложк",
-  "перечерт",
-  "обвед",
-  "планировк",
+  ...HINT_TOOL_GROUPS.map(([hint]) => hint),
+  // Heavy, but naming no group of their own: an open brief ("спроектируй") or a
+  // whole section ("раздел") could need anything, so pickToolProfile falls back
+  // to the full catalog rather than guessing a subset.
   "спроектируй",
   "запроектируй",
-  "нормоконтрол",
-  "нарушен",
-  "по нормам",
-  "аудит",
-  "эвакуац",
-  "спецификац",
-  "ведомост",
-  "экспликац",
-  "тэп",
-  "на лист",
-  "штамп",
   "раздел",
-  "узел",
-  "узлы",
-  "квартирограф",
-  // Annotation/oformlenie — REV-157: a follow-up like "сделай выноску и подпиши"
-  // has none of the hints above on its own, so it fell back to the lite tool
-  // set and the model faked the result with a plain text note instead of the
-  // real dimension/tag/leader tool (found during REV-157 acceptance testing).
-  "размер",
-  "марк",
-  "выноск",
-  "подпиш",
-  "отметк",
-  "заливк",
-  "покрас",
-  "ось",
-  "оси",
-  "сетк",
 ];
 
 const REVIT_SYSTEM_PREFIX =
@@ -502,13 +522,39 @@ export class AgentSessionManager {
   private isHeavyRequest(userText: string, hasImages: boolean): boolean {
     if (hasImages) return true;
 
-    // The panel prefixes the view context; route on what the architect typed.
-    const marker = userText.lastIndexOf("[Запрос]");
-    const request = (marker >= 0 ? userText.slice(marker + "[Запрос]".length) : userText).trim();
-
-    if (request.length > 600) return true;
-    const text = request.toLowerCase();
+    if (this.requestText(userText).length > 600) return true;
+    const text = this.requestText(userText).toLowerCase();
     return HEAVY_TASK_HINTS.some((hint) => text.includes(hint));
+  }
+
+  /** The panel prefixes the view context; route on what the architect typed. */
+  private requestText(userText: string): string {
+    const marker = userText.lastIndexOf("[Запрос]");
+    return (marker >= 0 ? userText.slice(marker + "[Запрос]".length) : userText).trim();
+  }
+
+  /**
+   * `MCP_TOOL_PROFILE` for this turn (REV-41).
+   *
+   * Everyday turn → `lite`. Heavy turn whose wording names what it needs →
+   * `lite+<groups>`, which lists the everyday set plus only those groups. Heavy
+   * turn with nothing to go on (an image, a long brief) → `default`, the whole
+   * catalog: slower, but it cannot leave the model reaching for a hidden tool.
+   *
+   * The profile is fixed when the run is created and cannot be widened mid-turn —
+   * no MCP client acts on `notifications/tools/list_changed`. See the header of
+   * `server/src/utils/toolCatalog.ts`.
+   */
+  private pickToolProfile(userText: string, hasImages: boolean): string {
+    if (!this.isHeavyRequest(userText, hasImages)) return this.config.mcpToolProfile;
+
+    const text = this.requestText(userText).toLowerCase();
+    const groups: string[] = [];
+    for (const [hint, group] of HINT_TOOL_GROUPS) {
+      if (text.includes(hint) && !groups.includes(group)) groups.push(group);
+    }
+
+    return groups.length > 0 ? `lite+${groups.join(",")}` : "default";
   }
 
   /**
@@ -602,7 +648,7 @@ export class AgentSessionManager {
           images: images.length > 0 ? images : undefined,
         },
         requestedModel,
-        this.isHeavyRequest(message, images.length > 0) ? "default" : this.config.mcpToolProfile,
+        this.pickToolProfile(message, images.length > 0),
       );
       marks.runStartedAt = Date.now();
       session.activeRun = run;

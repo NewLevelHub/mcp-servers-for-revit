@@ -2,10 +2,18 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { withRevitConnection } from "../utils/ConnectionManager.js";
 
+/**
+ * Page size sent to Revit (REV-42). The plugin's own default is 500, which
+ * measured 185 303 B on «Короткий блок» — the second-largest payload in the
+ * metrics log. Sent explicitly so the smaller default reaches architects with a
+ * server update, without waiting on a plugin release.
+ */
+const DEFAULT_ELEMENT_LIMIT = 150;
+
 export function registerGetCurrentViewElementsTool(server: McpServer) {
   server.tool(
     "get_current_view_elements",
-    "Get elements from the current active view in Revit. You can filter by model categories (like Walls, Floors) or annotation categories (like Dimensions, Text). Use includeHidden to show/hide invisible elements. Results are paginated: by default limit=500 elements per page; use offset for subsequent pages. Response includes totalCount and hasMore for large models.",
+    `Get elements from the current active view in Revit. You can filter by model categories (like Walls, Floors) or annotation categories (like Dimensions, Text). Use includeHidden to show/hide invisible elements. Results are paginated: by default limit=${DEFAULT_ELEMENT_LIMIT} elements per page; use offset for subsequent pages. Response includes totalCount and hasMore for large models.`,
     {
       modelCategoryList: z
         .array(z.string())
@@ -27,8 +35,14 @@ export function registerGetCurrentViewElementsTool(server: McpServer) {
         .number()
         .int()
         .positive()
+        .max(2000)
         .optional()
-        .describe("Maximum number of elements to return per page. Default is 500."),
+        .default(DEFAULT_ELEMENT_LIMIT)
+        .describe(
+          `Maximum number of elements to return per page. Default is ${DEFAULT_ELEMENT_LIMIT}. ` +
+            "Raise it only when you genuinely need more — a full page of 500 measured 185 KB " +
+            "on a large model. Narrow with modelCategoryList instead where you can."
+        ),
       offset: z
         .number()
         .int()

@@ -149,9 +149,14 @@ alwaysApply: false
 запросить схему только если вызов упал или параметры изменились:
 
 - `get_current_view_info {}` — активный вид.
-- `get_current_view_elements {modelCategoryList?, annotationCategoryList?, limit?}` —
+- `get_current_view_elements {modelCategoryList?, annotationCategoryList?, limit?, offset?}` —
   напр. `OST_Grids`, `OST_Walls`, `OST_Dimensions`. Координаты в мм.
-- `export_room_data {includeUnplacedRooms?, includeNotEnclosedRooms?}` — id/площади.
+  `limit` по умолчанию 150; сужай категориями, а не большим `limit`.
+- `export_room_data {includeUnplacedRooms?, includeNotEnclosedRooms?, fields?, limit?, offset?}` —
+  id/площади. По умолчанию отдаёт `id/name/number/level/area`, до 300 помещений;
+  высоты (`clearHeight`, `storeyHeight`) — только через `fields`. Счётчики
+  `totalRooms`/`totalArea` всегда по всей выборке, а не по странице: «сколько» отвечай
+  по ним и не листай. Продолжение — `roomsPagination.nextOffset`.
 - `get_element_parameters {elementId}` / `set_element_parameter {elementId, parameterName, value}`
   (напр. «Тип»=id, «Граница помещения»=true).
 - `create_grid {autoFromWalls:true, wallFilter:"structural", minWallThicknessMm, bubbleEnd:"bottomLeft", gridTypeName:"Марка оси 5 мм"}` — для тонких стен снижать `minWallThicknessMm` (300 мм → 250).
