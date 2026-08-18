@@ -162,6 +162,11 @@ jobs:
             version       = $version
             published     = (Get-Date).ToUniversalTime().ToString("o")
             builtWithNode = (node -v)
+            # The native better-sqlite3 binding is a Windows PE built for one CPU
+            # architecture. Loading an x64 build on an ARM64 machine fails as
+            # ERR_DLOPEN_FAILED "is not a valid Win32 application", ten frames deep in a
+            # log nobody reads - so the updater compares this first and says it plainly.
+            builtWithArch = (node -p "process.arch")
             minNode       = "22.13.0"
             runtime       = Get-AssetInfo $runtimeZip
             plugins       = $plugins

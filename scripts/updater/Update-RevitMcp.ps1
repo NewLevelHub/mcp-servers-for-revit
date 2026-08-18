@@ -146,6 +146,10 @@ function Get-NodeInfo {
             Major = [int]$Matches[1]
             Minor = [int]$Matches[2]
             Patch = [int]$Matches[3]
+            # Не то же самое, что разрядность Windows: на ARM-машине рядом уживаются
+            # ARM64-сборка Node и эмулируемые x64-программы, а нативный модуль базы норм
+            # обязан совпасть именно с Node.
+            Arch  = (& node -p "process.arch" 2>$null)
         }
     }
     return $null
@@ -517,15 +521,41 @@ function Test-StagedTree {
     # Пустая библиотека норм - самая тихая поломка: нормоконтроль отвечает "нарушений
     # нет" вместо "проверять нечем". Спрашиваем базу до подмены, пока откатывать нечего.
     $server = Join-Path $Staged "mcp-server"
-    $script = "const D=require('better-sqlite3');" +
+    $db = Join-Path $server "revit-data.db"
+    $probe = "const D=require('better-sqlite3');" +
         "console.log(new D(process.argv[1],{readonly:true}).prepare('SELECT COUNT(*) c FROM norm_rules').get().c);"
-    Push-Location $server
-    try { $output = & node -e $script (Join-Path $server "revit-data.db") 2>$null }
-    finally { Pop-Location }
 
-    # node может дописать в stdout предупреждение - число всегда последней строкой.
-    $rules = @($output) | Where-Object { $_ -match '^\d+$' } | Select-Object -Last 1
-    if (-not $rules -or [int]$rules -lt 1) {
+    # Судим по напечатанному, а не по потоку ошибок. При ErrorActionPreference=Stop
+    # PowerShell 5.1 превращает первую же строку stderr нативной программы в
+    # терминирующую ошибку - и установка падала с обрывком стека Node вместо причины,
+    # на полностью исправной сборке.
+    #
+    # Вторая попытка нужна из-за Windows: только что скопированный .node иногда не
+    # грузится, пока антивирус его читает, и через пару секунд грузится как ни в чём
+    # не бывало. Отказывать из-за этого - значит откатывать хорошее обновление.
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $rules = $null
+    $output = $null
+    Push-Location $server
+    try {
+        for ($attempt = 1; $attempt -le 2; $attempt++) {
+            $output = & node -e $probe $db 2>&1
+            $rules = @($output) | Where-Object { "$_" -match '^\d+$' } | Select-Object -Last 1
+            if ($rules) { break }
+            if ($attempt -eq 1) { Start-Sleep -Seconds 3 }
+        }
+    }
+    finally {
+        Pop-Location
+        $ErrorActionPreference = $prevEap
+    }
+
+    if (-not $rules) {
+        $detail = (@($output) | ForEach-Object { "$_" } | Select-Object -First 3) -join " | "
+        throw "Не удалось прочитать библиотеку норм из скачанной сборки: $detail"
+    }
+    if ([int]$rules -lt 1) {
         throw "В скачанной базе норм нет правил - ставить её значит выключить нормоконтроль молча"
     }
     Write-Log "Проверка сборки пройдена (правил норм: $rules)"
@@ -801,6 +831,11 @@ try {
         if ($node.Major -ne $builtMajor) {
             throw "Сборка собрана на Node $($manifest.builtWithNode), а на машине $($node.Raw). Нужен Node $builtMajor.x - иначе нормоконтроль замолчит"
         }
+    }
+
+    $builtArch = Get-JsonProperty $manifest 'builtWithArch'
+    if ($builtArch -and $node.Arch -and $node.Arch -ne $builtArch) {
+        throw "Сборка собрана под $builtArch, а Node на этой машине - $($node.Arch). Нативный модуль базы норм под чужую архитектуру не грузится (ERR_DLOPEN_FAILED). Релиз собирается под обычные x64-машины; на ARM его не поставить"
     }
 
     # Раньше развилки: иначе при вечно открытом Revit апдейтер никогда не подтянул бы
