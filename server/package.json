@@ -20,7 +20,8 @@
         "export:norm-catalog": "npm run build && node build/scripts/exportNormCatalog.js",
         "check:tool-registry": "node ../scripts/check-tool-registry.mjs",
         "prepublishOnly": "npm run build",
-        "norms:coverage": "npm run build && node build/scripts/norm-coverage.js"
+        "norms:coverage": "npm run build && node build/scripts/norm-coverage.js",
+        "norms:verify": "npm run build && node build/scripts/norm-verify.js"
     },
     "files": [
         "build",

@@ -42,6 +42,15 @@ jobs:
         working-directory: server
         run: npm run check:tool-registry
 
+      # plugin/Resources/norm-catalog.json is the only norm artifact under version
+      # control, and the in-Revit assistant reads it directly — so it is what makes
+      # every machine work from the same norms. Change a PDF or an extractor
+      # pattern without re-exporting and the assistant applies yesterday's norms
+      # while the MCP checks apply today's, with nothing to say so.
+      - name: Norm catalog matches the PDFs
+        working-directory: server
+        run: npm run norms:verify
+
       # The bridge decides which tools a turn may see. It had no tests until a
       # miss shipped: «проверь противопожарные двери» matched no keyword, stayed
       # on `lite`, and the model reported that the norm check does not exist.
