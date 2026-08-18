@@ -295,4 +295,30 @@ catch {
     Write-Warning "Не удалось записать version.json: $($_.Exception.Message)"
 }
 
+# build-assistant-cursor.ps1 заканчивает сборку `npm prune --omit=dev`, чтобы в Revit
+# не уезжали TypeScript и тесты. Прунится тот же node_modules, в котором работает
+# разработчик, поэтому сразу после деплоя в репозитории пропадает tsc, и `npm test`
+# падает с «This is not the tsc command you are looking for» — сообщение, по которому
+# причину не угадать. Возвращаем dev-зависимости: полезная нагрузка уже скопирована,
+# на неё это не влияет.
+foreach ($devDir in @("server", "assistant-bridge")) {
+    $full = Join-Path $repo $devDir
+    if (-not (Test-Path (Join-Path $full "package.json"))) { continue }
+    Push-Location $full
+    try {
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        npm install --silent --no-audit --no-fund 2>&1 | Out-Null
+        $ok = $LASTEXITCODE -eq 0
+        $ErrorActionPreference = $prevEap
+        if ($ok) {
+            Write-Host "Dev-зависимости возвращены в $devDir/" -ForegroundColor Gray
+        }
+        else {
+            Write-Warning "Не удалось вернуть dev-зависимости в $devDir/ — перед 'npm test' выполните 'npm install' вручную."
+        }
+    }
+    finally { Pop-Location }
+}
+
 Write-Host "Готово. Запускайте Revit." -ForegroundColor Green

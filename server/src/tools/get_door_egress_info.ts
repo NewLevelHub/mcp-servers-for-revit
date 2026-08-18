@@ -1,11 +1,15 @@
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { withRevitConnection } from "../utils/ConnectionManager.js";
+import { annotateDoorEgressResponse } from "../normatives/normAudit/annotateDoorManeuvering.js";
 
 export function registerGetDoorEgressInfoTool(server: McpServer) {
   server.tool(
     "get_door_egress_info",
-    "Extract door nominal/clear width, maneuvering space, egress-path hints, and ramp slopes for accessibility checks.",
+    "Extract door nominal/clear width, maneuvering space, egress-path hints, and ramp slopes for accessibility checks. " +
+      "Each door carries maneuveringVerdict (ok / near_limit / violation / not_measured) with the required depth AND width " +
+      "already applied, plus maneuveringSummary over the set — read those, do not compare the raw millimetres yourself. " +
+      "Maneuvering space is an МГН (accessibility) requirement, not a fire one: for fire-rated doors use check_fire_doors.",
     {
       levelName: z
         .string()
