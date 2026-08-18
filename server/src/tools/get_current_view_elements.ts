@@ -50,7 +50,7 @@ export function registerGetCurrentViewElementsTool(server: McpServer) {
         .optional()
         .describe("Number of matching elements to skip before returning results. Default is 0. Use with limit for paginated loading."),
     },
-    async (args, extra) => {
+    async (args) => {
       const params: Record<string, unknown> = {
         includeHidden: args.includeHidden ?? false,
       };

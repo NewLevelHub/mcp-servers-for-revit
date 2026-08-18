@@ -58,7 +58,6 @@ export interface CheckEvacuationWidthResult {
 
 function classifyNearLimit(
   items: Array<z.infer<typeof evacuationWidthItemSchema>>,
-  minWidthMm: number,
   toleranceMm: number
 ) {
   const nearLimit: Array<z.infer<typeof evacuationWidthItemSchema>> = [];
@@ -298,7 +297,6 @@ export function registerCheckEvacuationWidthTool(server: McpServer) {
         const rawViolations = raw.violations ?? [];
         const { nearLimit, violations } = classifyNearLimit(
           rawViolations,
-          minWidthMm,
           toleranceMm
         );
 

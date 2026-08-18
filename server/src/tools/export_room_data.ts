@@ -94,7 +94,7 @@ export function registerExportRoomDataTool(server: McpServer) {
           "Max rooms returned per call (default 300). totalRooms still reports the full count."
         ),
     },
-    async (args, extra) => {
+    async (args) => {
       const params = {
         includeUnplacedRooms: args.includeUnplacedRooms ?? false,
         includeNotEnclosedRooms: args.includeNotEnclosedRooms ?? false,

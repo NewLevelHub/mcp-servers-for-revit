@@ -1153,7 +1153,6 @@ export function matchOpeningToGapHost(
 
   if (!best) return null;
 
-  const d = wallUnitDir(best.left);
   const oAlong = alongParam(best.left, opening.centerMm);
   const locationMm = pointOnLine(best.left, oAlong);
   const half = Math.max((opening.widthMm || 900) / 2 + 50, 350);
@@ -1214,7 +1213,6 @@ export function matchOpeningToStubHost(
   }
   if (!best) return null;
 
-  const d = wallUnitDir(best.wall);
   const oAlong = alongParam(best.wall, opening.centerMm);
   const locationMm = pointOnLine(best.wall, oAlong);
   const half = Math.max((opening.widthMm || 900) / 2 + 50, 350);

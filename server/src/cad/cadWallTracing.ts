@@ -794,7 +794,6 @@ function canBridgeOpening(
  */
 function openingInGap(
   openings: Array<{ t: number; offset: number }> | undefined,
-  angle: number,
   offset: number,
   gapFromT: number,
   gapToT: number,
@@ -852,7 +851,6 @@ function mergeCollinearAxes(
     const y0 = a.startMm.y;
     const x1 = a.endMm.x;
     const y1 = a.endMm.y;
-    const length = dist(x0, y0, x1, y1);
     const angle = normalizeAngle(Math.atan2(y1 - y0, x1 - x0));
     const dx = Math.cos(angle);
     const dy = Math.sin(angle);
@@ -919,7 +917,6 @@ function mergeCollinearAxes(
           (projectedOpenings === undefined ||
             openingInGap(
               projectedOpenings,
-              cur.angle,
               cur.offset,
               gapLo,
               gapHi,

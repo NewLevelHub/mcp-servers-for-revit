@@ -81,7 +81,7 @@ export function registerAIElementFilterTool(server: McpServer) {
       })
         .describe("Configuration parameters for the Revit element filter tool. These settings determine which elements will be selected from the Revit project based on various filtering criteria. Multiple filters can be combined to achieve precise element selection. All spatial coordinates should be provided in millimeters."),
     },
-    async (args, extra) => {
+    async (args) => {
       const params = args;
 
       try {

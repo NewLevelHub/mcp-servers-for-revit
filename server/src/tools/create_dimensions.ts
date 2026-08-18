@@ -84,7 +84,7 @@ export function registerCreateDimensionsTool(server: McpServer) {
         )
         .describe("Array of dimensions to create"),
     },
-    async (args, extra) => {
+    async (args) => {
       const params = {
         dimensions: args.dimensions,
       };

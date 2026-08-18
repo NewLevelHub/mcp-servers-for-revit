@@ -27,7 +27,7 @@ export function registerSendCodeToRevitTool(server: McpServer) {
         ),
       transactionMode: transactionModeSchema,
     },
-    async (args, extra) => {
+    async (args) => {
       const params = {
         code: args.code,
         parameters: args.parameters || [],

@@ -17,7 +17,7 @@ export function registerGetMaterialQuantitiesTool(server: McpServer) {
         .default(false)
         .describe("Whether to only analyze currently selected elements. Defaults to false (analyze entire project)."),
     },
-    async (args, extra) => {
+    async (args) => {
       const params = {
         categoryFilters: args.categoryFilters ?? null,
         selectedElementsOnly: args.selectedElementsOnly ?? false,

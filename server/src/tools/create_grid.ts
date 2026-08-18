@@ -149,7 +149,7 @@ export function registerCreateGridTool(server: McpServer) {
           "Which end shows the bubble. DEFAULT bottomLeft = numbers below, letters to the left (one end only). Use 'both' only if explicitly requested."
         ),
     },
-    async (args, extra) => {
+    async (args) => {
       const params = {
         autoFromWalls: args.autoFromWalls,
         wallFilter: args.wallFilter,

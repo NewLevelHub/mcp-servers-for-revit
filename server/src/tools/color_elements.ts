@@ -29,7 +29,7 @@ export function registerColorElementsTool(server: McpServer) {
             .optional()
             .describe("Optional RGB colors in group order (first group → first color). For violations mark them first in parameter values or use Комментарии='НК-нарушение'."),
       },
-      async (args, extra) => {
+      async (args) => {
         const params = args;
         try {
           const response = await withRevitConnection(async (revitClient) => {

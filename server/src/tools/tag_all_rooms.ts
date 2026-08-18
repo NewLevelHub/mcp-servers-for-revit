@@ -23,7 +23,7 @@ export function registerTagAllRoomsTool(server: McpServer) {
         .optional()
         .describe("Optional array of specific room element IDs to tag. If not provided, all rooms in the current view will be tagged"),
     },
-    async (args, extra) => {
+    async (args) => {
       const params = args;
       try {
         const response = await withRevitConnection(async (revitClient) => {

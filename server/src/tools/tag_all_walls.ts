@@ -19,7 +19,7 @@ export function registerTagAllWallsTool(server: McpServer) {
         .optional()
         .describe("The ID of the specific wall tag family type to use. If not provided, the default wall tag type will be used"),
     },
-    async (args, extra) => {
+    async (args) => {
       const params = args;
       try {
         const response = await withRevitConnection(async (revitClient) => {
