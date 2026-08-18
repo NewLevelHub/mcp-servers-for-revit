@@ -31,7 +31,7 @@ export function registerGetDoorEgressInfoTool(server: McpServer) {
           content: [
             {
               type: "text",
-              text: JSON.stringify(response),
+              text: JSON.stringify(annotateDoorEgressResponse(response)),
             },
           ],
         };
