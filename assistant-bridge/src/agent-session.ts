@@ -102,10 +102,22 @@ const MAX_JOURNAL_CHARS = 2000;
  * falls back to `default` rather than guessing — a heavy turn that reaches for a
  * hidden tool is the one failure this must not produce.
  */
-const HINT_TOOL_GROUPS: ReadonlyArray<readonly [string, string]> = [
+export const HINT_TOOL_GROUPS: ReadonlyArray<readonly [string, string]> = [
   ["предупрежд", "quality"],
   ["к выдаче", "quality"],
   ["готов ли", "quality"],
+  // Каждая — предмет отдельного check_*. Найдено вживую 18.08.2026: на
+  // «проверь противопожарные двери» не сработало ни одно слово, профиль остался
+  // `lite`, check_fire_doors был скрыт — и модель, вместо того чтобы сказать
+  // «не могу», собрала ответ по спецификации и сообщила архитектору, что
+  // проверки по СП/ГОСТ в сборке нет. Она есть и отвечает за 5 секунд.
+  ["противопожарн", "norms"],
+  ["огнестойк", "norms"],
+  ["пожарн", "norms"],
+  ["тамбур", "norms"],
+  ["мгн", "norms"],
+  ["маломобильн", "norms"],
+  ["инсоляц", "norms"],
   ["dwg", "cad"],
   ["cad", "cad"],
   ["подложк", "cad"],
@@ -147,7 +159,7 @@ const HINT_TOOL_GROUPS: ReadonlyArray<readonly [string, string]> = [
  * lists in sync by hand did not survive contact: a word in the group map but not
  * here leaves the turn on `lite` with the very tool it asked for hidden.
  */
-const HEAVY_TASK_HINTS = [
+export const HEAVY_TASK_HINTS = [
   ...HINT_TOOL_GROUPS.map(([hint]) => hint),
   // Heavy, but naming no group of their own: an open brief ("спроектируй") or a
   // whole section ("раздел") could need anything, so pickToolProfile falls back
@@ -155,7 +167,72 @@ const HEAVY_TASK_HINTS = [
   "спроектируй",
   "запроектируй",
   "раздел",
+  // «Проверь …» — самый опасный случай для списка слов: почти всегда нужен
+  // какой-то check_*, но какой именно, по глаголу не понять. Слово без группы
+  // роняет запрос в `default`, то есть в полный каталог: дороже по токенам, зато
+  // ни один инструмент не спрятан. Ошибиться в эту сторону безопасно, в другую —
+  // нет: скрытый инструмент модель не показывает, а обходит.
+  "провер",
+  "соответств",
+  "по нормативу",
+  "по гост",
+  "по сп ",
+  "по сн ",
 ];
+
+/** The panel prefixes the view context; route on what the architect typed. */
+export function requestText(userText: string): string {
+  const marker = userText.lastIndexOf("[Запрос]");
+  return (marker >= 0 ? userText.slice(marker + "[Запрос]".length) : userText).trim();
+}
+
+/**
+ * Is this multi-step work worth the auto router's extra hop, and the wider tool
+ * catalog that comes with it?
+ */
+export function isHeavyRequest(userText: string, hasImages: boolean): boolean {
+  if (hasImages) return true;
+
+  const request = requestText(userText);
+  if (request.length > 600) return true;
+
+  const text = request.toLowerCase();
+  return HEAVY_TASK_HINTS.some((hint) => text.includes(hint));
+}
+
+/**
+ * `MCP_TOOL_PROFILE` for this turn (REV-41).
+ *
+ * Everyday turn → `lite`. Heavy turn whose wording names what it needs →
+ * `lite+<groups>`, which lists the everyday set plus only those groups. Heavy
+ * turn with nothing to go on (an image, a long brief, a bare "проверь") →
+ * `default`, the whole catalog: costlier, but it cannot leave the model reaching
+ * for a hidden tool.
+ *
+ * That asymmetry is the whole design rule here. Too wide costs tokens; too narrow
+ * costs the truth — a model that cannot see `check_fire_doors` does not say so,
+ * it improvises from a schedule and reports that the check does not exist
+ * (observed 18.08.2026).
+ *
+ * The profile is fixed when the run is created and cannot be widened mid-turn —
+ * no MCP client acts on `notifications/tools/list_changed`. See the header of
+ * `server/src/utils/toolCatalog.ts`.
+ */
+export function pickToolProfile(
+  userText: string,
+  hasImages: boolean,
+  liteProfile: string,
+): string {
+  if (!isHeavyRequest(userText, hasImages)) return liteProfile;
+
+  const text = requestText(userText).toLowerCase();
+  const groups: string[] = [];
+  for (const [hint, group] of HINT_TOOL_GROUPS) {
+    if (text.includes(hint) && !groups.includes(group)) groups.push(group);
+  }
+
+  return groups.length > 0 ? `lite+${groups.join(",")}` : "default";
+}
 
 const REVIT_SYSTEM_PREFIX =
   "Ты AI-ассистент проектировщика внутри Autodesk Revit. Работай ТОЛЬКО через MCP-tools " +
@@ -520,41 +597,11 @@ export class AgentSessionManager {
    * question or an everyday edit, or real multi-step work?
    */
   private isHeavyRequest(userText: string, hasImages: boolean): boolean {
-    if (hasImages) return true;
-
-    if (this.requestText(userText).length > 600) return true;
-    const text = this.requestText(userText).toLowerCase();
-    return HEAVY_TASK_HINTS.some((hint) => text.includes(hint));
+    return isHeavyRequest(userText, hasImages);
   }
 
-  /** The panel prefixes the view context; route on what the architect typed. */
-  private requestText(userText: string): string {
-    const marker = userText.lastIndexOf("[Запрос]");
-    return (marker >= 0 ? userText.slice(marker + "[Запрос]".length) : userText).trim();
-  }
-
-  /**
-   * `MCP_TOOL_PROFILE` for this turn (REV-41).
-   *
-   * Everyday turn → `lite`. Heavy turn whose wording names what it needs →
-   * `lite+<groups>`, which lists the everyday set plus only those groups. Heavy
-   * turn with nothing to go on (an image, a long brief) → `default`, the whole
-   * catalog: slower, but it cannot leave the model reaching for a hidden tool.
-   *
-   * The profile is fixed when the run is created and cannot be widened mid-turn —
-   * no MCP client acts on `notifications/tools/list_changed`. See the header of
-   * `server/src/utils/toolCatalog.ts`.
-   */
   private pickToolProfile(userText: string, hasImages: boolean): string {
-    if (!this.isHeavyRequest(userText, hasImages)) return this.config.mcpToolProfile;
-
-    const text = this.requestText(userText).toLowerCase();
-    const groups: string[] = [];
-    for (const [hint, group] of HINT_TOOL_GROUPS) {
-      if (text.includes(hint) && !groups.includes(group)) groups.push(group);
-    }
-
-    return groups.length > 0 ? `lite+${groups.join(",")}` : "default";
+    return pickToolProfile(userText, hasImages, this.config.mcpToolProfile);
   }
 
   /**

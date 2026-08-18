@@ -42,11 +42,14 @@ jobs:
         working-directory: server
         run: npm run check:tool-registry
 
-      - name: Build assistant bridge
+      # The bridge decides which tools a turn may see. It had no tests until a
+      # miss shipped: «проверь противопожарные двери» matched no keyword, stayed
+      # on `lite`, and the model reported that the norm check does not exist.
+      - name: Test assistant bridge
         working-directory: assistant-bridge
         run: |
           npm ci
-          npm run build
+          npm test
 
   plugin:
     name: Revit plugin
