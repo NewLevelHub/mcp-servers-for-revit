@@ -64,6 +64,15 @@ if ((Test-Path $registryPath) -and (Test-Path $commandJson)) {
     $added = @()
     foreach ($cmd in $declared) {
         if ($known -contains $cmd.commandName) { continue }
+        # batch_execute is dispatched by CommandExecutor itself, before the registry
+        # is consulted - it has no class in the command set. Copying it in here
+        # pointed it at RevitMCPCommandSet.dll, where CommandManager then scanned the
+        # whole assembly, found no matching CommandName, and logged a load error for
+        # a command that works fine. Registered once on 18.08.2026 before this guard.
+        if ([string]$cmd.assemblyPath -like "plugin:*") {
+            Write-Host "Пропущена встроенная команда: $($cmd.commandName)" -ForegroundColor Gray
+            continue
+        }
         $registry.commands += [pscustomobject]@{
             commandName            = $cmd.commandName
             assemblyPath           = "RevitMCPCommandSet\{VERSION}\RevitMCPCommandSet.dll"
