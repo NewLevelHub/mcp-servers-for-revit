@@ -68,7 +68,13 @@ export async function seedNormLibrary(
 ): Promise<SeedNormLibraryResult> {
   const normativesDir =
     options.normativesDir ?? (await resolveNormativesDir());
-  const maxPages = options.maxPages ?? 60;
+  // Undefined = read the whole document. The old default of 60 pages silently
+  // truncated every long norm: СП РК 3.02-107 (197 pages) yielded 104 rules
+  // instead of 518, СП РК 3.01-101 (279 pages) 31 instead of 404. Across the 19
+  // PDFs the cap cost 2216 of 3651 extractable rules — more than the library
+  // held — and nothing said so: seeding reported success, and a check with no
+  // rule behind it answers "нарушений не найдено" (REV-51).
+  const maxPages = options.maxPages;
   const preferNumeric = options.preferNumericRules !== false;
 
   const entries = await readdir(normativesDir);

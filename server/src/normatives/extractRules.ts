@@ -92,7 +92,7 @@ interface ParsedLimit {
   unit: NormativeUnit;
 }
 
-interface Segment {
+export interface Segment {
   clause: string;
   text: string;
 }
@@ -204,7 +204,12 @@ function stripClausePrefix(line: string): string {
   return normalizeWhitespace(result);
 }
 
-function splitIntoSegments(text: string, clauseHint?: string): Segment[] {
+/**
+ * Split a norm document into clauses. Exported so coverage analysis measures the
+ * same units the extractor works on — a coverage figure computed against a
+ * different notion of "clause" would describe nothing (REV-51).
+ */
+export function splitIntoSegments(text: string, clauseHint?: string): Segment[] {
   const lines = text
     .split(/\r?\n/)
     .map((line) => normalizeWhitespace(line))

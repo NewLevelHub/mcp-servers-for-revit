@@ -7,7 +7,11 @@ import db from "../database/db.js";
 import { seedNormLibrary } from "../normatives/seedLibrary.js";
 
 const result = await seedNormLibrary(db, {
-  maxPages: Number(process.env.SEED_NORM_MAX_PAGES ?? 60),
+  // Unset = every page. Set SEED_NORM_MAX_PAGES only to cut a slow run short;
+  // it drops rules from the end of every long document (REV-51).
+  ...(process.env.SEED_NORM_MAX_PAGES
+    ? { maxPages: Number(process.env.SEED_NORM_MAX_PAGES) }
+    : {}),
 });
 
 console.log(
