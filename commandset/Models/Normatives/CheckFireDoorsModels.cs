@@ -73,5 +73,35 @@ namespace RevitMCPCommandSet.Models.Normatives
 
         [JsonProperty("warnings")]
         public List<string> Warnings { get; set; } = new();
+
+        /// <summary>
+        /// Where the time went, in ms. Present so the next slow report can be
+        /// diagnosed from the answer itself rather than by rebuilding the plugin
+        /// with a stopwatch in it (REV-53).
+        /// </summary>
+        [JsonProperty("timings", NullValueHandling = NullValueHandling.Ignore)]
+        public CheckFireDoorsTimings Timings { get; set; }
+    }
+
+    public class CheckFireDoorsTimings
+    {
+        [JsonProperty("totalMs")]
+        public long TotalMs { get; set; }
+
+        /// <summary>door.FromRoom / door.ToRoom — Revit recomputes room boundaries here.</summary>
+        [JsonProperty("roomLookupMs")]
+        public long RoomLookupMs { get; set; }
+
+        /// <summary>Schedule-note matching and type comments, both cached by door type.</summary>
+        [JsonProperty("scheduleNoteMs")]
+        public long ScheduleNoteMs { get; set; }
+
+        /// <summary>Fire-rating parameter reads on the instance and its type.</summary>
+        [JsonProperty("parameterMs")]
+        public long ParameterMs { get; set; }
+
+        /// <summary>Distinct door types behind the doors checked — the cache hit rate.</summary>
+        [JsonProperty("doorTypes")]
+        public int DoorTypes { get; set; }
     }
 }
