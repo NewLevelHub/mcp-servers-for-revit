@@ -1,0 +1,15 @@
+{
+  "id": "learning-checks-the-step-in-model",
+  "group": "learning",
+  "userText": "Я поставил стену, проверь, правильно ли получилось",
+  "expectTools": [
+    "get_current_view_info"
+  ],
+  "forbidTools": [
+    "create_line_based_element",
+    "operate_element",
+    "delete_element",
+    "set_element_parameter"
+  ],
+  "maxRounds": 4
+}

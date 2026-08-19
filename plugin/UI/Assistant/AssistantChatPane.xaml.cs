@@ -34,6 +34,8 @@ namespace revit_mcp_plugin.UI.Assistant
         private TaskCompletionSource<AskUserAnswer> _askUserTcs;
         private AskUserBubble _activeAskBubble;
         private bool _busy;
+        private bool _tutorMode;
+        private bool _suppressTutorNotice;
         private PlanChecklistBubble _activePlanBubble;
         private ToolJournalBubble _activeJournalBubble;
         private ChatBubble _streamingBubble;
@@ -47,7 +49,8 @@ namespace revit_mcp_plugin.UI.Assistant
         public AssistantChatPane()
         {
             InitializeComponent();
-            _agent = AssistantHostFactory.Create(PluginSettingsStore.LoadSettings());
+            var settings = PluginSettingsStore.LoadSettings();
+            _agent = AssistantHostFactory.Create(settings);
             Loaded += OnLoaded;
             _agent.StatusChanged += OnAgentStatus;
             _agent.ConfirmationRequested += OnConfirmationRequested;
@@ -59,8 +62,43 @@ namespace revit_mcp_plugin.UI.Assistant
             _agent.ToolStepChanged += OnToolStepChanged;
             _agent.ReplyDelta += OnReplyDelta;
             BuildChips();
+            RestoreTutorMode(settings);
             ShowWelcomeMessage();
             SetStatus("Готов", StatusTone.Ok);
+        }
+
+        /// <summary>
+        /// REV-154: режим наставника переживает перезапуск Revit — новичок включает его один раз,
+        /// а не каждое утро заново.
+        /// </summary>
+        private void RestoreTutorMode(ServiceSettings settings)
+        {
+            _tutorMode = settings != null && settings.AssistantTutorMode;
+            _suppressTutorNotice = true;
+            TutorModeToggle.IsChecked = _tutorMode;
+            _suppressTutorNotice = false;
+        }
+
+        private void TutorModeToggle_Changed(object sender, RoutedEventArgs e)
+        {
+            _tutorMode = TutorModeToggle.IsChecked == true;
+            if (_suppressTutorNotice)
+                return;
+
+            try
+            {
+                var settings = PluginSettingsStore.LoadSettings();
+                settings.AssistantTutorMode = _tutorMode;
+                PluginSettingsStore.SaveSettings(settings);
+            }
+            catch
+            {
+                // Настройку не записали — на текущую сессию режим всё равно действует.
+            }
+
+            // Человек должен видеть в переписке, где он находится: молчаливая смена режима
+            // выглядит как «ассистент вдруг перестал работать».
+            AddBotMessage(TutorMode.NoticeFor(_tutorMode));
         }
 
         private void ShowWelcomeMessage()
@@ -895,7 +933,8 @@ namespace revit_mcp_plugin.UI.Assistant
             try
             {
                 var result = await _agent.RunAsync(
-                        toAgent, SnapshotSessionContext().FormatForPrompt(), attachments, _runCts.Token, turnId, toolProfiles)
+                        toAgent, SnapshotSessionContext().FormatForPrompt(), attachments, _runCts.Token, turnId,
+                        TutorMode.ResolveProfiles(_tutorMode, toolProfiles))
                     .ConfigureAwait(true);
 
                 ClearStreamingBubble();

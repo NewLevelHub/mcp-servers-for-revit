@@ -37,6 +37,9 @@
     <Compile Include="..\..\plugin\Core\Assistant\DeleteConfirmSummary.cs" Link="DeleteConfirmSummary.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\TypologyPrograms.cs" Link="TypologyPrograms.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\IntentRouter.cs" Link="IntentRouter.cs" />
+    <Compile Include="..\..\plugin\Core\Assistant\TutorMode.cs" Link="TutorMode.cs" />
+    <Compile Include="..\..\plugin\Core\Assistant\RevitUiCatalog.cs" Link="RevitUiCatalog.cs" />
+    <Compile Include="..\..\plugin\Core\Assistant\RevitUiHints.cs" Link="RevitUiHints.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\OpenAiCompatibleClient.cs" Link="OpenAiCompatibleClient.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\IAssistantToolExecutor.cs" Link="IAssistantToolExecutor.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\IChatCompletionsClient.cs" Link="IChatCompletionsClient.cs" />

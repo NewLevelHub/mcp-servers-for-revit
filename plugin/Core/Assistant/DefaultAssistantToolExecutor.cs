@@ -14,6 +14,10 @@ namespace revit_mcp_plugin.Core.Assistant
             if (toolName.Equals("query_norm_rules", StringComparison.OrdinalIgnoreCase))
                 return NormCatalogStore.ExecuteQueryTool(argsJson);
 
+            // Кнопки ленты — локальный файл, снятый при запуске Revit. Через Revit ходить незачем.
+            if (toolName.Equals("query_revit_ui", StringComparison.OrdinalIgnoreCase))
+                return RevitUiCatalog.ExecuteQueryTool(argsJson);
+
             if (toolName.Equals("declare_plan", StringComparison.OrdinalIgnoreCase))
                 return AgentPlan.ExecuteAsTool(argsJson);
 

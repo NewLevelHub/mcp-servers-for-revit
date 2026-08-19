@@ -1,0 +1,12 @@
+{
+  "id": "learning-how-to-place-door",
+  "group": "learning",
+  "userText": "Как поставить дверь в стену?",
+  "forbidTools": [
+    "create_point_based_element",
+    "operate_element",
+    "delete_element",
+    "set_element_parameter"
+  ],
+  "maxRounds": 3
+}

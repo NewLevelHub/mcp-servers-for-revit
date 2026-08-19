@@ -112,6 +112,7 @@ namespace revit_mcp_plugin.Core
             RibbonStatusManager.UpdateStatus(SocketService.Instance.IsRunning);
             uiApp.ViewActivated += OnViewActivated;
             AssistantUiHost.Attach(uiApp);
+            RefreshRibbonCatalog(uiApp);
 
             if (!PluginSettingsStore.GetAutoStartOnLaunch() || SocketService.Instance.IsRunning)
             {
@@ -130,6 +131,29 @@ namespace revit_mcp_plugin.Core
             }
 
             AssistantUiHost.Refresh();
+        }
+
+        /// <summary>
+        /// Молча снимает список кнопок ленты в файл (REV-150 → REV-151).
+        ///
+        /// Ассистент должен отвечать «где эта кнопка» по факту, а не по памяти: у пользователя
+        /// своя версия Revit, свой язык интерфейса и свои аддоны. Ничего в интерфейсе при этом
+        /// не появляется — сканер работает один раз при запуске и молчит.
+        /// </summary>
+        private static void RefreshRibbonCatalog(UIApplication uiApp)
+        {
+            try
+            {
+                var version = uiApp.Application.VersionNumber;
+                var language = uiApp.Application.Language.ToString();
+                var catalog = Tutor.RibbonScanner.Scan(version, language);
+                if (catalog != null)
+                    Tutor.RibbonScanner.Save(catalog, version, language);
+            }
+            catch
+            {
+                // Каталог — удобство, а не условие работы плагина. Не смогли снять — молчим.
+            }
         }
 
         public Result OnShutdown(UIControlledApplication application)

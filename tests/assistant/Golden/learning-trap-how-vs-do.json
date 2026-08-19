@@ -1,0 +1,11 @@
+{
+  "id": "learning-trap-how-vs-do",
+  "group": "routing_traps",
+  "userText": "Как построить две комнаты?",
+  "forbidTools": [
+    "create_line_based_element",
+    "create_room",
+    "declare_plan"
+  ],
+  "maxRounds": 3
+}

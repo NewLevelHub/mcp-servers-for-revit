@@ -399,6 +399,34 @@ internal static class ScriptedChains
                 }),
                 ("tag_rooms", null),
             ]),
+            // REV-153: наставник ведёт по одному шагу и ничего не строит сам.
+            // REV-151: путь к кнопке берётся из ленты этого Revit, а не из памяти модели.
+            "learning-where-is-wall" => ScriptedChatClient.FromToolChain([
+                ("query_revit_ui", new { query = "стена" }),
+            ], "Вкладка «Архитектура», панель «Построение», кнопка «Стена: архитектурная». Открой и скажи, видишь ли её."),
+            "learning-how-to-place-door" => new ScriptedChatClient([
+                ScriptedChatClient.MakeTextCompletion(
+                    "Дверь вставляется в готовую стену, отдельно она не ставится. " +
+                    "Шаг 1: открой план этажа, где стоит нужная стена. Открыл — скажи, продолжим."),
+            ]),
+            "learning-refuses-to-build-for-you" => new ScriptedChatClient([
+                ScriptedChatClient.MakeTextCompletion(
+                    "Сейчас я в режиме наставника: веду по шагам, но не строю за тебя — так навык и нарабатывается. " +
+                    "Начнём с первого шага, а если нужно просто сделать, выключи режим наставника."),
+            ]),
+            "learning-checks-the-step-in-model" => ScriptedChatClient.FromToolChain([
+                ("get_current_view_info", null),
+            ], "Стена на месте, уровень тот же, что у вида. Дальше — дверь."),
+            "learning-explains-a-term" => new ScriptedChatClient([
+                ScriptedChatClient.MakeTextCompletion(
+                    "Уровень (Level) — высотная отметка, к которой привязан элемент. " +
+                    "Стена всегда стоит на уровне, поэтому уровни задают до стен."),
+            ]),
+            "learning-trap-how-vs-do" => new ScriptedChatClient([
+                ScriptedChatClient.MakeTextCompletion(
+                    "Ты спросил «как», поэтому объясняю, а не строю. " +
+                    "Шаг 1: открой план этажа. Дальше по одному шагу."),
+            ]),
             _ => throw new InvalidOperationException("No scripted chain for golden case: " + c.Id),
         };
 }

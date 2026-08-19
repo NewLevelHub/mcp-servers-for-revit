@@ -1,0 +1,14 @@
+{
+  "id": "learning-where-is-wall",
+  "group": "learning",
+  "userText": "Где найти кнопку стены?",
+  "expectTools": ["query_revit_ui"],
+  "firstToolMustBe": "query_revit_ui",
+  "forbidTools": [
+    "create_line_based_element",
+    "create_point_based_element",
+    "operate_element",
+    "delete_element"
+  ],
+  "maxRounds": 3
+}

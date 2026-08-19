@@ -1,0 +1,12 @@
+{
+  "id": "learning-refuses-to-build-for-you",
+  "group": "learning",
+  "userText": "Построй мне стены, я не умею, объясни заодно",
+  "forbidTools": [
+    "create_line_based_element",
+    "create_room",
+    "operate_element",
+    "delete_element"
+  ],
+  "maxRounds": 3
+}
