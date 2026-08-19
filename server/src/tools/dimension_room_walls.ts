@@ -50,7 +50,7 @@ export function registerDimensionRoomWallsTool(server: McpServer) {
         .default(-1)
         .describe("Floor plan view ID. -1 uses the active view."),
     },
-    async (args, extra) => {
+    async (args) => {
       const params = {
         roomId: args.roomId,
         placement: args.placement ?? "interior",

@@ -8,13 +8,17 @@ import {
 } from "./fireDoorRules.js";
 import {
   getNormLibraryStats,
+  pruneNormRules,
   saveNormRules,
   withSuggestedTags,
   type NormLibraryStats,
 } from "./rulesStore.js";
 import { ensureCuratedResidentialRoomNorms } from "./normAudit/curatedResidentialRoomNorms.js";
 import { ensureCuratedGost21101Rules } from "./curatedGost21101Rules.js";
-import { exportNormCatalog } from "./exportNormCatalog.js";
+import {
+  DEFAULT_NORM_CATALOG_PATH,
+  exportNormCatalog,
+} from "./exportNormCatalog.js";
 
 type Database = DatabaseConstructor.Database;
 
@@ -23,6 +27,15 @@ export interface SeedNormLibraryOptions {
   normativesDir?: string;
   /** Max PDF pages to parse per file (keeps seed bounded). */
   maxPages?: number;
+  /** Delete rules this run did not produce. See pruneNormRules. */
+  prune?: boolean;
+  /**
+   * Where to write the in-Revit assistant catalog, or `null` to skip the export.
+   * Seeding a throwaway database would otherwise overwrite the committed
+   * `plugin/Resources/norm-catalog.json` — including from the script whose job is
+   * to verify that file (REV-52).
+   */
+  catalogPath?: string | null;
   /** Prefer numeric / checkable rules when seeding (drops pure notes). */
   preferNumericRules?: boolean;
 }
@@ -46,6 +59,8 @@ export interface SeedNormLibraryResult {
   filesFailed: number;
   inserted: number;
   updated: number;
+  /** Stale rules deleted; 0 unless options.prune. */
+  pruned: number;
   files: SeedNormFileResult[];
   library: NormLibraryStats;
 }
@@ -68,7 +83,13 @@ export async function seedNormLibrary(
 ): Promise<SeedNormLibraryResult> {
   const normativesDir =
     options.normativesDir ?? (await resolveNormativesDir());
-  const maxPages = options.maxPages ?? 60;
+  // Undefined = read the whole document. The old default of 60 pages silently
+  // truncated every long norm: СП РК 3.02-107 (197 pages) yielded 104 rules
+  // instead of 518, СП РК 3.01-101 (279 pages) 31 instead of 404. Across the 19
+  // PDFs the cap cost 2216 of 3651 extractable rules — more than the library
+  // held — and nothing said so: seeding reported success, and a check with no
+  // rule behind it answers "нарушений не найдено" (REV-51).
+  const maxPages = options.maxPages;
   const preferNumeric = options.preferNumericRules !== false;
 
   const entries = await readdir(normativesDir);
@@ -80,6 +101,9 @@ export async function seedNormLibrary(
   let inserted = 0;
   let updated = 0;
   let filesFailed = 0;
+  let pruned = 0;
+  /** Every rule_key this run produced — the set prune keeps. */
+  const producedKeys = new Set<string>();
 
   for (const fileName of pdfs) {
     const pdfPath = join(normativesDir, fileName);
@@ -128,6 +152,7 @@ export async function seedNormLibrary(
       });
       inserted += saveResult.inserted;
       updated += saveResult.updated;
+      for (const r of saveResult.results) producedKeys.add(r.ruleKey);
       files.push({
         fileName,
         document,
@@ -155,14 +180,28 @@ export async function seedNormLibrary(
   const curatedResidential = ensureCuratedResidentialRoomNorms(db);
   inserted += curatedResidential.inserted;
   updated += curatedResidential.updated;
+  for (const r of curatedResidential.results) producedKeys.add(r.ruleKey);
 
   const curatedGost = ensureCuratedGost21101Rules(db);
   inserted += curatedGost.inserted;
   updated += curatedGost.updated;
+  for (const r of curatedGost.results) producedKeys.add(r.ruleKey);
+
+  // Makes the library a function of (PDFs, curated sets, extractor) instead of a
+  // running total of every seed ever performed on this machine. Opt-in because a
+  // rule saved through save_norm_rule looks the same in this schema (REV-52).
+  if (options.prune) {
+    pruned = pruneNormRules(db, producedKeys);
+  }
 
   // Keep in-Revit assistant catalog in sync after every seed.
   try {
-    await exportNormCatalog(db);
+    if (options.catalogPath !== null) {
+      await exportNormCatalog(
+        db,
+        options.catalogPath ?? DEFAULT_NORM_CATALOG_PATH
+      );
+    }
   } catch (error) {
     // Seed itself succeeded; export is best-effort for the plugin.
     const detail = error instanceof Error ? error.message : String(error);
@@ -183,6 +222,7 @@ export async function seedNormLibrary(
     filesFailed,
     inserted,
     updated,
+    pruned,
     files,
     library: getNormLibraryStats(db),
   };

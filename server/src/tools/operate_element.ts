@@ -34,7 +34,7 @@ export function registerOperateElementTool(server: McpServer) {
         })
         .describe("Parameters for operating on Revit elements with specific actions"),
     },
-    async (args, extra) => {
+    async (args) => {
       const params = args;
 
       try {

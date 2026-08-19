@@ -38,7 +38,7 @@ export function registerTagElementsTool(server: McpServer) {
         .optional()
         .describe("View to tag in. Omit for the active view."),
     },
-    async (args, extra) => {
+    async (args) => {
       const elementIds = args.elementIds ?? [];
       const { categories, unresolved } = normalizeCategoryNames(args.category);
 

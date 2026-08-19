@@ -3,6 +3,11 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { wrapToolHandler } from "../utils/toolOutcome.js";
+import {
+  type ToolHandle,
+  hideUnlistedTools,
+  parseToolProfile,
+} from "../utils/toolCatalog.js";
 
 /**
  * Register norms + check_* first (REV-46).
@@ -47,44 +52,10 @@ const DEFAULT_DENYLIST = new Set([
   "query_stored_data",
 ]);
 
-/**
- * Tools that stay listed in the `lite` profile (REV-157).
- *
- * The full catalog serialises to ~188 KB of JSON schema — roughly 50k tokens the
- * model reads before writing its first character, on every single turn. An
- * architect asking a one-line question waits through all of it. `lite` lists the
- * everyday set (~29 KB); the assistant-bridge asks for the `default` profile on
- * the turns that need more. Registration is unchanged — the rest is registered
- * and then hidden, so a profile switch costs no extra wiring.
- */
-const LITE_ALLOWLIST = new Set([
-  // Look before you touch.
-  "get_current_view_info",
-  "get_current_view_elements",
-  "get_selected_elements",
-  "get_element_parameters",
-  "get_elements_parameters",
-  "get_available_family_types",
-  "get_document_styles",
-  "analyze_model_statistics",
-  "export_room_data",
-  // Everyday modelling.
-  "create_line_based_element",
-  "create_point_based_element",
-  "create_surface_based_element",
-  "create_room",
-  "create_level",
-  "create_text_note",
-  "ensure_wall_type",
-  "number_rooms",
-  "set_element_parameter",
-  // The batch form has to be listed wherever the singular one is: its description
-  // tells the model to prefer the batch, and a request with no heavy-task hint
-  // never escalates past `lite`, so pointing at a hidden tool would cost a turn.
-  "set_elements_parameters",
-  "operate_element",
-  "delete_element",
-]);
+// `lite` lists the everyday set and hides the rest (REV-157); `lite+<groups>`
+// adds back only the groups a task needs (REV-41). The set, the group map, and
+// why composition happens at startup rather than mid-session, are all in
+// `utils/toolCatalog.ts`.
 
 function toolBaseName(file: string): string {
   return file.replace(/\.(ts|js)$/, "");
@@ -125,8 +96,6 @@ function shouldRegisterTool(base: string, profile: string): boolean {
   // `lite` shares the default set; the trimming happens after registration.
   return !DEFAULT_DENYLIST.has(base);
 }
-
-type ToolHandle = { enable(): void; disable(): void };
 
 /**
  * Every `server.tool` overload ends with the handler, so the last function
@@ -176,21 +145,6 @@ function captureTools(server: McpServer, sink: Map<string, ToolHandle>): McpServ
   }) as McpServer;
 }
 
-/** Hide everything outside the lite set. Returns how many tools were hidden. */
-function lockNonLiteTools(handles: Map<string, ToolHandle>): number {
-  let locked = 0;
-  for (const [name, handle] of handles) {
-    if (LITE_ALLOWLIST.has(name)) continue;
-    try {
-      handle.disable();
-      locked += 1;
-    } catch (error) {
-      console.error(`не удалось скрыть инструмент ${name}:`, error);
-    }
-  }
-  return locked;
-}
-
 async function registerToolFile(
   server: McpServer,
   file: string
@@ -214,11 +168,17 @@ async function registerToolFile(
 export async function registerTools(server: McpServer): Promise<number> {
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
-  const profile = (process.env.MCP_TOOL_PROFILE ?? "default").toLowerCase();
+  const raw = process.env.MCP_TOOL_PROFILE;
+  const { base: profile, groups, unknownGroups } = parseToolProfile(raw);
 
   console.error(
-    `Node ${process.version} (ABI ${process.versions.modules}), profile=${profile}`
+    `Node ${process.version} (ABI ${process.versions.modules}), profile=${raw ?? "default"}`
   );
+  if (unknownGroups.length > 0) {
+    console.error(
+      `MCP_TOOL_PROFILE names unknown tool group(s): ${unknownGroups.join(", ")} — ignored`
+    );
+  }
 
   const files = sortToolFiles(
     fs.readdirSync(__dirname).filter(isToolModuleFile)
@@ -249,8 +209,12 @@ export async function registerTools(server: McpServer): Promise<number> {
   }
 
   if (lite) {
-    const locked = lockNonLiteTools(handles);
-    console.error(`lite profile: ${handles.size - locked} tools listed, ${locked} hidden`);
+    const hidden = hideUnlistedTools(handles, groups);
+    const withGroups = groups.length > 0 ? ` (+${groups.join(",")})` : "";
+    console.error(
+      `lite profile${withGroups}: ${handles.size - hidden.length} tools listed, ` +
+        `${hidden.length} hidden`
+    );
   }
 
   console.error(

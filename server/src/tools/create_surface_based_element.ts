@@ -58,7 +58,7 @@ export function registerCreateSurfaceBasedElementTool(server: McpServer) {
         )
         .describe("Array of surface-based elements to create"),
     },
-    async (args, extra) => {
+    async (args) => {
       const params = args;
       try {
         const response = await withRevitConnection(async (revitClient) => {

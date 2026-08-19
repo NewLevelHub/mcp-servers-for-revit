@@ -10,6 +10,7 @@ import {
   saveNormRules,
   type SaveableNormRule,
   type StoredNormRule,
+  type SaveNormRulesResult,
 } from "../rulesStore.js";
 
 export const CURATED_BATHROOM_AREA_RULE_ID =
@@ -182,10 +183,7 @@ export function curatedResidentialRoomNorms(): SaveableNormRule[] {
 }
 
 /** Upsert curated rules into SQLite (idempotent). */
-export function ensureCuratedResidentialRoomNorms(db: Database): {
-  inserted: number;
-  updated: number;
-} {
+export function ensureCuratedResidentialRoomNorms(db: Database): SaveNormRulesResult {
   return saveNormRules(db, curatedResidentialRoomNorms(), {
     documentVersion: "27.04.2021",
   });

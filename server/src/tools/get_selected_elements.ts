@@ -18,7 +18,7 @@ export function registerGetSelectedElementsTool(server: McpServer) {
         .optional()
         .describe("Number of selected elements to skip before the page. Use when HasMore is true."),
     },
-    async (args, extra) => {
+    async (args) => {
       const params = {
         limit: args.limit || 100,
         offset: args.offset || 0,

@@ -266,8 +266,13 @@ export class RevitClientConnection {
     } catch (error) {
       const detail =
         error instanceof Error ? error.message : String(error);
-      // Legacy plugin without ping still proves the TCP channel is alive.
-      if (/Method not found|не найден|未找到方法/i.test(detail)) {
+      // Legacy plugin without ping still proves the TCP channel is alive. The
+      // wording differs by build — Chinese before 2026-08, Russian after
+      // (CommandAvailability.DescribeMissing) — so match every phrasing that has
+      // ever meant "no such method" rather than tearing down a live socket.
+      if (
+        /Method not found|не найден|отсутствует в этой сборке|未找到方法/i.test(detail)
+      ) {
         return;
       }
       console.error(`Heartbeat failed: ${detail}`);

@@ -221,6 +221,38 @@ function normalizeText(value: string): string {
  * width and ceiling height in the same п. 4.2.3), so object and rule type are
  * part of the key — dedup by document+clause alone would drop rules.
  */
+/**
+ * Delete every rule whose key a seed run did not produce (REV-52).
+ *
+ * Without this the table only ever grows: rules extracted by an older parser, or
+ * from a PDF since replaced, stay forever. Two machines that seeded at different
+ * times then hold different libraries from the same repository, and a norm check
+ * gives different answers on each — which is exactly what "у всех одинаково"
+ * has to rule out.
+ *
+ * Destructive on purpose, and therefore opt-in: rules an architect saved through
+ * `save_norm_rule` are indistinguishable from seeded ones in this schema, and a
+ * blanket prune would silently delete their work. Callers pass `prune` only when
+ * they mean "this database is a build artifact".
+ */
+export function pruneNormRules(db: Database, keepKeys: Iterable<string>): number {
+  ensureNormRulesSchema(db);
+
+  const keep = new Set(keepKeys);
+  const all = db.prepare("SELECT rule_key FROM norm_rules").all() as Array<{
+    rule_key: string;
+  }>;
+  const stale = all.map((row) => row.rule_key).filter((key) => !keep.has(key));
+  if (stale.length === 0) return 0;
+
+  const remove = db.prepare("DELETE FROM norm_rules WHERE rule_key = ?");
+  db.transaction((keys: string[]) => {
+    for (const key of keys) remove.run(key);
+  })(stale);
+
+  return stale.length;
+}
+
 export function buildRuleKey(rule: NormativeRule): string {
   return [rule.source.document, rule.source.clause, rule.object, rule.type]
     .map(normalizeText)

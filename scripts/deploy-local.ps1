@@ -64,6 +64,15 @@ if ((Test-Path $registryPath) -and (Test-Path $commandJson)) {
     $added = @()
     foreach ($cmd in $declared) {
         if ($known -contains $cmd.commandName) { continue }
+        # batch_execute is dispatched by CommandExecutor itself, before the registry
+        # is consulted - it has no class in the command set. Copying it in here
+        # pointed it at RevitMCPCommandSet.dll, where CommandManager then scanned the
+        # whole assembly, found no matching CommandName, and logged a load error for
+        # a command that works fine. Registered once on 18.08.2026 before this guard.
+        if ([string]$cmd.assemblyPath -like "plugin:*") {
+            Write-Host "Пропущена встроенная команда: $($cmd.commandName)" -ForegroundColor Gray
+            continue
+        }
         $registry.commands += [pscustomobject]@{
             commandName            = $cmd.commandName
             assemblyPath           = "RevitMCPCommandSet\{VERSION}\RevitMCPCommandSet.dll"
@@ -293,6 +302,32 @@ try {
 }
 catch {
     Write-Warning "Не удалось записать version.json: $($_.Exception.Message)"
+}
+
+# build-assistant-cursor.ps1 заканчивает сборку `npm prune --omit=dev`, чтобы в Revit
+# не уезжали TypeScript и тесты. Прунится тот же node_modules, в котором работает
+# разработчик, поэтому сразу после деплоя в репозитории пропадает tsc, и `npm test`
+# падает с «This is not the tsc command you are looking for» — сообщение, по которому
+# причину не угадать. Возвращаем dev-зависимости: полезная нагрузка уже скопирована,
+# на неё это не влияет.
+foreach ($devDir in @("server", "assistant-bridge")) {
+    $full = Join-Path $repo $devDir
+    if (-not (Test-Path (Join-Path $full "package.json"))) { continue }
+    Push-Location $full
+    try {
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        npm install --silent --no-audit --no-fund 2>&1 | Out-Null
+        $ok = $LASTEXITCODE -eq 0
+        $ErrorActionPreference = $prevEap
+        if ($ok) {
+            Write-Host "Dev-зависимости возвращены в $devDir/" -ForegroundColor Gray
+        }
+        else {
+            Write-Warning "Не удалось вернуть dev-зависимости в $devDir/ — перед 'npm test' выполните 'npm install' вручную."
+        }
+    }
+    finally { Pop-Location }
 }
 
 Write-Host "Готово. Запускайте Revit." -ForegroundColor Green

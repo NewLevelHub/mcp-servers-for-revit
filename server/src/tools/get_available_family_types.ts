@@ -38,7 +38,7 @@ export function registerGetAvailableFamilyTypesTool(server: McpServer) {
           "Number of matches to skip before the page. Use with limit to read past the first page when HasMore is true."
         ),
     },
-    async (args, extra) => {
+    async (args) => {
       const requested = [
         ...(args.categoryList ?? []),
         ...(typeof args.category === "string"

@@ -65,7 +65,7 @@ export function registerCreateStructuralFramingSystemTool(server: McpServer) {
           "Whether to create a 3D beam system. Set to true for sloped or non-planar systems."
         ),
     },
-    async (args, extra) => {
+    async (args) => {
       const params = {
         levelName: args.levelName,
         xMin: args.xMin,

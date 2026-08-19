@@ -84,7 +84,7 @@ export function registerDimensionGridsTool(server: McpServer) {
         .optional()
         .describe("Extra overshoot beyond outer tier for bubbles (mm). Omitted = 1.5 tier gaps."),
     },
-    async (args, extra) => {
+    async (args) => {
       const params = {
         gridIds: args.gridIds ?? [],
         firstOffsetMm: args.firstOffsetMm,

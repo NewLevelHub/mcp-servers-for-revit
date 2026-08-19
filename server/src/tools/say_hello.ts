@@ -12,7 +12,7 @@ export function registerSayHelloTool(server: McpServer) {
         .optional()
         .describe("Optional custom message to display in the dialog. Defaults to 'Hello MCP!'"),
     },
-    async (args, extra) => {
+    async (args) => {
       const params = args;
       try {
         const response = await withRevitConnection(async (revitClient) => {

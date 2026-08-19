@@ -57,6 +57,8 @@ const SERVER_ONLY_TOOLS = new Set([
   "check_vertical_circulation",
   "check_window_openings",
   "fill_title_block",
+  // orchestrates ai_element_filter + get_elements_parameters, no Revit command of its own
+  "check_sheet_readiness",
   "number_rooms",
   "trace_walls_from_cad",
   "trace_openings_from_cad",

@@ -56,7 +56,7 @@ export function registerCreateLevelTool(server: McpServer) {
         )
         .describe("Array of levels to create"),
     },
-    async (args, extra) => {
+    async (args) => {
       const params = {
         data: args.data,
       };

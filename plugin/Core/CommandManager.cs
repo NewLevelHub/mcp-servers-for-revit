@@ -47,6 +47,7 @@ namespace revit_mcp_plugin.Core
         /// </summary>
         public void LoadCommands()
         {
+            CommandAvailability.Reset();
             _logger.Info("开始加载命令\nStart loading command.");
             string currentVersion = _versionAdapter.GetRevitVersion();
             _logger.Info("当前 Revit 版本: {0}\nCurrent Revit version: {0}", currentVersion);
@@ -59,6 +60,7 @@ namespace revit_mcp_plugin.Core
                 {
                     if (!commandConfig.Enabled)
                     {
+                        CommandAvailability.RecordDisabled(commandConfig.CommandName);
                         _logger.Info("跳过禁用的命令: {0}\nSkipping disabled command: {0}", commandConfig.CommandName);
                         continue;
                     }
@@ -78,6 +80,7 @@ namespace revit_mcp_plugin.Core
                         commandConfig.SupportedRevitVersions.Length > 0 &&
                         !_versionAdapter.IsVersionSupported(commandConfig.SupportedRevitVersions))
                     {
+                        CommandAvailability.RecordUnsupportedVersion(commandConfig.CommandName, currentVersion);
                         _logger.Warning("命令 {0} 不支持当前 Revit 版本 {1}，已跳过\nThe command {0} is not supported by the current Revit version ({1}} and it has been skipped.",
                             commandConfig.CommandName, currentVersion);
                         continue;
@@ -95,6 +98,7 @@ namespace revit_mcp_plugin.Core
                 }
                 catch (Exception ex)
                 {
+                    CommandAvailability.RecordLoadFailed(commandConfig.CommandName, ex.Message);
                     _logger.Error("加载命令 {0} 失败: {1}\nFailed to load command {0}: {1}", commandConfig.CommandName, ex.Message);
                 }
             }
@@ -124,6 +128,9 @@ namespace revit_mcp_plugin.Core
 
                 if (!File.Exists(assemblyPath))
                 {
+                    CommandAvailability.RecordLoadFailed(
+                        config.CommandName,
+                        "не найден файл " + Path.GetFileName(assemblyPath));
                     _logger.Error("命令程序集不存在: {0}\nCommand assembly does not exist: {0}", assemblyPath);
                     return;
                 }
@@ -191,6 +198,7 @@ namespace revit_mcp_plugin.Core
             }
             catch (Exception ex)
             {
+                CommandAvailability.RecordLoadFailed(config.CommandName, ex.Message);
                 _logger.Error("加载命令程序集失败: {0}\nFailed to load command assembly: {0}", ex.Message);
             }
         }

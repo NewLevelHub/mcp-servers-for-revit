@@ -10,6 +10,7 @@ import {
   saveNormRules,
   type SaveableNormRule,
   type StoredNormRule,
+  type SaveNormRulesResult,
 } from "./rulesStore.js";
 
 export const CURATED_TITLE_BLOCK_LINE_HEIGHT_RULE_ID =
@@ -87,10 +88,7 @@ export function curatedGost21101Rules(): SaveableNormRule[] {
 }
 
 /** Upsert curated ГОСТ 21.101 rules into SQLite (idempotent). */
-export function ensureCuratedGost21101Rules(db: Database): {
-  inserted: number;
-  updated: number;
-} {
+export function ensureCuratedGost21101Rules(db: Database): SaveNormRulesResult {
   return saveNormRules(db, curatedGost21101Rules(), {
     documentVersion: "97",
   });

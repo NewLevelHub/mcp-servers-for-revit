@@ -21,7 +21,7 @@ export function registerAnalyzeModelStatisticsTool(server: McpServer) {
         .default(true)
         .describe("Whether to include detailed breakdown by family and type within each category. Defaults to true."),
     },
-    async (args, extra) => {
+    async (args) => {
       const includeDetailedTypes = args.includeDetailedTypes ?? true;
       const params = { includeDetailedTypes };
 

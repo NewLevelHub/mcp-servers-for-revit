@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { access } from "node:fs/promises";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import pdfParse from "pdf-parse";
@@ -198,11 +198,51 @@ function dedupeRules(rules: FireDoorNormRule[]): FireDoorNormRule[] {
   return [...byQuote.values()];
 }
 
+export interface FireDoorRulesResult {
+  rules: FireDoorNormRule[];
+  warnings: string[];
+  normativesDir: string;
+}
+
+/**
+ * Parsed rules keyed by the files they came from (REV-53).
+ *
+ * Every call used to re-read and re-parse the same PDFs. Measured on «Короткий
+ * блок»: the Revit side of check_fire_doors takes ~4 s for 483 doors, while the
+ * tool as a whole took 37 s — the other 33 s were spent parsing five documents
+ * that had not changed since the previous call minutes earlier.
+ *
+ * Removing the 60-page cap in REV-51 made this worse, not better: the same five
+ * documents are now parsed in full, including the 145-page fire-safety
+ * regulation. Correct rules, paid for on every single check.
+ */
+const fireDoorRulesCache = new Map<string, FireDoorRulesResult>();
+
+/** Files plus mtime and size — edit a PDF and the key stops matching. */
+async function cacheKeyFor(dir: string, files: string[]): Promise<string> {
+  const parts = await Promise.all(
+    [...files].sort().map(async (file) => {
+      try {
+        const info = await stat(join(dir, file));
+        return `${file}:${info.mtimeMs}:${info.size}`;
+      } catch {
+        return `${file}:missing`;
+      }
+    })
+  );
+  return `${dir}|${parts.join("|")}`;
+}
+
+/** Drop the cache — for tests, and after a reseed replaces the PDFs. */
+export function clearFireDoorRulesCache(): void {
+  fireDoorRulesCache.clear();
+}
+
 export async function loadFireDoorRulesFromNormatives(options?: {
   normativesDir?: string;
   pdfFiles?: string[];
   scanAllPdfs?: boolean;
-}): Promise<{ rules: FireDoorNormRule[]; warnings: string[]; normativesDir: string }> {
+}): Promise<FireDoorRulesResult> {
   const normativesDir = options?.normativesDir ?? (await resolveNormativesDir());
   let pdfFiles = options?.pdfFiles ?? [...DEFAULT_FIRE_DOOR_PDF_FILES];
 
@@ -211,6 +251,10 @@ export async function loadFireDoorRulesFromNormatives(options?: {
       file.toLowerCase().endsWith(".pdf")
     );
   }
+
+  const cacheKey = await cacheKeyFor(normativesDir, pdfFiles);
+  const cached = fireDoorRulesCache.get(cacheKey);
+  if (cached) return cached;
 
   const rules: FireDoorNormRule[] = [];
   const warnings: string[] = [];
@@ -246,5 +290,7 @@ export async function loadFireDoorRulesFromNormatives(options?: {
     );
   }
 
-  return { rules: deduped, warnings, normativesDir };
+  const result: FireDoorRulesResult = { rules: deduped, warnings, normativesDir };
+  fireDoorRulesCache.set(cacheKey, result);
+  return result;
 }

@@ -40,9 +40,13 @@ namespace revit_mcp_plugin.Core
                 if (!_commandRegistry.TryGetCommand(request.Method, out var command))
                 {
                     _logger.Warning("未找到命令: {0}\nCommand not found: {0}", request.Method);
+                    // The architect reads this in the chat, so it has to name the fix,
+                    // not the method. CommandAvailability knows whether the command was
+                    // unticked in Settings, built for another Revit, failed to load, or
+                    // simply is not in this plugin build.
                     return CreateErrorResponse(request.Id,
                         JsonRPCErrorCodes.MethodNotFound,
-                        $"未找到方法: '{request.Method}'\nMethod not found: '{request.Method}'");
+                        CommandAvailability.DescribeMissing(request.Method));
                 }
 
                 _logger.Info("执行命令: {0}", request.Method);
@@ -91,10 +95,10 @@ namespace revit_mcp_plugin.Core
             }
             catch (Exception ex)
             {
-                _logger.Error("执行命令处理过程中发生异常: {0}\nAn exception has occurred durion command execution: {0}", ex.Message);
+                _logger.Error("执行命令处理过程中发生异常: {0}\nAn exception has occurred during command execution: {0}", ex.Message);
                 return CreateErrorResponse(request.Id,
                     JsonRPCErrorCodes.InternalError,
-                    $"内部错误: {ex.Message}\nInternal error: {ex.Message}");
+                    $"Внутренняя ошибка плагина при выполнении «{request.Method}»: {ex.Message}");
             }
         }
 

@@ -54,7 +54,7 @@ export function registerCreateRoomTool(server: McpServer) {
         )
         .describe("Array of rooms to create"),
     },
-    async (args, extra) => {
+    async (args) => {
       const params = args;
 
       try {

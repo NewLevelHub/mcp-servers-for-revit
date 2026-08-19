@@ -37,7 +37,7 @@ alwaysApply: false
 | Размеры | `create_dimensions` |
 | 2D-компонент (линия разрыва…) | `place_detail_component` |
 | Загрузить `.rfa` | **`load_family`** (пути на машине Revit) |
-| Список стилей / штриховок | `get_document_styles` → `lineStyles`, `filledRegionTypes`, `fillPatterns` |
+| Список стилей / штриховок | `get_document_styles` → `lineStyles`, `filledRegionTypes`, `fillPatterns`. Длинные списки (`lineStyles`, `fillPatterns`, `linePatterns`) обрезаны до 60 — ищи конкретный стиль через `nameFilter:"ADSK"`, а не большим `listLimit`. Если имени не видно в ответе — **не выдумывай его**, повтори вызов с `nameFilter`. |
 
 ## `create_filled_regions` vs `create_detail_regions`
 
