@@ -4,6 +4,11 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { wrapToolHandler } from "../utils/toolOutcome.js";
 import {
+  type ToolShape,
+  isToolShape,
+  strictInputSchema,
+} from "../utils/toolArgs.js";
+import {
   type ToolHandle,
   hideUnlistedTools,
   parseToolProfile,
@@ -113,23 +118,88 @@ function wrapHandlerArgument(name: string, args: unknown[]): unknown[] {
 }
 
 /**
+ * Split a `server.tool(name, ...)` call into its parts.
+ *
+ * The overloads allow description, parameter shape and annotations each to be
+ * omitted, so position alone does not say what an argument is — the SDK sniffs
+ * the same way. Only the shape is of interest here; everything else is passed
+ * back through untouched.
+ */
+export function splitToolArguments(rest: unknown[]): {
+  description?: string;
+  shape?: ToolShape;
+  annotations?: Record<string, unknown>;
+  handler?: unknown;
+} {
+  const args = [...rest];
+  const description = typeof args[0] === "string" ? (args.shift() as string) : undefined;
+
+  let shape: ToolShape | undefined;
+  let annotations: Record<string, unknown> | undefined;
+
+  if (args.length > 1) {
+    if (isToolShape(args[0])) {
+      shape = args.shift() as ToolShape;
+      if (args.length > 1 && typeof args[0] === "object" && args[0] !== null) {
+        annotations = args.shift() as Record<string, unknown>;
+      }
+    } else if (typeof args[0] === "object" && args[0] !== null) {
+      annotations = args.shift() as Record<string, unknown>;
+    }
+  }
+
+  return { description, shape, annotations, handler: args[0] };
+}
+
+/**
  * Hand the tool modules a server that (a) routes every handler through
  * {@link wrapToolHandler} so a refusal from Revit reaches the model as an
- * error instead of a success-shaped payload, and (b) records the tool handles
- * so the lite profile can hide the non-core ones afterwards.
+ * error instead of a success-shaped payload, (b) closes every tool's parameter
+ * list with {@link strictInputSchema} so a guessed argument name is refused
+ * instead of silently dropped, and (c) records the tool handles so the lite
+ * profile can hide the non-core ones afterwards.
  *
  * The modules keep calling `server.tool(...)` unchanged — doing this here beats
  * editing the same three lines into 94 handlers.
  */
-function captureTools(server: McpServer, sink: Map<string, ToolHandle>): McpServer {
+export function captureTools(server: McpServer, sink: Map<string, ToolHandle>): McpServer {
+  const call = (method: string, args: unknown[]) =>
+    (server as unknown as Record<string, (...a: unknown[]) => unknown>)[method](...args);
+
   const wrap =
     (method: "tool" | "registerTool") =>
     (...args: unknown[]) => {
       const name = typeof args[0] === "string" ? args[0] : undefined;
       const effectiveArgs = name ? wrapHandlerArgument(name, args) : args;
-      const handle = (server as unknown as Record<string, (...a: unknown[]) => unknown>)[
-        method
-      ](...effectiveArgs);
+
+      let handle: unknown;
+      if (name && method === "tool") {
+        const { description, shape, annotations, handler } = splitToolArguments(
+          effectiveArgs.slice(1)
+        );
+
+        if (shape) {
+          // Re-registered through the schema-object API: `tool()` reads a
+          // ZodObject in that position as annotations, `registerTool` takes it
+          // as the schema it is.
+          handle = call("registerTool", [
+            name,
+            {
+              description,
+              inputSchema: strictInputSchema(name, shape),
+              annotations,
+            },
+            handler,
+          ]);
+        } else {
+          // No shape means no `inputSchema`, which is what lets a client call
+          // the tool with no `arguments` at all. Left as it was.
+          handle = call(method, effectiveArgs);
+        }
+      } else {
+        handle = call(method, effectiveArgs);
+      }
+
       if (name && handle) sink.set(name, handle as ToolHandle);
       return handle;
     };

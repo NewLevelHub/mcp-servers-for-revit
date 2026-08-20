@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { withRevitConnection } from "../utils/ConnectionManager.js";
+import {
+  knownCategoryAliases,
+  normalizeCategoryNames,
+} from "../utils/revitCategories.js";
 
 /**
  * Page size sent to Revit (REV-42). The plugin's own default is 500, which
@@ -13,7 +17,7 @@ const DEFAULT_ELEMENT_LIMIT = 150;
 export function registerGetCurrentViewElementsTool(server: McpServer) {
   server.tool(
     "get_current_view_elements",
-    `Get elements from the current active view in Revit. You can filter by model categories (like Walls, Floors) or annotation categories (like Dimensions, Text). Use includeHidden to show/hide invisible elements. Results are paginated: by default limit=${DEFAULT_ELEMENT_LIMIT} elements per page; use offset for subsequent pages. Response includes totalCount and hasMore for large models.`,
+    `Get elements from the current active view in Revit. You can filter by model categories (like Walls, Floors) or annotation categories (like Dimensions, Text). Plain names ('rooms', 'помещения') are translated to OST_*; a name that cannot be translated is refused, never ignored. Use includeHidden to show/hide invisible elements. Results are paginated: by default limit=${DEFAULT_ELEMENT_LIMIT} elements per page; use offset for subsequent pages. Response includes totalCount and hasMore for large models.`,
     {
       modelCategoryList: z
         .array(z.string())
@@ -51,14 +55,42 @@ export function registerGetCurrentViewElementsTool(server: McpServer) {
         .describe("Number of matching elements to skip before returning results. Default is 0. Use with limit for paginated loading."),
     },
     async (args) => {
+      // Revit filters by the exact `OST_*` enum name and drops anything else:
+      // when no name parses, the plugin hands back every element in the view
+      // instead of an error. The model then reads 58 elements as the honest
+      // answer to "rooms in this view" (19.08.2026). Translate what can be
+      // translated, and refuse rather than send a filter that will be ignored.
+      const model = normalizeCategoryNames(args.modelCategoryList);
+      const annotation = normalizeCategoryNames(args.annotationCategoryList);
+      const unresolved = [...model.unresolved, ...annotation.unresolved];
+
+      if (unresolved.length > 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                Success: false,
+                Message:
+                  `Категория «${unresolved.join(", ")}» не распознана — фильтр не применён. ` +
+                  `Revit понимает только имена вида OST_Rooms / OST_Walls. ` +
+                  `Известные простые имена: ${knownCategoryAliases().join(", ")}.`,
+                Response: [],
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+
       const params: Record<string, unknown> = {
         includeHidden: args.includeHidden ?? false,
       };
-      if (args.modelCategoryList?.length) {
-        params.modelCategoryList = args.modelCategoryList;
+      if (model.categories.length) {
+        params.modelCategoryList = model.categories;
       }
-      if (args.annotationCategoryList?.length) {
-        params.annotationCategoryList = args.annotationCategoryList;
+      if (annotation.categories.length) {
+        params.annotationCategoryList = annotation.categories;
       }
       if (args.limit !== undefined) {
         params.limit = args.limit;
