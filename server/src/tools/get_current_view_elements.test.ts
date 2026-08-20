@@ -68,20 +68,10 @@ test("annotation categories are checked the same way", async () => {
 });
 
 /**
- * The two cases below go on to open a connection to Revit and fail there, in
- * well under a second — a refused connection is instant, and that is the point:
- * what is asserted is that they got past the category check rather than being
- * turned away by it. They hold either way, so a machine that does have Revit
- * listening runs them just the same.
+ * Only the refusals are exercised through the tool, and that limit is
+ * deliberate. A case that gets past the category check goes on to open a socket
+ * to Revit — which passes either way, but when Revit *is* running the
+ * connection stays open and the whole test process never exits: 153 passing
+ * tests and a run that has to be killed. Whether the translation itself works
+ * is `utils/revitCategories.test.ts`'s job.
  */
-test("a plain name is translated instead of refused", async () => {
-  const { text } = await call({ modelCategoryList: ["помещения"] });
-
-  assert.doesNotMatch(text, /не распознана/);
-});
-
-test("no category at all is a valid whole-view request", async () => {
-  const { text } = await call({ limit: 5 });
-
-  assert.doesNotMatch(text, /не распознана/);
-});
