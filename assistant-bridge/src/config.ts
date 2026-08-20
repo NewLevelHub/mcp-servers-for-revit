@@ -19,7 +19,7 @@ export type BridgeConfig = {
    * per turn. A user who pinned a model gets that model, always.
    */
   routePerTurn: boolean;
-  /** Tool profile handed to the Revit MCP server; `lite` lists ~20 tools. */
+  /** Tool profile handed to the Revit MCP server. `default` lists all 92; `lite` ~22. */
   mcpToolProfile: string;
   rulesCwd: string;
   mcpNode: string;
@@ -99,7 +99,12 @@ export function loadConfig(): BridgeConfig {
     modelLabel: modelLabel(model),
     fastModel,
     routePerTurn: model.id === AUTO_MODEL_ID,
-    mcpToolProfile: (process.env.MCP_TOOL_PROFILE ?? "lite").trim().toLowerCase(),
+    // Full catalog unless someone asks for less. `lite` was the default for one
+    // release and it cost more than the tokens it saved: every group it hid, the
+    // model reported as a missing feature rather than a hidden tool — марки
+    // помещений, цветовые схемы, проверки по СП. Set `MCP_TOOL_PROFILE=lite` to
+    // trade that back for speed.
+    mcpToolProfile: (process.env.MCP_TOOL_PROFILE ?? "default").trim().toLowerCase(),
     rulesCwd,
     mcpNode,
     mcpServerJs,

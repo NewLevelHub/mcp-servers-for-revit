@@ -1,6 +1,13 @@
 import fs from "node:fs";
 import { Agent, JsonlLocalAgentStore } from "@cursor/sdk";
-import type { LocalAgentStore, ModelSelection, Run, SDKCustomTool, TokenUsage } from "@cursor/sdk";
+import type {
+  AgentOptions,
+  LocalAgentStore,
+  ModelSelection,
+  Run,
+  SDKCustomTool,
+  TokenUsage,
+} from "@cursor/sdk";
 import type { BridgeConfig } from "./config.js";
 import { AUTO_MODEL_ID, modelLabel } from "./config.js";
 
@@ -49,12 +56,19 @@ type SdkAgent = Awaited<ReturnType<typeof Agent.create>>;
 type SessionSlot = { sessionId: string };
 
 /** A built agent waiting to be claimed by the next new or reset session. */
-type WarmAgent = { agent: SdkAgent; slot: SessionSlot };
+type WarmAgent = { agent: SdkAgent; slot: SessionSlot; toolProfile: string };
 
 type SessionRecord = {
   agentId: string;
   agent: SdkAgent;
   slot: SessionSlot;
+  /**
+   * The profile the agent's MCP connection was actually opened with, which is
+   * not always the one this turn asked for: a connection is only ever widened,
+   * never narrowed, so a chat that once needed `annotation` keeps it. The send
+   * has to name this profile and not the turn's, or it would narrow it back.
+   */
+  toolProfile: string;
   /** Run in flight, so /v1/cancel can stop the agent server-side. */
   activeRun?: Run;
   /** Emitter of the request currently streaming this session. */
@@ -118,6 +132,13 @@ export const HINT_TOOL_GROUPS: ReadonlyArray<readonly [string, string]> = [
   ["мгн", "norms"],
   ["маломобильн", "norms"],
   ["инсоляц", "norms"],
+  // «Связь» is a common word, and a turn that lands on the links group for a
+  // stray «в связи с» costs one extra tool schema. The opposite mistake — the
+  // architect asks what ИОС linked in and the model, not seeing the tool, says
+  // the plugin cannot read links — costs the answer (the REV-41 asymmetry).
+  ["связ", "links"],
+  ["смежник", "links"],
+  ["подгруж", "links"],
   ["dwg", "cad"],
   ["cad", "cad"],
   ["подложк", "cad"],
@@ -223,6 +244,13 @@ export function pickToolProfile(
   hasImages: boolean,
   liteProfile: string,
 ): string {
+  // `MCP_TOOL_PROFILE` names something other than `lite`: the operator pinned the
+  // catalog by hand, and narrowing it per turn would be overruling them. Without
+  // this a pinned `default` still dropped to `lite+annotation` on a turn that named
+  // its subject — narrower than what was asked for, which is the whole failure
+  // this file exists to prevent.
+  if (splitProfile(liteProfile).base !== "lite") return liteProfile;
+
   if (!isHeavyRequest(userText, hasImages)) return liteProfile;
 
   const text = requestText(userText).toLowerCase();
@@ -232,6 +260,60 @@ export function pickToolProfile(
   }
 
   return groups.length > 0 ? `lite+${groups.join(",")}` : "default";
+}
+
+/**
+ * Split `lite+sheets,annotation` into its base and its groups, the same way
+ * `parseToolProfile` does on the server side. Kept as a local copy on purpose:
+ * the bridge is its own package and does not build against `server/`.
+ */
+function splitProfile(profile: string): { base: string; groups: Set<string> } {
+  const [baseText, ...rest] = profile.trim().toLowerCase().split(/[+,]/);
+  return {
+    base: baseText.trim() || "default",
+    groups: new Set(rest.map((part) => part.trim()).filter(Boolean)),
+  };
+}
+
+/**
+ * Does an MCP connection opened on `current` already list everything `wanted`
+ * asks for?
+ *
+ * Answering yes is what keeps a chat off the boot path: reconnecting costs the
+ * architect a wait, and a catalog wider than this turn needs costs only tokens.
+ * So the connection is widened when the turn reaches past it and left alone
+ * otherwise — a chat that once opened `annotation` keeps the tags for good.
+ */
+export function profileCovers(current: string, wanted: string): boolean {
+  const have = splitProfile(current);
+  const need = splitProfile(wanted);
+
+  // `default` lists the whole catalog, so nothing can ask past it.
+  if (have.base !== "lite") return true;
+  if (need.base !== "lite") return false;
+  if (have.groups.has("all")) return true;
+
+  return [...need.groups].every((group) => have.groups.has(group));
+}
+
+/**
+ * The profile a reopened connection should carry: everything it already listed,
+ * plus what this turn reaches for.
+ *
+ * Reopening on `wanted` alone would trade one hidden tool for another — a chat
+ * that laid out a sheet and then asked for tags would come back with the tags
+ * and without the sheet tools, and the next sheet question would pay for a
+ * third boot.
+ */
+export function mergeProfiles(current: string, wanted: string): string {
+  const have = splitProfile(current);
+  const need = splitProfile(wanted);
+
+  if (have.base !== "lite" || need.base !== "lite") return "default";
+  if (have.groups.has("all") || need.groups.has("all")) return "default";
+
+  const groups = [...new Set([...have.groups, ...need.groups])];
+  return groups.length > 0 ? `lite+${groups.join(",")}` : "lite";
 }
 
 const REVIT_SYSTEM_PREFIX =
@@ -320,6 +402,62 @@ function truncate(value: unknown, limit = MAX_JOURNAL_CHARS): string | undefined
   const text = typeof value === "string" ? value : JSON.stringify(value);
   if (!text) return undefined;
   return text.length > limit ? text.slice(0, limit) + "…" : text;
+}
+
+/**
+ * A tool call that failed while Cursor still calls it `completed`.
+ *
+ * The MCP SDK does not throw a validation failure at the caller — it catches
+ * its own error and answers with a normal result carrying `isError: true`.
+ * Cursor sees a result, reports `status: "completed"`, and the panel drew a
+ * green tick over `color_elements` refusing its arguments; the turn was filed
+ * as `outcome: ok` with the refusal sitting unread in the journal
+ * (19.08.2026). Nothing downstream could tell the call had failed, so the
+ * check has to happen on the payload.
+ *
+ * Deliberately narrow. Only two things count: the protocol's own error flag,
+ * and the two error prefixes this server emits. A tool reporting a norm
+ * violation, an empty list, or the word "ошибка" inside a room name is a
+ * successful call and must stay one.
+ */
+export function toolResultFailed(result: unknown): boolean {
+  if (result === undefined || result === null) return false;
+
+  if (typeof result === "object") {
+    const bag = result as Record<string, unknown>;
+    if (bag.isError === true || bag.is_error === true) return true;
+
+    // Cursor may hand the envelope through under a wrapper key rather than as
+    // the CallToolResult itself.
+    for (const key of ["result", "content", "output"]) {
+      const nested = bag[key];
+      if (nested && nested !== result && typeof nested === "object") {
+        if (toolResultFailed(nested)) return true;
+      }
+    }
+  }
+
+  const text =
+    typeof result === "string" ? result : safeStringify(result) ?? "";
+  if (!text) return false;
+
+  return (
+    // Raised by the MCP SDK itself: unknown tool, refused arguments, transport.
+    /MCP error -?\d+/.test(text) ||
+    // Shaped by utils/toolOutcome.ts when Revit refuses the command. No `\b`
+    // in front: JavaScript word boundaries are ASCII-only and never match
+    // before a Cyrillic letter.
+    /не выполнен:/.test(text) ||
+    /"isError"\s*:\s*true/.test(text)
+  );
+}
+
+function safeStringify(value: unknown): string | undefined {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -492,13 +630,12 @@ export class AgentSessionManager {
   }
 
   /**
-   * Build an agent. This is the expensive part of a turn — it loads the project
-   * rules and skills and spawns the Revit MCP server — which is why nothing
-   * calls it from inside a request if a warm one is on the shelf.
+   * Everything an agent is built with, shared by `Agent.create` and the
+   * `Agent.resume` in {@link applyToolProfile}: a resumed agent that dropped the
+   * model or the custom tools would keep answering, just worse.
    */
-  private async createAgent(): Promise<WarmAgent> {
-    const slot: SessionSlot = { sessionId: "" };
-    const agent = await Agent.create({
+  private agentOptions(slot: SessionSlot, profile: string): AgentOptions {
+    return {
       apiKey: this.config.apiKey,
       // With the auto router the real choice happens per send; start on the
       // fast model so a turn that never overrides it still skips the hop.
@@ -510,9 +647,19 @@ export class AgentSessionManager {
         customTools: this.buildCustomTools(slot),
         store: this.store,
       },
-      mcpServers: this.buildMcpServers(),
-    });
-    return { agent, slot };
+      mcpServers: this.buildMcpServers(profile),
+    };
+  }
+
+  /**
+   * Build an agent. This is the expensive part of a turn — it loads the project
+   * rules and skills and spawns the Revit MCP server — which is why nothing
+   * calls it from inside a request if a warm one is on the shelf.
+   */
+  private async createAgent(profile = this.config.mcpToolProfile): Promise<WarmAgent> {
+    const slot: SessionSlot = { sessionId: "" };
+    const agent = await Agent.create(this.agentOptions(slot, profile));
+    return { agent, slot, toolProfile: profile };
   }
 
   /**
@@ -536,25 +683,36 @@ export class AgentSessionManager {
       });
   }
 
-  /** Claim the warm agent if there is one, then start building the next. */
-  private async takeAgent(): Promise<WarmAgent> {
+  /**
+   * Claim the warm agent if there is one, then start building the next. The
+   * spare is always built on the default profile, so a first turn that needs a
+   * wider one is built to order and the spare is left on the shelf.
+   */
+  private async takeAgent(profile: string): Promise<WarmAgent> {
     const warm = this.spare;
-    if (warm) {
+    if (warm && profileCovers(warm.toolProfile, profile)) {
       this.spare = undefined;
       this.prewarm();
       return warm;
     }
 
-    // Nothing warm: pay for it now, and make sure the next turn does not.
-    const created = await this.createAgent();
+    // Nothing usable warm: pay for it now, and make sure the next turn does not.
+    const created = await this.createAgent(profile);
     this.prewarm();
     return created;
   }
 
-  private async getOrCreateSession(sessionId: string, reset: boolean): Promise<SessionRecord> {
+  private async getOrCreateSession(
+    sessionId: string,
+    reset: boolean,
+    profile: string,
+  ): Promise<SessionRecord> {
     if (!reset) {
       const existing = this.sessions.get(sessionId);
-      if (existing) return existing;
+      if (existing) {
+        await this.applyToolProfile(existing, profile);
+        return existing;
+      }
     } else {
       const old = this.sessions.get(sessionId);
       if (old) {
@@ -569,17 +727,67 @@ export class AgentSessionManager {
       }
     }
 
-    const { agent, slot } = await this.takeAgent();
+    const { agent, slot, toolProfile } = await this.takeAgent(profile);
     slot.sessionId = sessionId;
 
     const record: SessionRecord = {
       agentId: agent.agentId,
       agent,
       slot,
+      toolProfile,
       pendingConfirms: new Map(),
     };
     this.sessions.set(sessionId, record);
     return record;
+  }
+
+  /**
+   * Reopen the session's MCP connection on a wider profile when the turn needs
+   * tools the current one does not list (REV-41).
+   *
+   * The tool list is frozen when the connection opens — no client acts on
+   * `notifications/tools/list_changed`, see the header of
+   * `server/src/utils/toolCatalog.ts`. `pickToolProfile` runs per turn, but the
+   * agent and its stdio MCP server are built once per chat, so before this the
+   * per-turn profile only ever reached the first turn: a chat opened with "нарисуй
+   * стены" and continued with "проставь марки помещений" ran the second turn on
+   * `lite`, where `tag_all_rooms` is hidden. The model did not report a missing
+   * tool — it wrote the room names as plain text notes and told the architect
+   * that room tags are not in the catalog (наблюдалось 19.08.2026).
+   *
+   * `Agent.resume` reconnects by agent id, so the conversation survives; only
+   * the MCP child process is replaced.
+   */
+  private async applyToolProfile(session: SessionRecord, profile: string): Promise<void> {
+    if (profileCovers(session.toolProfile, profile)) return;
+
+    const widened = mergeProfiles(session.toolProfile, profile);
+    const previous = session.agent;
+    try {
+      const agent = await Agent.resume(
+        session.agentId,
+        this.agentOptions(session.slot, widened),
+      );
+
+      session.agent = agent;
+      session.toolProfile = widened;
+      console.error(
+        `[assistant-bridge] tools widened session=${session.slot.sessionId} profile=${widened}`,
+      );
+      void Promise.resolve()
+        .then(() => previous.close())
+        .catch(() => {
+          /* already gone */
+        });
+    } catch (err) {
+      // A failed resume must not cost the architect the conversation. The turn
+      // runs on the narrower set — the same answer it would have given before
+      // this existed — and the log says why.
+      console.error(
+        `[assistant-bridge] tool profile stays ${session.toolProfile}, resume for ${widened} failed:`,
+        err,
+      );
+    }
   }
 
   /**
@@ -662,7 +870,11 @@ export class AgentSessionManager {
     emit.status("Подключаю Cursor…");
     // Checked before the await: getOrCreateSession registers the session itself.
     marks.sessionReused = this.sessions.has(sessionId) && !req.reset;
-    const session = await this.getOrCreateSession(sessionId, !!req.reset);
+    // Picked before the session so getOrCreateSession can open — or widen — the
+    // MCP connection on it. The list of tools is frozen once that connection is
+    // up, so choosing after would be choosing too late.
+    const wantedProfile = this.pickToolProfile(message, (req.images?.length ?? 0) > 0);
+    const session = await this.getOrCreateSession(sessionId, !!req.reset, wantedProfile);
     marks.sessionReadyAt = Date.now();
     session.emitter = emit;
 
@@ -695,7 +907,9 @@ export class AgentSessionManager {
           images: images.length > 0 ? images : undefined,
         },
         requestedModel,
-        this.pickToolProfile(message, images.length > 0),
+        // The session's own profile, not this turn's: applyToolProfile only ever
+        // widens, and naming the narrower turn profile here would undo that.
+        session.toolProfile,
       );
       marks.runStartedAt = Date.now();
       session.activeRun = run;
@@ -759,14 +973,17 @@ export class AgentSessionManager {
               args: truncate(event.args),
             });
           } else if (event.status === "completed") {
+            // "completed" only means Cursor got an answer back, not that the
+            // tool did anything — see toolResultFailed.
+            const failed = toolResultFailed(event.result);
             emit.toolStep({
               callId,
               name: stableName,
-              status: "ok",
+              status: failed ? "error" : "ok",
               args: truncate(event.args),
               result: truncate(event.result),
             });
-            doneSummary.push(stableName);
+            if (!failed) doneSummary.push(stableName);
             toolNamesByCallId.delete(callId);
           } else if (event.status === "error") {
             emit.toolStep({
