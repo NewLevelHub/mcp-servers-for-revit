@@ -126,8 +126,33 @@ export class RevitClientConnection {
   private createSocket(): net.Socket {
     const socket = new net.Socket();
     socket.setKeepAlive(true, HEARTBEAT_INTERVAL_MS);
+    // Idle, this connection must not hold the event loop open. It is kept alive
+    // for the process lifetime on purpose, and with Revit running the socket
+    // stays connected forever — which is why `node --test` finished every
+    // assertion in runNormAudit.test.js and then never exited, and the run had
+    // to be killed at the timeout. The heartbeat and reconnect timers were
+    // already unref'd for the same reason; the socket itself was missed.
+    //
+    // The MCP server proper is held open by its stdio transport, so nothing
+    // about its lifetime changes.
+    socket.unref?.();
     this.setupSocketListeners(socket);
     return socket;
+  }
+
+  /**
+   * Hold the event loop while a request is genuinely in flight, and let go the
+   * moment the last one settles. Without the ref a process with nothing else to
+   * do could exit between sending a command and reading its answer.
+   */
+  private refWhileBusy(): void {
+    this.socket.ref?.();
+  }
+
+  private unrefWhenIdle(): void {
+    if (this.responseCallbacks.size === 0) {
+      this.socket.unref?.();
+    }
   }
 
   private setupSocketListeners(socket: net.Socket): void {
@@ -206,6 +231,7 @@ export class RevitClientConnection {
       );
     }
     this.responseCallbacks.clear();
+    this.unrefWhenIdle();
   }
 
   private handleDisconnect(reason: string): void {
@@ -536,6 +562,7 @@ export class RevitClientConnection {
       if (callback) {
         callback(responseData);
         this.responseCallbacks.delete(requestId);
+        this.unrefWhenIdle();
       }
     } catch (error) {
       console.error("Error parsing response:", error);
@@ -567,6 +594,7 @@ export class RevitClientConnection {
           }
         };
 
+        this.refWhileBusy();
         this.responseCallbacks.set(requestId, (responseData) => {
           clearCommandTimeout();
           try {
@@ -608,6 +636,7 @@ export class RevitClientConnection {
         timeoutHandle = setTimeout(() => {
           if (this.responseCallbacks.has(requestId)) {
             this.responseCallbacks.delete(requestId);
+            this.unrefWhenIdle();
             reject(
               new RevitConnectionError(
                 "command_timeout",
