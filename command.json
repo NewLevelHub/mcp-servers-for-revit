@@ -109,6 +109,11 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "get_linked_models",
+      "description": "Связи Revit: раздел, статус, число элементов и координаты связи в наших координатах",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "export_tep_data",
       "description": "ТЭП: площадь застройки, общая площадь, этажность, площади по уровням, объём",
       "assemblyPath": "RevitMCPCommandSet.dll"

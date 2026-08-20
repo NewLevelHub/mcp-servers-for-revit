@@ -74,6 +74,7 @@ export const TOOL_GROUP_NAMES = [
   "sheets",
   "annotation",
   "cad",
+  "links",
   "modeling",
   "advanced",
 ] as const;
@@ -173,6 +174,9 @@ export const TOOL_GROUPS: Readonly<Record<ToolGroupName, readonly string[]>> = {
     "trace_columns_from_cad",
   ],
 
+  /** Смежники: the linked АР/КР/ИОС models of the same project. */
+  links: ["get_linked_models"],
+
   /** Structure and circulation the everyday set does not cover. */
   modeling: [
     "create_grid",
@@ -201,6 +205,8 @@ export const TOOL_GROUP_SUMMARIES: Readonly<Record<ToolGroupName, string>> = {
   sheets: "sheets, title blocks, view placement, auto-layout, ТЭП table",
   annotation: "dimensions, tags, text notes, filled regions, node details",
   cad: "tracing walls, openings and columns from a DWG underlay",
+  links:
+    "linked models of смежники — what is linked in, in which раздел, and where it sits in our coordinates",
   modeling: "grids, stairs, railings, floor openings, framing, family loading",
   advanced: "raw code execution and the connection smoke test",
 };

@@ -37,6 +37,9 @@ const TOOL_TWINS = [
   ["create_dimensions", "dimension_grids"],
   ["dimension_room_walls", "dimension_grids"],
   ["set_element_parameter", "set_elements_parameters"],
+  // Both read "a link". One means a DWG underlay, the other a linked .rvt of a
+  // смежник, and the wrong pick reads the wrong file entirely (REV-166).
+  ["get_cad_link_geometry", "get_linked_models"],
 ];
 
 /**
