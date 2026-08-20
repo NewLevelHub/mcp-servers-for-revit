@@ -2,6 +2,7 @@ using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using RevitMCPSDK.API.Interfaces;
 using RevitMCPCommandSet.Models.Common;
+using RevitMCPCommandSet.Utils;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -386,10 +387,7 @@ namespace RevitMCPCommandSet.Services
             overrideSettings.SetCutBackgroundPatternColor(color);
 
             // 实心填充：表面 + 截面（平面图上的墙主要靠截面图案显示）
-            FillPatternElement solidPattern = new FilteredElementCollector(doc)
-                .OfClass(typeof(FillPatternElement))
-                .Cast<FillPatternElement>()
-                .FirstOrDefault(p => p.GetFillPattern().IsSolidFill);
+            FillPatternElement solidPattern = SolidFillPatterns.Find(doc);
 
             if (solidPattern != null)
             {

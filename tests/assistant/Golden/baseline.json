@@ -1,19 +1,19 @@
 {
   "id": "baseline-rev-124",
   "recordedAt": "2026-08-04",
-  "note": "Scripted dry-run after REV-124 model routing (ModelRouter: data/core→fast, modeling|annotation|norms|schedules|sheets→smart when AssistantModelSmart set). Empty smart = always AssistantModel (compat). Live: ASSISTANT_MODEL / optional second pass with ASSISTANT_MODEL_SMART — compare reports under Golden/reports/.",
+  "note": "Scripted dry-run after REV-124 model routing (ModelRouter: data/core→fast, modeling|annotation|norms|schedules|sheets→smart when AssistantModelSmart set). Empty smart = always AssistantModel (compat). Live: ASSISTANT_MODEL / optional second pass with ASSISTANT_MODEL_SMART — compare reports under Golden/reports/. REV-153: +6 кейсов группы learning (режим наставника) — набор вырос с 28 до 35 сценариев dry-run.",
   "targets": {
     "firstToolAccuracy": 0.9,
-    "forbidAccuracy": 1.0,
+    "forbidAccuracy": 1,
     "requireArgsAccuracy": 0.8,
     "maxToolsPerRequest": 30
   },
   "scripted": {
-    "total": 28,
-    "passed": 28,
-    "firstToolAccuracy": 1.0,
-    "forbidAccuracy": 1.0,
-    "requireArgsAccuracy": 1.0,
+    "total": 35,
+    "passed": 35,
+    "firstToolAccuracy": 1,
+    "forbidAccuracy": 1,
+    "requireArgsAccuracy": 1,
     "avgRounds": 2.5,
     "avgPromptTokens": 120,
     "toolCatalogCharsFullApprox": 29700,

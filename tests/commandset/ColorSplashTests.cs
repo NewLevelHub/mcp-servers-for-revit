@@ -1,5 +1,6 @@
 using Autodesk.Revit.DB;
 using Nice3point.TUnit.Revit;
+using RevitMCPCommandSet.Utils;
 using Nice3point.TUnit.Revit.Executors;
 using TUnit.Core;
 using TUnit.Core.Executors;
@@ -132,23 +133,36 @@ public class ColorSplashTests : RevitApiTest
     [Test]
     public async Task FindSolidFillPattern_InDocument_PatternFound()
     {
-        var solidFillId = ElementId.InvalidElementId;
-
-        var patterns = new FilteredElementCollector(_doc)
-            .OfClass(typeof(FillPatternElement))
-            .Cast<FillPatternElement>();
-
-        foreach (var patternElement in patterns)
-        {
-            var pattern = patternElement.GetFillPattern();
-            if (pattern.IsSolidFill)
-            {
-                solidFillId = patternElement.Id;
-                break;
-            }
-        }
+        var solidFillId = SolidFillPatterns.FindId(_doc);
 
         await Assert.That(solidFillId).IsNotEqualTo(ElementId.InvalidElementId);
+    }
+
+    [Test]
+    public async Task FindSolidFillPattern_ModelSolidAlsoPresent_PicksDrafting()
+    {
+        // The bug this replaces: the old lookup took the first solid fill the
+        // collector happened to return. Given a model one, ColorFillSchemeEntry
+        // accepts it and Revit then fails the fill calculation, painting a hatch
+        // over the rooms while the tool reports a colour per room (19.08.2026).
+        var solids = new FilteredElementCollector(_doc)
+            .OfClass(typeof(FillPatternElement))
+            .Cast<FillPatternElement>()
+            .Where(element => element.GetFillPattern()?.IsSolidFill == true)
+            .ToList();
+
+        await Assert.That(solids.Count).IsGreaterThan(0);
+
+        var chosen = SolidFillPatterns.Find(_doc);
+        await Assert.That(chosen).IsNotNull();
+
+        bool draftingSolidExists = solids
+            .Any(element => element.GetFillPattern().Target == FillPatternTarget.Drafting);
+
+        if (draftingSolidExists)
+        {
+            await Assert.That(chosen.GetFillPattern().Target).IsEqualTo(FillPatternTarget.Drafting);
+        }
     }
 
     [Test]

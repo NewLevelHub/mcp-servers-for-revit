@@ -10,7 +10,9 @@ export function registerTagElementsTool(server: McpServer) {
       "Use this for door/window/wall marks instead of drawing text notes — a tag shows the " +
       "element's own Mark parameter and updates with the model. Tags the active view by default. " +
       "This is the general tagging tool: prefer it over tag_all_walls / tag_all_rooms, which only " +
-      "do their one category in the active view.",
+      "do their one category in the active view. One exception — a room tag that must show the area " +
+      "(«марка с квадратурой»): this tool places the project's default room tag, which shows name and " +
+      "number only, so use tag_all_rooms with showArea: true instead.",
     {
       category: z
         .string()

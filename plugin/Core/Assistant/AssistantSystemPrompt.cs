@@ -22,6 +22,9 @@ namespace revit_mcp_plugin.Core.Assistant
             "get_current_view_info и типы семейств — не чаще одного раза за задачу. " +
             "send_code_to_revit — только с явным разрешением C#; новый .rvt — Файл→Новый→Проект вручную. " +
             "Вложения [Вложения] — ты их видишь.";
+        // Про query_revit_ui сознательно не пишем здесь: в Core остаётся 3 символа запаса,
+        // а инструкция есть в описании самого инструмента и в плейбуке наставника,
+        // где она и нужна больше всего.
 
         /// <summary>Legacy full prompt length before REV-118 (for regression tests).</summary>
         public const int LegacyMonolithLength = 2500;
@@ -35,8 +38,14 @@ namespace revit_mcp_plugin.Core.Assistant
             var playbooks = AssistantPlaybooks.Build(profiles, userText);
             var sb = new StringBuilder();
             sb.Append(Core);
-            sb.Append("\n\n");
-            sb.Append(AssistantPlaybooks.Clarification);
+
+            // REV-153: в режиме наставника блок уточнений неуместен — он про то,
+            // как быстрее начать строить, а здесь строить нельзя вовсе.
+            if (!ToolCatalog.IsLearningMode(profiles))
+            {
+                sb.Append("\n\n");
+                sb.Append(AssistantPlaybooks.Clarification);
+            }
             if (!string.IsNullOrWhiteSpace(playbooks))
             {
                 sb.Append("\n\n");

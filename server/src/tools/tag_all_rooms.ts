@@ -5,8 +5,9 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerTagAllRoomsTool(server: McpServer) {
   server.tool(
     "tag_all_rooms",
-    "Narrow shortcut: tag rooms in the active view (all of them, or the roomIds given) with the room " +
-      "name and number at each room's centre. Room-only and active-view-only — for any other category, " +
+    "Narrow shortcut: tag rooms in the active view (all of them, or the roomIds given) at each room's " +
+      "centre. The default tag family shows name and number only — for «марка с квадратурой / с площадью» " +
+      "pass showArea: true. Room-only and active-view-only — for any other category, " +
       "or to tag in a named view, use tag_elements, which is the general tool and covers rooms too.",
     {
       useLeader: z
@@ -14,6 +15,15 @@ export function registerTagAllRoomsTool(server: McpServer) {
         .optional()
         .default(false)
         .describe("Whether to use a leader line when creating the tags"),
+      showArea: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "Place a tag type that shows the room area («с площадью» / «с квадратурой»). " +
+            "Fails with an explanation when the project has no such tag family — it never " +
+            "falls back to a name-only tag, so a success here means the area really is on the plan."
+        ),
       tagTypeId: z
         .string()
         .optional()

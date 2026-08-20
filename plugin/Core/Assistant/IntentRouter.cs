@@ -33,6 +33,11 @@ namespace revit_mcp_plugin.Core.Assistant
 
             var hits = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+            // REV-153: «как сделать» и «сделай» — разные просьбы. Вопрос про то, где кнопка
+            // и как это делается, ведёт в режим наставника и дальше не смешивается ни с чем.
+            if (WantsTutoring(text))
+                return new[] { ToolCatalog.Profiles.Learning };
+
             // Routing trap: «планировка по нормам» → modeling, not norm audit.
             var isLayoutDesign =
                 ContainsAny(text, "планировк", "спроектируй", "построй", "нарисуй стен", "layout");
@@ -117,6 +122,31 @@ namespace revit_mcp_plugin.Core.Assistant
             }
 
             return hits.ToArray();
+        }
+
+        /// <summary>
+        /// Просьба научить, а не сделать (REV-153).
+        /// Отличаем вопрос («как поставить дверь?», «где кнопка стены?») от поручения
+        /// («поставь дверь») — иначе новичок получит готовую стену вместо навыка,
+        /// а опытный проектировщик вместо работы получит урок.
+        /// </summary>
+        public static bool WantsTutoring(string userText)
+        {
+            var text = (userText ?? "").ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+
+            var asksHow = ContainsAny(text,
+                "как сделать", "как мне", "как поставить", "как построить", "как создать",
+                "как нарисовать", "как пользоваться", "как работать", "как включить",
+                "как найти", "как это делать", "что такое", "зачем нужен", "зачем нужна",
+                "объясни", "научи", "покажи где", "подскажи как", "не знаю как", "не понимаю как");
+
+            var asksWhere = ContainsAny(text,
+                "где найти", "где кнопк", "где наход", "где эта", "где это", "куда нажать",
+                "не могу найти", "не нахожу", "куда нажимать", "в какой вкладке", "на какой вкладке");
+
+            return asksHow || asksWhere;
         }
 
         /// <summary>True when heuristic found nothing useful — worth a cheap LLM call.</summary>

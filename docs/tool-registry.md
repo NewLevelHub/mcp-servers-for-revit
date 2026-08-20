@@ -49,6 +49,7 @@ is in neither, so nothing can go missing silently.
 | `sheets` | sheets, title blocks, view placement, auto-layout, ТЭП table |
 | `annotation` | dimensions, tags, text notes, filled regions, node details |
 | `cad` | `get_cad_link_geometry` + `trace_*_from_cad` |
+| `links` | `get_linked_models` — связанные модели смежников |
 | `modeling` | grids, stairs, railings, floor openings, framing, family loading |
 | `advanced` | `send_code_to_revit`, `say_hello` |
 
@@ -142,6 +143,42 @@ Listed in `DEFAULT_DENYLIST` in `server/src/tools/register.ts`. Use only with `M
 
 Empty stub files (`modify_element`, `search_modules`, `use_module`) were removed — do not reintroduce without an implementation.
 
+## Связанные модели смежников (REV-166)
+
+| Tool | Revit command | What it reads |
+|------|---------------|---------------|
+| `get_linked_models` | `get_linked_models` | `RevitLinkInstance` списком: имя файла, раздел по имени, статус загрузки, число элементов и `GetTotalTransform()` — положение связи **в наших координатах** |
+
+Первый инструмент эпика «Смежники»: всё, что придёт после (коллизии, задание на
+отверстия, сверка площадки), читает связи через него.
+
+**Только чтение, в обе стороны.** Транзакция не открывается, и в саму связь не
+пишется ничего: файл принадлежит другой организации. Это сказано в описании
+инструмента, потому что модель решает по описанию.
+
+**Координаты.** Связь, вставленная не в 0,0, хранит свои элементы в своих числах.
+`GetTotalTransform()` — единственный правильный мост; `placement` отдаёт начало
+координат связи в мм, поворот и зеркальность, а `coordinateSamples` показывает
+элемент сразу в двух системах (`linkPointMm` и `hostPointMm`), чтобы смещение
+можно было сверить с моделью, а не принять на веру.
+
+**Цена обхода.** По умолчанию проход дешёвый: статус, трансформация и
+`GetElementCount()`, который не материализует ни одного элемента. Дорогое —
+`includeCategories` (обходит каждый элемент каждой связи) — выключено, а
+`levelName` режет счёт до одного этажа. Каждая связь измеряется отдельно
+(`elapsedMs`), общее время — в корне ответа. Замеры и порядок их снятия:
+[performance.md](performance.md).
+
+**Выгруженная и битая связь — это ответ, а не сбой.** `GetLinkDocument()` отдаёт
+null для выгруженной и ничего для отсутствующей; каждая связь читается в своём
+try/catch и попадает в список со статусом (`Загружена` / `Выгружена` /
+`Файл не найден` / `Ссылка повреждена`) и пояснением. Одна перепривязанная связь
+субподрядчика не должна стоить архитектору всего списка.
+
+`get_linked_models` и `get_cad_link_geometry` — пара в `TOOL_TWINS`: оба «читают
+связь», но первый про связанные `.rvt`, второй про DWG-подложку. Описания
+ссылаются друг на друга, `check:tool-registry` следит, чтобы ссылки не пропали.
+
 ## Assistant tool profiles (in-Revit chat, REV-112)
 
 Separate from `MCP_TOOL_PROFILE` (server env). The dockable assistant filters
@@ -218,6 +255,30 @@ Unless listed under aliases or special cases, MCP tool name **equals** Revit `co
 Examples: `say_hello`, `get_current_view_info`, `create_line_based_element`, `operate_element`, `create_filled_regions`, `check_evacuation_width`, `check_room_depth`, `check_min_dimensions`, `check_fire_doors`, …
 
 Full machine-checkable lists: run `npm run check:tool-registry` from `server/` (script lives at repo root `scripts/check-tool-registry.mjs`).
+
+## Arguments are closed, and filters are checked (19.08.2026)
+
+Every tool registered with a parameter shape gets that shape as a **strict**
+Zod object — `server/src/tools/register.ts` does it for all of them at once, no
+tool module opts in. Two consequences worth knowing before you add a tool:
+
+- an argument name the model invented is **refused**, with the tool's real
+  parameter names in the message, instead of being silently dropped. Plain
+  `z.object()` strips unknown keys, and the call then succeeds having ignored
+  what was asked: `get_current_view_elements({categories: […]})` returned every
+  element in the view, and the model reported that as the room count;
+- the published JSON Schema carries `additionalProperties: false`, so the model
+  reads the closed list before it calls. Tools registered *without* a shape keep
+  `inputSchema: undefined` — that is what lets a client call them with no
+  arguments, and it is left alone.
+
+Add a line to `ARGUMENT_HINTS` in `server/src/utils/toolArgs.ts` only when a
+tool's refusal has actually been watched to confuse the model in the field.
+
+The same rule applies one level down: a filter the target cannot parse must be
+refused, never passed on. Revit resolves categories by the exact `OST_*` enum
+and returns *everything* when nothing parses, so category arguments go through
+`normalizeCategoryNames` first.
 
 ## Checklist: adding a tool
 

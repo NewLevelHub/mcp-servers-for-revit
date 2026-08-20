@@ -129,5 +129,12 @@ namespace revit_mcp_plugin.Configuration
         /// </summary>
         [JsonProperty("assistantFeedbackAuthor")]
         public string AssistantFeedbackAuthor { get; set; } = "";
+
+        /// <summary>
+        /// Режим наставника (REV-154): ассистент объясняет и ведёт по шагам, но не делает
+        /// работу за человека. Переживает перезапуск Revit — новичок включает его один раз.
+        /// </summary>
+        [JsonProperty("assistantTutorMode")]
+        public bool AssistantTutorMode { get; set; } = false;
     }
 }

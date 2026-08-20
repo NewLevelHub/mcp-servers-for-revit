@@ -144,7 +144,8 @@ export function registerGetCadLinkGeometryTool(server: McpServer) {
       "on the active floor plan. Returns segments in mm { startMm, endMm, layer, cadId } " +
       "plus bbox — use before tracing walls from CAD (REV-138). " +
       "If DWG was exploded, set includeModelLines=true to also read Model/Detail lines. " +
-      "Fail-fast if no CAD is visible on the view.",
+      "Fail-fast if no CAD is visible on the view. " +
+      "This is DWG underlays only; for linked Revit models (АР/КР/ИОС .rvt) use get_linked_models.",
     {
       cadLinkName: z
         .string()

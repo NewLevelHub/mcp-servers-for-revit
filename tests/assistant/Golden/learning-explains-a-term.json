@@ -1,0 +1,12 @@
+{
+  "id": "learning-explains-a-term",
+  "group": "learning",
+  "userText": "Что такое уровень в Revit и зачем он нужен?",
+  "expectNoTools": true,
+  "forbidTools": [
+    "create_level",
+    "create_line_based_element",
+    "operate_element"
+  ],
+  "maxRounds": 2
+}

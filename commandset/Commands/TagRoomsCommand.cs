@@ -49,8 +49,14 @@ namespace RevitMCPCommandSet.Commands
                     roomIds = parameters["roomIds"].ToObject<List<int>>();
                 }
 
+                bool showArea = false;
+                if (parameters["showArea"] != null)
+                {
+                    showArea = parameters["showArea"].ToObject<bool>();
+                }
+
                 // Set parameters for the event handler
-                _handler.SetParameters(useLeader, tagTypeId, roomIds);
+                _handler.SetParameters(useLeader, tagTypeId, roomIds, showArea);
 
                 // Trigger external event and wait for completion
                 if (RaiseAndWaitForCompletion(15000)) // 15 second timeout

@@ -9,35 +9,6 @@ using RevitMCPSDK.API.Interfaces;
 namespace RevitMCPCommandSet.Services.Architecture
 {
     /// <summary>
-    /// Failure preprocessor that handles duplicate room number warnings by allowing them to proceed.
-    /// Revit auto-assigns room numbers when creating rooms, which may conflict with existing numbers.
-    /// We handle uniqueness ourselves after creation, so we suppress these warnings.
-    /// </summary>
-    public class DuplicateRoomNumberFailurePreprocessor : IFailuresPreprocessor
-    {
-        public FailureProcessingResult PreprocessFailures(FailuresAccessor failuresAccessor)
-        {
-            IList<FailureMessageAccessor> failures = failuresAccessor.GetFailureMessages();
-
-            foreach (FailureMessageAccessor failure in failures)
-            {
-                // Handle room number duplicate warnings by deleting the warning
-                // This allows the transaction to proceed, and we'll set a unique number afterwards
-                string description = failure.GetDescriptionText();
-                if (description.Contains("Number") ||
-                    description.Contains("number") ||
-                    description.Contains("duplicate") ||
-                    description.Contains("Duplicate"))
-                {
-                    failuresAccessor.DeleteWarning(failure);
-                }
-            }
-
-            return FailureProcessingResult.Continue;
-        }
-    }
-
-    /// <summary>
     /// Event handler for creating rooms in Revit
     /// </summary>
     public class CreateRoomEventHandler : IExternalEventHandler, IWaitableExternalEventHandler
@@ -70,6 +41,61 @@ namespace RevitMCPCommandSet.Services.Architecture
             _resetEvent.Reset();
         }
 
+        /// <summary>
+        /// The placed room already covering this plan point on this level, or null.
+        ///
+        /// Probed a foot above the level so the point sits inside the room volume
+        /// rather than exactly on its base, where the test is ambiguous. Revit
+        /// answers for the document's last phase; a project whose rooms live in an
+        /// earlier phase falls through to the collector below, which is why both
+        /// are here.
+        /// </summary>
+        private Room RoomAtPoint(double xInFeet, double yInFeet, Level level)
+        {
+            var point = new XYZ(xInFeet, yInFeet, level.Elevation + 1.0);
+
+            try
+            {
+                if (_doc.GetRoomAtPoint(point) is Room direct && direct.LevelId == level.Id)
+                {
+                    return direct;
+                }
+            }
+            catch
+            {
+                // GetRoomAtPoint throws on some phase configurations rather than
+                // returning null. Fall through — a missed check only costs the
+                // duplicate we were trying to avoid, a thrown exception costs the
+                // whole batch.
+            }
+
+            foreach (var candidate in new FilteredElementCollector(_doc)
+                         .OfCategory(BuiltInCategory.OST_Rooms)
+                         .WhereElementIsNotElementType()
+                         .Cast<Room>())
+            {
+                if (candidate.Area <= 0 || candidate.LevelId != level.Id)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    if (candidate.IsPointInRoom(point))
+                    {
+                        return candidate;
+                    }
+                }
+                catch
+                {
+                    // Unplaced or unenclosed rooms refuse the test; they cannot be
+                    // the occupant of anything anyway.
+                }
+            }
+
+            return null;
+        }
+
         public void Execute(UIApplication uiapp)
         {
             _uiApp = uiapp;
@@ -80,6 +106,9 @@ namespace RevitMCPCommandSet.Services.Architecture
                 // Skipped rooms used to vanish silently, so "created 0 room(s)" came
                 // back as a success and the model had no idea what to fix.
                 var failures = new List<string>();
+                // Points that already had a room. Reported as "already there", never as
+                // created — and never as a fresh duplicate on top.
+                var skipped = new List<RoomResultInfo>();
                 var roomIndex = 0;
 
                 // Get all existing room numbers to avoid duplicates
@@ -98,15 +127,25 @@ namespace RevitMCPCommandSet.Services.Architecture
                     }
                 }
 
+                // One recorder for the whole batch: what Revit complained about has to
+                // reach the answer, or "создано 9 помещений" is all the model ever sees.
+                var warnings = new RecordingWarningsPreprocessor();
+
                 foreach (var roomInfo in RoomData)
                 {
                     roomIndex++;
                     using (Transaction tx = new Transaction(_doc, "Create Room"))
                     {
-                        // Set up failure handling to completely suppress duplicate room number warnings
-                        // Revit auto-assigns numbers which may conflict; we set unique numbers afterwards
+                        // Dismiss warnings by severity, not by their English wording.
+                        // DuplicateRoomNumberFailurePreprocessor matched "Number" /
+                        // "duplicate" in the description — on a Russian Revit those
+                        // words never appear, nothing was dismissed, and Revit put the
+                        // warning up as a modal dialog inside an ExternalEvent, where
+                        // nobody can click it. Every later tool call then waited out its
+                        // timeout: «Читаю параметры элемента → ошибка», twice
+                        // (20.08.2026).
                         FailureHandlingOptions failureOptions = tx.GetFailureHandlingOptions();
-                        failureOptions.SetFailuresPreprocessor(new DuplicateRoomNumberFailurePreprocessor());
+                        failureOptions.SetFailuresPreprocessor(warnings);
                         failureOptions.SetClearAfterRollback(true);
                         failureOptions.SetDelayedMiniWarnings(false);
                         tx.SetFailureHandlingOptions(failureOptions);
@@ -153,6 +192,31 @@ namespace RevitMCPCommandSet.Services.Architecture
                             // Convert mm to feet for UV coordinates (2D point in plan)
                             double xInFeet = roomInfo.Location.X / 304.8;
                             double yInFeet = roomInfo.Location.Y / 304.8;
+
+                            // NewRoom places a room whether or not the region already has
+                            // one, and a second room in the same enclosure is what Revit
+                            // calls «Избыточная Помещение»: it holds no area, and it is
+                            // announced with a modal dialog that freezes the rest of the
+                            // turn. Asking first costs nothing and is the only thing that
+                            // keeps a repeated request from stacking rooms (20.08.2026).
+                            Room occupant = RoomAtPoint(xInFeet, yInFeet, level);
+                            if (occupant != null)
+                            {
+                                tx.RollBack();
+                                skipped.Add(new RoomResultInfo
+                                {
+                                    Id = occupant.Id.GetIntValue(),
+                                    UniqueId = occupant.UniqueId,
+                                    Name = occupant.get_Parameter(BuiltInParameter.ROOM_NAME)?.AsString() ?? "Room",
+                                    Number = occupant.Number,
+                                    RequestedNumber = roomInfo.Number,
+                                    LevelName = level.Name,
+                                    Area = occupant.Area,
+                                    Perimeter = occupant.Perimeter
+                                });
+                                continue;
+                            }
+
                             UV locationUV = new UV(xInFeet, yInFeet);
 
                             // Create room at the specified UV location on the level
@@ -272,12 +336,25 @@ namespace RevitMCPCommandSet.Services.Architecture
                 }
 
                 var roomMessage = $"Создано помещений: {createdRooms.Count} из {RoomData.Count}.";
+                if (skipped.Count > 0)
+                {
+                    roomMessage +=
+                        $" Пропущено {skipped.Count} — в этих точках помещение уже есть (№"
+                        + string.Join(", №", skipped.Select(r => r.Number).Take(10))
+                        + "); повторно они не создавались.";
+                }
                 if (failures.Count > 0)
                     roomMessage += " Не удалось — " + string.Join("; ", failures) + ".";
+                foreach (var line in warnings.ToWarningLines("Revit предупредил"))
+                    roomMessage += " " + line + ".";
 
                 Result = new AIResult<List<RoomResultInfo>>
                 {
-                    Success = createdRooms.Count > 0,
+                    // Nothing new and nothing skipped is a failure; skipping everything
+                    // because it was already there is not — the plan is in the asked-for
+                    // state either way, and calling that a failure sends the model round
+                    // again.
+                    Success = createdRooms.Count > 0 || skipped.Count > 0,
                     Message = roomMessage,
                     Response = createdRooms
                 };

@@ -23,6 +23,15 @@ namespace revit_mcp_plugin.Core.Assistant
             public const string Norms = "norms";
             public const string Data = "data";
 
+            /// <summary>
+            /// Режим наставника (REV-153). В отличие от остальных, этот профиль не добавляет
+            /// инструменты, а сужает набор до читающих: ассистент объясняет и проверяет,
+            /// но не делает работу за новичка.
+            /// </summary>
+            public const string Learning = "learning";
+
+            /// <summary>Профили, которые складываются друг с другом. Learning сюда не входит намеренно:
+            /// «full» не должен незаметно включать режим обучения.</summary>
             public static readonly string[] AllNonCore =
             {
                 Modeling, Annotation, Schedules, Sheets, Norms, Data
@@ -46,7 +55,43 @@ namespace revit_mcp_plugin.Core.Assistant
             "operate_element",
             "delete_element",
             "query_norm_rules",
+            "query_revit_ui",
         };
+
+        /// <summary>
+        /// Единственный набор, доступный в режиме наставника (REV-153) — только чтение.
+        /// Это белый список, а не запрет: новый пишущий инструмент, добавленный в каталог завтра,
+        /// сюда не попадёт сам и не станет доступен новичку по недосмотру.
+        /// </summary>
+        public static readonly IReadOnlyList<string> LearningTools = new[]
+        {
+            "ask_user",
+            "get_current_view_info",
+            "get_current_view_elements",
+            "get_selected_elements",
+            "get_available_family_types",
+            "get_element_parameters",
+            "get_elements_parameters",
+            "export_room_data",
+            "get_room_geometry_metrics",
+            "analyze_model_statistics",
+            "query_norm_rules",
+            "query_revit_ui",
+        };
+
+        /// <summary>Активен ли режим наставника среди переданных профилей.</summary>
+        public static bool IsLearningMode(IEnumerable<string> profiles)
+        {
+            if (profiles == null)
+                return false;
+            foreach (var p in profiles)
+            {
+                if (!string.IsNullOrWhiteSpace(p)
+                    && p.Trim().Equals(Profiles.Learning, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
+        }
 
         /// <summary>Profile name → tool names (excluding core; core is always merged).</summary>
         public static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> ProfileTools =
@@ -142,6 +187,9 @@ namespace revit_mcp_plugin.Core.Assistant
                     "batch_execute",
                     "send_code_to_revit",
                 },
+                // Учтён только чтобы профиль пережил NormalizeProfiles: реальный набор
+                // в режиме наставника собирается из LearningTools, а не складывается с core.
+                [Profiles.Learning] = LearningTools,
             };
 
         private static Dictionary<string, ToolDef> _definitionsByName;
@@ -232,6 +280,16 @@ namespace revit_mcp_plugin.Core.Assistant
                 ordered.Add(name);
             }
 
+            // REV-153: режим наставника заменяет набор, а не расширяет его.
+            // Пишущие инструменты из core (operate_element, delete_element, set_element_parameter)
+            // новичку недоступны в принципе — не на уровне промпта, а на уровне каталога.
+            if (IsLearningMode(profiles))
+            {
+                foreach (var name in LearningTools)
+                    TryAdd(name);
+                return ordered;
+            }
+
             foreach (var name in CoreTools)
                 TryAdd(name);
 
@@ -317,6 +375,11 @@ namespace revit_mcp_plugin.Core.Assistant
         /// </summary>
         public static IReadOnlyList<string> GetMissingProfiles(string toolName, IEnumerable<string> activeProfiles)
         {
+            // REV-153: из режима наставника нельзя выйти, вызвав пишущий инструмент —
+            // иначе агент сам себе выдаст профиль modeling и построит стену за новичка.
+            if (IsLearningMode(activeProfiles))
+                return Array.Empty<string>();
+
             var owning = ResolveProfilesForTool(toolName);
             if (owning.Count == 0)
                 return Array.Empty<string>();
@@ -342,6 +405,9 @@ namespace revit_mcp_plugin.Core.Assistant
             string toolName,
             IEnumerable<string> activeProfiles)
         {
+            if (IsLearningMode(activeProfiles))
+                return NormalizeProfiles(activeProfiles);
+
             var owning = ResolveProfilesForTool(toolName)
                 .Where(p => !p.Equals(Profiles.Core, StringComparison.OrdinalIgnoreCase))
                 .ToArray();
@@ -886,6 +952,18 @@ namespace revit_mcp_plugin.Core.Assistant
                 T("say_hello",
                     "Test MCP/plugin connection. Returns a greeting — use when checking the link is alive.",
                     Empty()),
+                T("query_revit_ui",
+                    "Where a Revit ribbon button lives, from the ribbon of THIS user's Revit " +
+                    "(their version, their UI language, their add-ins). Use it for any «где кнопка», " +
+                    "«как включить», «где найти» question BEFORE answering. " +
+                    "Returns tab / panel / button caption / hotkey, plus why/before/commonMistake when known — " +
+                    "retell those in your own words for a beginner, they are what a senior colleague says over the shoulder. " +
+                    "Name only what this tool returned: " +
+                    "never invent a tab or panel from memory — a wrong path sends a beginner hunting " +
+                    "for a button that does not exist. found=0 or catalogMissing=true → say plainly you could not find it.",
+                    P(R("query"),
+                      ("query", S(), "what the user is looking for, e.g. «стена», «марка помещения», «подрезка»"),
+                      ("limit", N(), "max commands, default 5"))),
                 T("query_norm_rules",
                     "Search the offline GOST/СП/СН РК norm catalog by topic (e.g. «ширина коридора», «глубина лоджии»). " +
                     "Returns document/clause/quote — cite only these, never invent norms. " +
@@ -958,9 +1036,13 @@ namespace revit_mcp_plugin.Core.Assistant
                     ("includeOpeningTier", B(), "innermost openings/piers tier, default true"),
                     ("numericSide", S(), null), ("letterSide", S(), null), ("dimensionType", S(), null))),
                 T("tag_rooms",
-                    "Place room tags (марки помещений) on the active view; prefer type with area. " +
+                    "Place room tags (марки помещений) on the active view. The default tag family shows " +
+                    "name and number only — «марка с квадратурой / с площадью» needs showArea=true, which " +
+                    "fails outright when the project has no such family rather than placing a plain tag. " +
                     "Alias tag_all_rooms is accepted by the host.",
-                    P(("tagTypeId", S(), null), ("roomIds", A("string"), null))),
+                    P(("tagTypeId", S(), null),
+                      ("roomIds", A("string"), null),
+                      ("showArea", B(), "tag type that shows room area"))),
                 T("export_room_data",
                     "Export room ElementIds, names, numbers, areas (м²). Counts and floor areas only — " +
                     "NOT width/depth; for «глубина помещения» / «сколько глубина» use get_room_geometry_metrics. " +

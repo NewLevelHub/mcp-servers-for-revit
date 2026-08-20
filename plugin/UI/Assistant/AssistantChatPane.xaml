@@ -124,30 +124,66 @@
 
     <!-- Header band -->
     <Border Grid.Row="0" Background="{StaticResource Navy}" Padding="14,12">
+      <!-- Кнопки вынесены во вторую строку: панель узкая и докируется сбоку,
+           в одну строку с заголовком они его зажимали до «AI-ассисте». -->
       <Grid>
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="Auto"/>
           <ColumnDefinition Width="*"/>
-          <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
 
-        <Border Width="36" Height="36" CornerRadius="18" Background="#2F5D8A" VerticalAlignment="Center">
+        <Border Grid.Row="0" Grid.Column="0" Width="36" Height="36" CornerRadius="18"
+                Background="#2F5D8A" VerticalAlignment="Center">
           <TextBlock Text="✦" FontSize="16" Foreground="White"
                      HorizontalAlignment="Center" VerticalAlignment="Center"/>
         </Border>
 
-        <StackPanel Grid.Column="1" Margin="10,0,8,0" VerticalAlignment="Center">
-          <TextBlock Text="AI-ассистент" FontSize="15" FontWeight="SemiBold" Foreground="White"/>
+        <StackPanel Grid.Row="0" Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+          <TextBlock Text="AI-ассистент" FontSize="15" FontWeight="SemiBold" Foreground="White"
+                     TextTrimming="CharacterEllipsis"/>
+          <!-- Длинное имя файла раздувало шапку на шесть строк: держим две, остальное в подсказке. -->
           <TextBlock x:Name="ContextText" Text="Вид: —" FontSize="10.5" Foreground="#A8C0D8"
-                     TextWrapping="Wrap" Margin="0,2,0,0"/>
+                     TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="30"
+                     Margin="0,2,0,0"
+                     ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
           <TextBlock x:Name="ContextMeterText" Text="Контекст: 0/13" FontSize="10" Foreground="#7A9BB8"
                      Margin="0,2,0,0"/>
         </StackPanel>
 
-        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+        <WrapPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,10,0,0">
+          <!-- REV-154: режим наставника. Включён — ассистент объясняет и ведёт по шагам. -->
+          <ToggleButton x:Name="TutorModeToggle" Content="🎓 Наставник"
+                        ToolTip="Режим обучения: ассистент объясняет по шагам и ничего не делает за вас"
+                        Margin="0,0,6,4" Padding="10,5" FontSize="11" FontWeight="SemiBold"
+                        Cursor="Hand" Checked="TutorModeToggle_Changed" Unchecked="TutorModeToggle_Changed"
+                        Background="#2F5D8A" Foreground="White" BorderThickness="0">
+            <ToggleButton.Template>
+              <ControlTemplate TargetType="ToggleButton">
+                <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="12"
+                        Padding="{TemplateBinding Padding}">
+                  <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <ControlTemplate.Triggers>
+                  <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="bd" Property="Background" Value="#3D7EA6"/>
+                  </Trigger>
+                  <Trigger Property="IsChecked" Value="True">
+                    <Setter TargetName="bd" Property="Background" Value="#2E7D52"/>
+                  </Trigger>
+                  <Trigger Property="IsEnabled" Value="False">
+                    <Setter TargetName="bd" Property="Opacity" Value="0.4"/>
+                  </Trigger>
+                </ControlTemplate.Triggers>
+              </ControlTemplate>
+            </ToggleButton.Template>
+          </ToggleButton>
           <Button x:Name="ExportFeedbackButton" Content="📊 0"
                   ToolTip="Собрать жалобы со скриншотами в архив и отправить разработчику"
-                  Margin="0,0,6,0" Padding="8,5" FontSize="11" FontWeight="SemiBold"
+                  Margin="0,0,6,4" Padding="8,5" FontSize="11" FontWeight="SemiBold"
                   Cursor="Hand" Click="ExportFeedbackButton_Click"
                   Background="#2F5D8A" Foreground="White" BorderThickness="0" Visibility="Collapsed">
             <Button.Template>
@@ -166,7 +202,7 @@
           </Button>
           <Button x:Name="NewChatButton" Content="+ Новый"
                   ToolTip="Новый диалог — очистить историю и журнал созданных элементов"
-                  Margin="0,0,8,0" Padding="10,5" FontSize="11" FontWeight="SemiBold"
+                  Margin="0,0,8,4" Padding="10,5" FontSize="11" FontWeight="SemiBold"
                   Cursor="Hand" Click="NewChatButton_Click"
                   Background="#2F5D8A" Foreground="White" BorderThickness="0">
             <Button.Template>
@@ -186,12 +222,12 @@
               </ControlTemplate>
             </Button.Template>
           </Button>
-          <Border x:Name="StatusPill" CornerRadius="12" Padding="10,4"
+          <Border x:Name="StatusPill" CornerRadius="12" Padding="10,4" Margin="0,0,0,4"
                   Background="#3D7EA6" VerticalAlignment="Center">
             <TextBlock x:Name="StatusText" Text="Готов" FontSize="11" FontWeight="SemiBold"
                        Foreground="White"/>
           </Border>
-        </StackPanel>
+        </WrapPanel>
       </Grid>
     </Border>
 

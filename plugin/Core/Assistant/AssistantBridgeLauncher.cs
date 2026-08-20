@@ -99,6 +99,13 @@ namespace revit_mcp_plugin.Core.Assistant
                 psi.EnvironmentVariables["REVIT_MCP_NODE"] = node;
                 psi.EnvironmentVariables["REVIT_MCP_SERVER_JS"] = mcpJs;
                 psi.EnvironmentVariables["REVIT_MCP_SERVER_CWD"] = mcpCwd;
+                // Every tool, every turn. A narrowed catalog does not read as a
+                // narrowed catalog to the architect: the model does not say
+                // "инструмент скрыт", it says the feature does not exist and
+                // offers a workaround. Set MCP_TOOL_PROFILE=lite in the
+                // environment to trade the tokens back for speed.
+                psi.EnvironmentVariables["MCP_TOOL_PROFILE"] =
+                    Environment.GetEnvironmentVariable("MCP_TOOL_PROFILE") ?? "default";
 
                 _process = Process.Start(psi);
                 if (_process == null)

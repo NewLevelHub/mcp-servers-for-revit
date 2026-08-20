@@ -4,6 +4,7 @@ using RevitMCPSDK.API.Interfaces;
 using RevitMCPSDK.API.Models.JsonRPC;
 using RevitMCPSDK.Exceptions;
 using System;
+using System.Collections.Generic;
 
 namespace revit_mcp_plugin.Core
 {
@@ -55,10 +56,25 @@ namespace revit_mcp_plugin.Core
                 // Execute command
                 try
                 {
-                    object result = command.Execute(request.GetParamsObject(), request.Id);
+                    object result;
+                    List<string> dismissedWarnings;
+
+                    // Armed for exactly as long as the command runs. Outside this
+                    // window a Revit warning is the architect's business and must
+                    // appear; inside it, it is a modal dialog nobody can click that
+                    // stalls every later tool call in the turn.
+                    using (AgentFailureGuard.Arm())
+                    {
+                        AgentFailureGuard.TakeDismissed();
+                        result = command.Execute(request.GetParamsObject(), request.Id);
+                        dismissedWarnings = AgentFailureGuard.TakeDismissed();
+                    }
+
                     _logger.Info("命令 {0} 执行成功\nCommand {0} executed successfully.", request.Method);
 
-                    return CreateSuccessResponse(request.Id, result);
+                    return CreateSuccessResponse(
+                        request.Id,
+                        AttachWarnings(result, dismissedWarnings));
                 }
                 catch (CommandExecutionException ex)
                 {
@@ -293,6 +309,45 @@ namespace revit_mcp_plugin.Core
                     null,
                     JsonRPCErrorCodes.InternalError,
                     $"Failed to parse sub-command response: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Puts the warnings Revit raised during the command into its result.
+        ///
+        /// Dismissing a warning to keep the turn moving is right; hiding that it
+        /// happened is not — "создано 9 помещений" over a plan Revit complained
+        /// about is exactly the confident wrong answer this whole path keeps
+        /// producing. The model gets to see it and say so.
+        /// </summary>
+        private static object AttachWarnings(object result, List<string> warnings)
+        {
+            if (warnings == null || warnings.Count == 0)
+            {
+                return result;
+            }
+
+            try
+            {
+                var token = result is JToken existing ? existing : JToken.FromObject(result);
+                if (token is JObject bag)
+                {
+                    bag["revitWarnings"] = new JArray(warnings);
+                    return bag;
+                }
+
+                return new JObject
+                {
+                    ["result"] = token,
+                    ["revitWarnings"] = new JArray(warnings)
+                };
+            }
+            catch
+            {
+                // A result that will not serialise here would not have serialised
+                // in CreateSuccessResponse either; leave it exactly as it was and
+                // let that path report the problem.
+                return result;
             }
         }
 

@@ -11,6 +11,7 @@ public class ScenarioPresetsTests
         "floor_dims_no_overlap",
         "rooms_tags",
         "norm_audit",
+        "learn_revit",
     };
 
     [Fact]
