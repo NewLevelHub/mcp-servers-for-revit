@@ -114,6 +114,11 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "create_mep_openings",
+      "description": "Задание на отверстия: проёмы под трубы и воздуховоды связи, превью и создание",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "check_link_clashes",
       "description": "Коллизии со связями: пересечения модели с элементами связей списком, с глубиной и координатами",
       "assemblyPath": "RevitMCPCommandSet.dll"

@@ -35,6 +35,9 @@ const HEAVY_COMMANDS = new Set([
   // The scan gives itself up to 150 s and returns a partial list rather than
   // failing; the socket has to outlast that budget for the list to arrive.
   "check_link_clashes",
+  // Measures every МЕР crossing and then writes the openings; both halves sit
+  // inside the same call, so the socket has to outlast the pair.
+  "create_mep_openings",
   // A full batch (20 sub-commands, e.g. fill_title_block writes) can exceed 120 s.
   "batch_execute",
 ]);

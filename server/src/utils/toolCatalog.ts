@@ -175,7 +175,7 @@ export const TOOL_GROUPS: Readonly<Record<ToolGroupName, readonly string[]>> = {
   ],
 
   /** Смежники: the linked АР/КР/ИОС models of the same project. */
-  links: ["get_linked_models", "check_link_clashes"],
+  links: ["get_linked_models", "check_link_clashes", "create_mep_openings"],
 
   /** Structure and circulation the everyday set does not cover. */
   modeling: [
@@ -206,7 +206,7 @@ export const TOOL_GROUP_SUMMARIES: Readonly<Record<ToolGroupName, string>> = {
   annotation: "dimensions, tags, text notes, filled regions, node details",
   cad: "tracing walls, openings and columns from a DWG underlay",
   links:
-    "linked models of смежники — what is linked in, in which раздел, where it sits in our coordinates, and where it clashes with our model",
+    "linked models of смежники — what is linked in, in which раздел, where it sits in our coordinates, where it clashes with our model, and the задание на отверстия that follows",
   modeling: "grids, stairs, railings, floor openings, framing, family loading",
   advanced: "raw code execution and the connection smoke test",
 };
