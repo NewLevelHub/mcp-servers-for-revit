@@ -7,33 +7,6 @@ using RevitMCPSDK.API.Interfaces;
 namespace RevitMCPCommandSet.Services
 {
     /// <summary>
-    /// Failure preprocessor that handles duplicate room number warnings during tagging.
-    /// This suppresses warnings that might occur if the model has rooms with conflicting numbers.
-    /// </summary>
-    public class TagRoomFailurePreprocessor : IFailuresPreprocessor
-    {
-        public FailureProcessingResult PreprocessFailures(FailuresAccessor failuresAccessor)
-        {
-            IList<FailureMessageAccessor> failures = failuresAccessor.GetFailureMessages();
-
-            foreach (FailureMessageAccessor failure in failures)
-            {
-                // Handle room-related warnings by deleting them
-                string description = failure.GetDescriptionText();
-                if (description.Contains("Number") ||
-                    description.Contains("number") ||
-                    description.Contains("duplicate") ||
-                    description.Contains("Duplicate"))
-                {
-                    failuresAccessor.DeleteWarning(failure);
-                }
-            }
-
-            return FailureProcessingResult.Continue;
-        }
-    }
-
-    /// <summary>
     /// Event handler for creating room tags in Revit
     /// </summary>
     public class TagRoomsEventHandler : IExternalEventHandler, IWaitableExternalEventHandler
@@ -55,15 +28,22 @@ namespace RevitMCPCommandSet.Services
         private bool _useLeader;
         private string _tagTypeId;
         private List<int> _roomIds;
+        private bool _showArea;
 
         /// <summary>
         /// Set the tagging parameters
         /// </summary>
-        public void SetParameters(bool useLeader, string tagTypeId, List<int> roomIds = null)
+        /// <param name="showArea">
+        /// The caller wants the area on the tag («марка с квадратурой»). Only a
+        /// tag family that carries area can show one, so this makes the run fail
+        /// when the project has none — see <see cref="RoomTagTypes"/>.
+        /// </param>
+        public void SetParameters(bool useLeader, string tagTypeId, List<int> roomIds = null, bool showArea = false)
         {
             _useLeader = useLeader;
             _tagTypeId = tagTypeId;
             _roomIds = roomIds;
+            _showArea = showArea;
             _resetEvent.Reset();
         }
 
@@ -199,9 +179,14 @@ namespace RevitMCPCommandSet.Services
 
                 using (Transaction tran = new Transaction(_doc, "Tag Rooms"))
                 {
-                    // Set up failure handling to completely suppress any room-related warnings
+                    // Dismiss warnings by severity rather than by English wording:
+                    // TagRoomFailurePreprocessor looked for "Number" / "duplicate" in the
+                    // description, which a Russian Revit never produces, so the warning
+                    // went up as a modal dialog that nobody could click and the rest of
+                    // the turn timed out behind it (20.08.2026).
+                    var warnings = new RecordingWarningsPreprocessor();
                     FailureHandlingOptions failureOptions = tran.GetFailureHandlingOptions();
-                    failureOptions.SetFailuresPreprocessor(new TagRoomFailurePreprocessor());
+                    failureOptions.SetFailuresPreprocessor(warnings);
                     failureOptions.SetClearAfterRollback(true);
                     failureOptions.SetDelayedMiniWarnings(false);
                     tran.SetFailureHandlingOptions(failureOptions);
@@ -212,14 +197,18 @@ namespace RevitMCPCommandSet.Services
                     _doc.Regenerate();
 
                     // Resolve target room tag type (honors requested tagTypeId when valid).
-                    ElementId roomTagTypeId = FindRoomTagTypeId(_doc);
+                    // When area was asked for and no tag family carries it, this refuses:
+                    // placing a name-only tag instead is what let the assistant report
+                    // «марки с площадью уже стоят» over a plan without any (19.08.2026).
+                    ElementId roomTagTypeId = RoomTagTypes.Pick(
+                        _doc, _tagTypeId, _showArea, out string tagTypeError, out string tagTypeName);
 
                     if (roomTagTypeId == null || roomTagTypeId == ElementId.InvalidElementId)
                     {
                         TaggingResults = new
                         {
                             success = false,
-                            message = "No room tag family type found in the project"
+                            message = tagTypeError ?? "No room tag family type found in the project"
                         };
                         tran.RollBack();
                         return;
@@ -332,6 +321,17 @@ namespace RevitMCPCommandSet.Services
                         ? $"Created {createdTags.Count} tags. Skipped {skippedRooms.Count} rooms that already had tags."
                         : $"Successfully created {createdTags.Count} room tags.";
 
+                    // Name the type that was actually placed. Without it the model
+                    // has no way to know whether the tags show an area, and it fills
+                    // that gap by assuming they do.
+                    resultMessage += $" Тип марки: «{tagTypeName}»";
+                    resultMessage += RoomTagTypes.ShowsArea(_doc.GetElement(roomTagTypeId) as ElementType)
+                        ? " (с площадью)."
+                        : " — площадь этот тип не показывает.";
+
+                    foreach (var line in warnings.ToWarningLines("Revit предупредил"))
+                        resultMessage += " " + line + ".";
+
                     if (viewSwitchMessage != null)
                     {
                         resultMessage = viewSwitchMessage + "\n" + resultMessage;
@@ -343,6 +343,8 @@ namespace RevitMCPCommandSet.Services
                         totalRooms = rooms.Count,
                         taggedRooms = createdTags.Count,
                         skippedCount = skippedRooms.Count,
+                        tagTypeName,
+                        tagShowsArea = RoomTagTypes.ShowsArea(_doc.GetElement(roomTagTypeId) as ElementType),
                         tags = createdTags,
                         skippedRooms = skippedRooms.Count > 0 ? skippedRooms : null,
                         errors = errors.Count > 0 ? errors : null,
@@ -386,36 +388,5 @@ namespace RevitMCPCommandSet.Services
             return "Tag Rooms";
         }
 
-        /// <summary>
-        /// Resolve room tag type id in the document.
-        /// </summary>
-        private ElementId FindRoomTagTypeId(Document doc)
-        {
-            // If specific tag type ID was specified, try to use it
-            if (!string.IsNullOrEmpty(_tagTypeId) && int.TryParse(_tagTypeId, out int id))
-            {
-                ElementId elementId = new ElementId(id);
-                Element element = doc.GetElement(elementId);
-
-                if (element != null &&
-                    element is ElementType &&
-                    element.Category != null &&
-                    element.Category.Id.GetIntValue() == (int)BuiltInCategory.OST_RoomTags)
-                {
-                    return elementId;
-                }
-            }
-
-            // Find the first available room tag type
-            FilteredElementCollector tagCollector = new FilteredElementCollector(doc);
-            ElementType roomTagType = tagCollector.OfClass(typeof(ElementType))
-                                                  .WhereElementIsElementType()
-                                                  .Where(e => e.Category != null &&
-                                                         e.Category.Id.GetIntValue() == (int)BuiltInCategory.OST_RoomTags)
-                                                  .Cast<ElementType>()
-                                                  .FirstOrDefault();
-
-            return roomTagType?.Id;
-        }
     }
 }

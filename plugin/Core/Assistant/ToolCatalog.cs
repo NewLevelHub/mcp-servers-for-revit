@@ -1036,9 +1036,13 @@ namespace revit_mcp_plugin.Core.Assistant
                     ("includeOpeningTier", B(), "innermost openings/piers tier, default true"),
                     ("numericSide", S(), null), ("letterSide", S(), null), ("dimensionType", S(), null))),
                 T("tag_rooms",
-                    "Place room tags (марки помещений) on the active view; prefer type with area. " +
+                    "Place room tags (марки помещений) on the active view. The default tag family shows " +
+                    "name and number only — «марка с квадратурой / с площадью» needs showArea=true, which " +
+                    "fails outright when the project has no such family rather than placing a plain tag. " +
                     "Alias tag_all_rooms is accepted by the host.",
-                    P(("tagTypeId", S(), null), ("roomIds", A("string"), null))),
+                    P(("tagTypeId", S(), null),
+                      ("roomIds", A("string"), null),
+                      ("showArea", B(), "tag type that shows room area"))),
                 T("export_room_data",
                     "Export room ElementIds, names, numbers, areas (м²). Counts and floor areas only — " +
                     "NOT width/depth; for «глубина помещения» / «сколько глубина» use get_room_geometry_metrics. " +
