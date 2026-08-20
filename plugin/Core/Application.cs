@@ -62,6 +62,12 @@ namespace revit_mcp_plugin.Core
             application.ControlledApplication.DocumentOpened += OnDocumentOpened;
             application.ControlledApplication.DocumentClosed += OnDocumentClosed;
 
+            // Dismisses warnings raised while a tool call is running, so a modal
+            // dialog nobody can click cannot stall the rest of the turn. Armed
+            // only around agent commands — see AgentFailureGuard.
+            application.ControlledApplication.FailuresProcessing +=
+                AgentFailureGuard.OnFailuresProcessing;
+
             return Result.Succeeded;
         }
 
@@ -162,6 +168,8 @@ namespace revit_mcp_plugin.Core
             application.ControlledApplication.DocumentSaved -= OnDocumentSaved;
             application.ControlledApplication.DocumentOpened -= OnDocumentOpened;
             application.ControlledApplication.DocumentClosed -= OnDocumentClosed;
+            application.ControlledApplication.FailuresProcessing -=
+                AgentFailureGuard.OnFailuresProcessing;
             if (_uiApp != null)
             {
                 _uiApp.ViewActivated -= OnViewActivated;
