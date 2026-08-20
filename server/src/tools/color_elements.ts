@@ -5,7 +5,11 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerColorElementsTool(server: McpServer) {
   server.tool(
       "color_elements",
-      "Color elements via View Color Scheme (цветовая схема) for Rooms, or Override Graphics for other categories. NOT Annotate → Filled Region («Цветовая область») — for that use create_filled_regions. Prefer create_filled_regions for norm-violation solid fills that look like the Annotate UI; use this tool for soft multi-color schemes by parameter (as on plans with «Номер» / «Назначение»).",
+      "Color elements via View Color Scheme (цветовая схема) for Rooms, or Override Graphics for other categories. " +
+      "Colour follows a parameter value, never an element id: there is no per-element list. " +
+      "«Каждому помещению свой цвет» = group by a parameter whose value is unique per room — parameterName «Имя» or «Номер» — " +
+      "and pass customColors to choose the palette, in group order. " +
+      "NOT Annotate → Filled Region («Цветовая область») — for that use create_filled_regions. Prefer create_filled_regions for norm-violation solid fills that look like the Annotate UI; use this tool for soft multi-color schemes by parameter (as on plans with «Номер» / «Назначение»).",
       {
         categoryName: z
             .string()
@@ -40,8 +44,23 @@ export function registerColorElementsTool(server: McpServer) {
           if (response.success) {
             const coloredGroups = response.results || [];
 
-            let resultText = `Successfully colored ${response.totalElements} elements across ${response.coloredGroups} groups.\n\n`;
-            resultText += "Parameter Value Groups:\n";
+            // The plugin now reports what actually landed, which can be less than
+            // it was asked for. Repeating totalElements as if it were the result is
+            // how «все 36 помещений, у каждого свой цвет» got said over a plan Revit
+            // had painted in one flat hatch (19.08.2026).
+            const colored = response.coloredElements ?? response.totalElements;
+
+            let resultText =
+                `Colored ${colored} of ${response.totalElements} elements across ` +
+                `${response.coloredGroups} groups.\n`;
+            if (response.message) {
+              resultText += `${response.message}\n`;
+            }
+            if (response.skippedValues?.length) {
+              resultText +=
+                  `Left uncolored — Revit rejected these values: ${response.skippedValues.join(", ")}.\n`;
+            }
+            resultText += "\nParameter Value Groups:\n";
 
             coloredGroups.forEach((group: any) => {
               const rgb = group.color;

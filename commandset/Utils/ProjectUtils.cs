@@ -1170,10 +1170,7 @@ namespace RevitMCPCommandSet.Utils
             if (faceRef == null) return;
 
             // 获取实心填充图案
-            FillPatternElement solidFill = new FilteredElementCollector(doc)
-                .OfClass(typeof(FillPatternElement))
-                .Cast<FillPatternElement>()
-                .FirstOrDefault(x => x.GetFillPattern().IsSolidFill);
+            FillPatternElement solidFill = SolidFillPatterns.Find(doc);
 
             if (solidFill == null)
             {

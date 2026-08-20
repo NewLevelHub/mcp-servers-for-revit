@@ -133,11 +133,26 @@ namespace RevitMCPCommandSet.Services
         /// </summary>
         private object ApplyRoomColorFillScheme(View activeView, Category roomCategory)
         {
-            var rooms = new FilteredElementCollector(doc, activeView.Id)
+            var allRooms = new FilteredElementCollector(doc, activeView.Id)
                 .OfCategory(BuiltInCategory.OST_Rooms)
                 .WhereElementIsNotElementType()
                 .Cast<Autodesk.Revit.DB.Architecture.Room>()
-                .Where(r => r.Area > 0)
+                .ToList();
+
+            var rooms = allRooms.Where(r => r.Area > 0).ToList();
+
+            // Rooms Revit gives no area to: an unclosed outline, or a second room
+            // sharing an enclosure with another («Избыточная Помещение»). They were
+            // filtered out silently, and that silence is the bug: Revit refuses to
+            // run the colour fill calculation for the view while they exist —
+            // «Не удалось выполнить расчёт Цветовая заливка», in a background-process
+            // dialog the tool never sees — and paints every room with one fallback
+            // hatch. The scheme applies, every read-back passes, and the answer says
+            // the plan is coloured while the architect is looking at flat pink
+            // (19–20.08.2026).
+            var unpaintable = allRooms
+                .Where(r => r.Area <= 0)
+                .Select(r => string.IsNullOrWhiteSpace(r.Number) ? r.Id.GetValue().ToString() : r.Number)
                 .ToList();
 
             if (rooms.Count == 0)
@@ -145,7 +160,10 @@ namespace RevitMCPCommandSet.Services
                 return new
                 {
                     success = false,
-                    message = "No rooms found in the current view"
+                    message = unpaintable.Count > 0
+                        ? $"В виде {unpaintable.Count} помещ. без площади (№{string.Join(", №", unpaintable.Take(15))}) "
+                          + "и ни одного пригодного: контуры не замкнуты либо помещения избыточные. Красить нечего."
+                        : "No rooms found in the current view"
                 };
             }
 
@@ -172,13 +190,20 @@ namespace RevitMCPCommandSet.Services
                 };
             }
 
-            // Need an existing room ColorFillScheme to duplicate (API has no public ctor)
-            ColorFillScheme template = new FilteredElementCollector(doc)
+            // Need an existing room ColorFillScheme to duplicate (API has no public ctor).
+            // Prefer one that is not by-range: some templates refuse to leave range
+            // mode, and a range scheme pointed at a text parameter is exactly the
+            // state Revit cannot compute a fill for.
+            var roomSchemes = new FilteredElementCollector(doc)
                 .OfClass(typeof(ColorFillScheme))
                 .Cast<ColorFillScheme>()
-                .FirstOrDefault(s =>
+                .Where(s =>
                     s.CategoryId == roomCategory.Id
-                    || s.CategoryId.GetValue() == (long)BuiltInCategory.OST_Rooms);
+                    || s.CategoryId.GetValue() == (long)BuiltInCategory.OST_Rooms)
+                .ToList();
+
+            ColorFillScheme template =
+                roomSchemes.FirstOrDefault(s => !s.IsByRange) ?? roomSchemes.FirstOrDefault();
 
             if (template == null)
             {
@@ -193,6 +218,8 @@ namespace RevitMCPCommandSet.Services
 
             string schemeName = $"MCP НК {_parameterName} {DateTime.Now:HHmmss}";
             List<object> results;
+            int coloredRooms;
+            List<string> skippedValues;
 
             using (var tx = new Transaction(doc, "Цветовая схема помещений (MCP)"))
             {
@@ -206,7 +233,11 @@ namespace RevitMCPCommandSet.Services
                     return new { success = false, message = "Failed to duplicate ColorFillScheme" };
                 }
 
-                // Prefer single-value entries (by parameter value, not ranges)
+                // Prefer single-value entries (by parameter value, not ranges).
+                // Carrying on after this fails used to be the whole bug: the scheme
+                // stayed in range mode, Revit could not reconcile it with a text
+                // parameter, and the tool still answered "36 помещений, у каждого
+                // свой цвет" over a plan Revit had refused to colour (19.08.2026).
                 try
                 {
                     if (scheme.IsByRange)
@@ -214,15 +245,38 @@ namespace RevitMCPCommandSet.Services
                         scheme.IsByRange = false;
                     }
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // Some templates lock IsByRange — continue with entries we can set
+                    tx.RollBack();
+                    return new
+                    {
+                        success = false,
+                        message =
+                            $"Цветовая схема «{template.Name}» не выходит из режима диапазонов " +
+                            $"({ex.Message}). Создайте схему по значению: Вид → Цветовая схема → " +
+                            "Помещения → по параметру, затем повторите."
+                    };
                 }
 
                 // Point scheme at the same parameter we grouped by (Comments / Name / …)
-                TrySetSchemeParameter(scheme, rooms[0], _parameterName);
+                if (!TryPointSchemeAtParameter(scheme, rooms[0], _parameterName, out string repointError))
+                {
+                    tx.RollBack();
+                    return new
+                    {
+                        success = false,
+                        message =
+                            $"Не удалось построить цветовую схему по параметру «{_parameterName}»: " +
+                            $"{repointError} Раскраска не применена — вид остался как был."
+                    };
+                }
 
                 var entries = new List<ColorFillSchemeEntry>();
+                // Which groups actually got an entry. CreateEntry returns null on a
+                // value Revit will not take, and dropping those silently is how the
+                // count in the answer stopped matching the colours on the plan.
+                var entered = new List<string>();
+                var skipped = new List<string>();
                 StorageType storage = GuessStorageType(rooms[0], _parameterName);
 
                 foreach (var group in groups)
@@ -232,6 +286,11 @@ namespace RevitMCPCommandSet.Services
                     if (entry != null)
                     {
                         entries.Add(entry);
+                        entered.Add(group.Key);
+                    }
+                    else
+                    {
+                        skipped.Add(group.Key);
                     }
                 }
 
@@ -262,15 +321,79 @@ namespace RevitMCPCommandSet.Services
 
                 activeView.SetColorFillSchemeId(catId, scheme.Id);
 
-                results = groups.Select(g => (object)new
+                // Read back what Revit actually stored. Every setter above can be
+                // quietly overruled by the template, and a scheme whose entries and
+                // whose parameter disagree is the state that renders as one flat
+                // hatch while the tool reports a colour per room.
+                if (scheme.IsByRange)
                 {
-                    parameterValue = g.Key,
-                    count = g.Value.Count,
-                    color = new { r = colorMap[g.Key][0], g = colorMap[g.Key][1], b = colorMap[g.Key][2] },
-                    elementIds = g.Value.Select(id => id.GetValue().ToString()).ToList()
+                    tx.RollBack();
+                    return new
+                    {
+                        success = false,
+                        message =
+                            "Схема осталась в режиме диапазонов — Revit не рассчитает по ней заливку. " +
+                            "Раскраска не применена."
+                    };
+                }
+
+                if (activeView.GetColorFillSchemeId(catId) != scheme.Id)
+                {
+                    tx.RollBack();
+                    return new
+                    {
+                        success = false,
+                        message =
+                            "Вид не принял цветовую схему помещений. Раскраска не применена."
+                    };
+                }
+
+                // Report the groups that made it into the scheme, not the ones we
+                // hoped for.
+                results = entered.Select(key => (object)new
+                {
+                    parameterValue = key,
+                    count = groups[key].Count,
+                    color = new { r = colorMap[key][0], g = colorMap[key][1], b = colorMap[key][2] },
+                    elementIds = groups[key].Select(id => id.GetValue().ToString()).ToList()
                 }).ToList();
 
+                coloredRooms = entered.Sum(key => groups[key].Count);
+                skippedValues = skipped;
+
                 tx.Commit();
+            }
+
+            string message;
+
+            if (unpaintable.Count > 0)
+            {
+                // First sentence on purpose: this is the reason the plan will look
+                // wrong, and it has to reach the architect ahead of the good news.
+                message =
+                    $"ЗАЛИВКА НЕ РАССЧИТАЕТСЯ: в виде {unpaintable.Count} помещ. без площади "
+                    + $"(№{string.Join(", №", unpaintable.Take(15))}"
+                    + (unpaintable.Count > 15 ? " и др." : "") + "). "
+                    + "Пока в модели есть избыточные помещения или незамкнутые контуры, Revit "
+                    + "отказывается считать «Цветовую заливку» и красит весь план одной штриховкой "
+                    + "вместо цветов. Сначала замкните контуры / удалите избыточные помещения, "
+                    + "затем повторите раскраску. ";
+            }
+            else
+            {
+                message = "";
+            }
+
+            message +=
+                "Применена цветовая схема вида (Цветовая область помещений). " +
+                "Если заливка не видна: Свойства вида → Цветовая схема → Помещения.";
+
+            if (skippedValues.Count > 0)
+            {
+                message +=
+                    $" Без цвета осталось {rooms.Count - coloredRooms} помещ. — " +
+                    $"Revit не принял значения: {string.Join(", ", skippedValues.Take(10))}" +
+                    (skippedValues.Count > 10 ? " и др." : "") + ".";
             }
 
             return new
@@ -280,54 +403,77 @@ namespace RevitMCPCommandSet.Services
                 schemeName,
                 parameterName = _parameterName,
                 totalElements = rooms.Count,
-                coloredGroups = groups.Count,
-                message =
-                    "Применена цветовая схема вида (Цветовая область помещений). " +
-                    "Если заливка не видна: Свойства вида → Цветовая схема → Помещения.",
+                coloredElements = coloredRooms,
+                coloredGroups = results.Count,
+                skippedValues,
+                // Named separately so a caller can act on it without parsing prose.
+                roomsWithoutArea = unpaintable,
+                colorFillBlocked = unpaintable.Count > 0,
+                message,
                 results
             };
         }
 
-        private void TrySetSchemeParameter(
+        /// <summary>
+        /// Point the scheme at the parameter the rooms were grouped by, and say so
+        /// when it cannot be done.
+        ///
+        /// This used to be void and swallow both attempts. When it failed the scheme
+        /// kept the template's parameter — «Имя», say — while the entries held room
+        /// numbers, so no room matched any entry: Revit reported «Не удалось
+        /// выполнить расчёт Цветовая заливка» in a background dialog and the tool,
+        /// which never looked, reported a colour per room.
+        /// </summary>
+        private bool TryPointSchemeAtParameter(
             ColorFillScheme scheme,
             Autodesk.Revit.DB.Architecture.Room sampleRoom,
-            string parameterName)
+            string parameterName,
+            out string error)
         {
+            error = null;
+
             Parameter param = FindParameter(sampleRoom, parameterName);
             if (param?.Definition == null)
             {
-                return;
+                error = $"у помещений нет параметра «{parameterName}».";
+                return false;
+            }
+
+            ElementId wanted = param.Id;
+            if (wanted == ElementId.InvalidElementId
+                && param.Definition is InternalDefinition internalDef
+                && internalDef.BuiltInParameter != BuiltInParameter.INVALID)
+            {
+                wanted = new ElementId(internalDef.BuiltInParameter);
+            }
+
+            if (wanted == ElementId.InvalidElementId)
+            {
+                error = $"параметр «{parameterName}» нельзя использовать в цветовой схеме.";
+                return false;
             }
 
             try
             {
-                // Built-in / shared: ParameterDefinition is ElementId of the definition holder
-                if (param.Id != ElementId.InvalidElementId)
-                {
-                    scheme.ParameterDefinition = param.Id;
-                    return;
-                }
+                scheme.ParameterDefinition = wanted;
             }
-            catch
+            catch (Exception ex)
             {
-                // ignore — keep template parameter
+                error = $"Revit отказал в параметре схемы ({ex.Message}).";
+                return false;
             }
 
-            try
+            // The setter can be accepted and then overruled by the template; the
+            // only trustworthy answer is what the scheme reports afterwards.
+            if (scheme.ParameterDefinition != wanted)
             {
-                if (param.Definition is InternalDefinition internalDef)
-                {
-                    BuiltInParameter bip = internalDef.BuiltInParameter;
-                    if (bip != BuiltInParameter.INVALID)
-                    {
-                        scheme.ParameterDefinition = new ElementId(bip);
-                    }
-                }
+                error =
+                    $"схема осталась на параметре шаблона вместо «{parameterName}» — " +
+                    "цвета не совпали бы с помещениями.";
+                return false;
             }
-            catch
-            {
-                // keep template parameter
-            }
+
+            return true;
         }
 
         private static StorageType GuessStorageType(
@@ -643,21 +789,6 @@ namespace RevitMCPCommandSet.Services
             };
         }
 
-        private ElementId GetSolidFillPatternId()
-        {
-            FilteredElementCollector collector = new FilteredElementCollector(doc);
-            collector.OfClass(typeof(FillPatternElement));
-
-            foreach (FillPatternElement patternElement in collector)
-            {
-                FillPattern pattern = patternElement.GetFillPattern();
-                if (pattern.IsSolidFill)
-                {
-                    return patternElement.Id;
-                }
-            }
-
-            return ElementId.InvalidElementId;
-        }
+        private ElementId GetSolidFillPatternId() => SolidFillPatterns.FindId(doc);
     }
 }

@@ -27,10 +27,7 @@ namespace RevitMCPCommandSet.Utils
             overrides.SetCutForegroundPatternColor(color);
             overrides.SetCutBackgroundPatternColor(color);
 
-            var solidPattern = new FilteredElementCollector(doc)
-                .OfClass(typeof(FillPatternElement))
-                .Cast<FillPatternElement>()
-                .FirstOrDefault(pattern => pattern.GetFillPattern().IsSolidFill);
+            var solidPattern = SolidFillPatterns.Find(doc);
 
             if (solidPattern != null)
             {
