@@ -114,6 +114,11 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "check_link_clashes",
+      "description": "Коллизии со связями: пересечения модели с элементами связей списком, с глубиной и координатами",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "export_tep_data",
       "description": "ТЭП: площадь застройки, общая площадь, этажность, площади по уровням, объём",
       "assemblyPath": "RevitMCPCommandSet.dll"

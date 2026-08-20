@@ -32,6 +32,9 @@ const HEAVY_COMMANDS = new Set([
   // A dozen ИОС links with includeCategories on walks every element of every one
   // of them; the plugin waits 120 s for that, so the socket has to wait longer.
   "get_linked_models",
+  // The scan gives itself up to 150 s and returns a partial list rather than
+  // failing; the socket has to outlast that budget for the list to arrive.
+  "check_link_clashes",
   // A full batch (20 sub-commands, e.g. fill_title_block writes) can exceed 120 s.
   "batch_execute",
 ]);
