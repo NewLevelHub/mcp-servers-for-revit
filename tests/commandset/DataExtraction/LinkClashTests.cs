@@ -1,3 +1,6 @@
+using System.Collections.Generic;
+using System.Linq;
+using RevitMCPCommandSet.Models.Common;
 using RevitMCPCommandSet.Models.DataExtraction;
 using RevitMCPCommandSet.Utils;
 using TUnit.Core;
@@ -140,6 +143,138 @@ public class ClashSummaryTests
     }
 }
 
+/// <summary>
+/// Folding the layers of one wall into one collision (REV-167). The numbers here are
+/// the ones the live run produced on «Короткий блок»: one beam through one wall met
+/// бетон 500, two layers of минвата, штукатурка and отделка as five separate elements.
+/// </summary>
+public class ClashLayerFoldingTests
+{
+    private static LinkClashItem Hit(long hostId, double depthMm, double x, double y = 0, long beam = 900)
+    {
+        return new LinkClashItem
+        {
+            HostElementId = hostId,
+            HostCategory = "Стены",
+            HostType = $"слой {hostId}",
+            LinkElementId = beam,
+            LinkInstanceId = 1,
+            LinkCategory = "Каркас несущий",
+            DepthMm = depthMm,
+            PointMm = new JZPoint(x, y, 5000)
+        };
+    }
+
+    [Test]
+    public async Task LayersOfOneWall_BecomeOneRow()
+    {
+        var merged = ClashRules.MergeStackedHits(new List<LinkClashItem>
+        {
+            Hit(1, 150, -11056),
+            Hit(2, 50, -11300),
+            Hit(3, 50, -11350),
+            Hit(4, 20, -11380),
+            Hit(5, 15, -10800),
+        });
+
+        await Assert.That(merged.Count).IsEqualTo(1);
+        await Assert.That(merged[0].AlsoHits!.Count).IsEqualTo(4);
+    }
+
+    [Test]
+    public async Task DeepestLayer_IsTheRowThatRepresentsTheCollision()
+    {
+        // The structural core is what the argument with the смежник is about; the
+        // 15 mm of finish is a consequence, not the subject.
+        var merged = ClashRules.MergeStackedHits(new List<LinkClashItem>
+        {
+            Hit(5, 15, -10800),
+            Hit(1, 150, -11056),
+            Hit(2, 50, -11300),
+        });
+
+        await Assert.That(merged[0].HostElementId).IsEqualTo(1L);
+        await Assert.That(merged[0].DepthMm).IsEqualTo(150);
+    }
+
+    [Test]
+    public async Task FoldedLayers_KeepTheirOwnIdsAndDepths()
+    {
+        // Whoever has to move the finish needs its id, not the id of the core.
+        var merged = ClashRules.MergeStackedHits(new List<LinkClashItem>
+        {
+            Hit(1, 150, -11056),
+            Hit(7, 15, -11100),
+        });
+
+        var layer = merged[0].AlsoHits!.Single();
+        await Assert.That(layer.HostElementId).IsEqualTo(7L);
+        await Assert.That(layer.DepthMm).IsEqualTo(15);
+        await Assert.That(layer.HostType).IsEqualTo("слой 7");
+    }
+
+    [Test]
+    public async Task SameBeamBitingTwoDifferentWalls_StaysTwoRows()
+    {
+        // Beam 274329 of the live run: 1 mm against one wall at one end, 149 mm
+        // against another six metres away. Folding those together would hide one.
+        var merged = ClashRules.MergeStackedHits(new List<LinkClashItem>
+        {
+            Hit(1, 149, -10731, 1353),
+            Hit(2, 100, -10731, -2800),
+        });
+
+        await Assert.That(merged.Count).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task DifferentLinkElements_AreNeverFolded()
+    {
+        // Two beams through the same wall are two collisions, however close they are.
+        var merged = ClashRules.MergeStackedHits(new List<LinkClashItem>
+        {
+            Hit(1, 150, -11056, 0, beam: 901),
+            Hit(1, 150, -11056, 0, beam: 902),
+        });
+
+        await Assert.That(merged.Count).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task UnmeasuredOverlap_DoesNotBecomeTheHeadOfACluster()
+    {
+        // An overlap Revit could not size is worth reporting, but naming the collision
+        // by it would hide the 150 mm one it is folded together with.
+        var unmeasured = Hit(1, 0, -11056);
+        unmeasured.DepthMm = null;
+
+        var merged = ClashRules.MergeStackedHits(new List<LinkClashItem>
+        {
+            unmeasured,
+            Hit(2, 150, -11100),
+        });
+
+        await Assert.That(merged.Count).IsEqualTo(1);
+        await Assert.That(merged[0].HostElementId).IsEqualTo(2L);
+        await Assert.That(merged[0].AlsoHits!.Single().HostElementId).IsEqualTo(1L);
+    }
+
+    [Test]
+    public async Task SingleClash_GetsNoAlsoHitsAtAll()
+    {
+        var merged = ClashRules.MergeStackedHits(new List<LinkClashItem> { Hit(1, 150, -11056) });
+
+        await Assert.That(merged.Count).IsEqualTo(1);
+        await Assert.That(merged[0].AlsoHits).IsNull();
+    }
+
+    [Test]
+    public async Task EmptyInput_IsNotAFailure()
+    {
+        await Assert.That(ClashRules.MergeStackedHits(null).Count).IsEqualTo(0);
+    }
+}
+
 public class ClashMessageTests
 {
     private static CheckLinkClashesResult Result(int scannedLinks, params LinkClashItem[] clashes)
@@ -209,6 +344,29 @@ public class ClashMessageTests
         await Assert.That(message).Contains("Пересечений: 3");
         await Assert.That(message).Contains("Двери ↔ Балки — 2");
         await Assert.That(message).Contains("Стены ↔ Трубы — 1");
+    }
+
+    [Test]
+    public async Task FoldedLayers_AreAccountedForInTheMessage()
+    {
+        // Otherwise the count reads as a miss: the model shows eighteen overlaps and
+        // the report says four.
+        var result = Result(1, Clash("Стены", "Балки"), Clash("Стены", "Балки"));
+        result.RawClashCount = 18;
+
+        var message = ClashRules.BuildMessage(result);
+
+        await Assert.That(message).Contains("18");
+        await Assert.That(message).Contains("alsoHits");
+    }
+
+    [Test]
+    public async Task NothingFolded_SaysNothingAboutLayers()
+    {
+        var result = Result(1, Clash("Стены", "Балки"));
+        result.RawClashCount = 1;
+
+        await Assert.That(ClashRules.BuildMessage(result)).DoesNotContain("alsoHits");
     }
 
     [Test]

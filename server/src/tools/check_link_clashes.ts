@@ -11,7 +11,9 @@ export function registerCheckLinkClashesTool(server: McpServer) {
       "category and type, the level and the room, the point in OUR coordinates, and how deep the two " +
       "went into each other (mm) — so operate_element can highlight the host element straight from the " +
       "report. Above the rows, byCategoryPair folds the whole run into «Балки ↔ Проёмы — 12» instead of " +
-      "300 lines to skim. Defaults compare our walls/floors/ceilings/roofs/doors/windows/stairs against " +
+      "300 lines to skim. One row is one collision: a beam meeting the core, the insulation and the " +
+      "finish of the same wall comes back once, with the layers in alsoHits and rawClashCount saying " +
+      "how many overlaps that was. Defaults compare our walls/floors/ceilings/roofs/doors/windows/stairs against " +
       "their framing, columns, foundations, ducts, pipes, cable trays and conduits; both sides are " +
       "overridable. STRICTLY READ-ONLY: no transaction here and nothing written into a link. " +
       "It is not a Navisworks clash regime — it answers «я поменял планировку, что теперь бьётся». " +
@@ -66,6 +68,17 @@ export function registerCheckLinkClashesTool(server: McpServer) {
         .describe(
           "Name the room each clash falls in (default true). Costs one point-in-room lookup per clash; " +
             "set false on a model with no room volumes computed."
+        ),
+      mergeLayers: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe(
+          "Fold one link element hitting several of our elements in the same spot into one row " +
+            "(default true). A wall modelled as core + insulation + plaster + finish otherwise " +
+            "reports one beam five times. The deepest hit becomes the row, the rest move into " +
+            "alsoHits with their own ids, and rawClashCount reports the pre-fold number. " +
+            "Set false to see every layer as its own row."
         ),
       maxClashes: z
         .number()
@@ -126,6 +139,7 @@ export function registerCheckLinkClashesTool(server: McpServer) {
           return await revitClient.sendCommand("check_link_clashes", {
             toleranceMm: args.toleranceMm ?? 5,
             includeRooms: args.includeRooms ?? true,
+            mergeLayers: args.mergeLayers ?? true,
             maxClashes: args.maxClashes ?? 500,
             maxHostElements: args.maxHostElements ?? 50000,
             timeBudgetSeconds: args.timeBudgetSeconds ?? 90,

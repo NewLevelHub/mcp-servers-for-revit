@@ -74,6 +74,34 @@ namespace RevitMCPCommandSet.Models.DataExtraction
         /// <summary>Set when the depth could not be measured and the row is kept anyway.</summary>
         [JsonProperty("note", NullValueHandling = NullValueHandling.Ignore)]
         public string Note { get; set; }
+
+        /// <summary>
+        /// The other elements of ours this same link element hits in the same spot —
+        /// the finish, insulation and plaster layers stacked on the structural one.
+        /// Null when nothing was folded into this row.
+        /// </summary>
+        [JsonProperty("alsoHits", NullValueHandling = NullValueHandling.Ignore)]
+        public List<ClashLayerHit> AlsoHits { get; set; }
+    }
+
+    /// <summary>
+    /// One more element of ours in the same collision — a layer of the same wall.
+    /// Carries its own id, because the architect may well need to edit that layer
+    /// rather than the core.
+    /// </summary>
+    public class ClashLayerHit
+    {
+        [JsonProperty("hostElementId")]
+        public long HostElementId { get; set; }
+
+        [JsonProperty("hostCategory")]
+        public string HostCategory { get; set; } = string.Empty;
+
+        [JsonProperty("hostType", NullValueHandling = NullValueHandling.Ignore)]
+        public string HostType { get; set; }
+
+        [JsonProperty("depthMm", NullValueHandling = NullValueHandling.Ignore)]
+        public double? DepthMm { get; set; }
     }
 
     /// <summary>How many clashes one pair of categories accounts for.</summary>
@@ -149,9 +177,17 @@ namespace RevitMCPCommandSet.Models.DataExtraction
         [JsonProperty("hostElementsScanned")]
         public int HostElementsScanned { get; set; }
 
-        /// <summary>Overlaps found before the cap — what «столько всего» means.</summary>
+        /// <summary>Rows in the report — one per collision after the layers are folded.</summary>
         [JsonProperty("totalClashes")]
         public int TotalClashes { get; set; }
+
+        /// <summary>
+        /// Overlaps found before folding. Higher than <see cref="TotalClashes"/> on a
+        /// layered model, where one beam through one wall meets the core, the insulation
+        /// and the finish as separate elements.
+        /// </summary>
+        [JsonProperty("rawClashCount")]
+        public int RawClashCount { get; set; }
 
         /// <summary>Overlaps dropped for being shallower than the tolerance.</summary>
         [JsonProperty("ignoredBelowTolerance")]

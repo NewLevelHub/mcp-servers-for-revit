@@ -1,3 +1,4 @@
+using RevitMCPCommandSet.Models.Common;
 using RevitMCPCommandSet.Models.DataExtraction;
 
 namespace RevitMCPCommandSet.Utils
@@ -26,6 +27,15 @@ namespace RevitMCPCommandSet.Utils
         /// <summary>Category pairs named in the summary. The tail is in the rows.</summary>
         public const int SummaryPairLimit = 8;
 
+        /// <summary>
+        /// How close two overlaps of the same link element have to be to count as one
+        /// collision. A wall is modelled here as a stack of separate elements — core,
+        /// two layers of insulation, plaster, finish — and a beam through it meets all
+        /// of them within the wall thickness. 1.5 m is comfortably wider than any such
+        /// stack and far narrower than the gap to the next place the same beam bites.
+        /// </summary>
+        public const double MergeRadiusMm = 1500.0;
+
         public static double NormaliseToleranceMm(double requested)
         {
             if (double.IsNaN(requested) || requested < 0)
@@ -49,6 +59,82 @@ namespace RevitMCPCommandSet.Utils
                 return true;
 
             return depthMm.Value >= toleranceMm;
+        }
+
+        /// <summary>
+        /// Folds the overlaps of one link element in one place into a single row.
+        /// </summary>
+        /// <remarks>
+        /// A wall here is a stack of separate elements, so one beam through one wall
+        /// produced five rows — бетон 500, две минваты, штукатурка, отделка — and four
+        /// test beams produced eighteen. On a real КР that multiplies the report by
+        /// four or five and buries what matters.
+        ///
+        /// The deepest overlap becomes the row (it is the structural layer, the one the
+        /// argument with the смежник is actually about) and the rest move into
+        /// <see cref="LinkClashItem.AlsoHits"/> — nothing is lost, and the layer ids are
+        /// still there for whoever has to edit the finish.
+        ///
+        /// Grouping is by link element AND by place: the same beam biting two different
+        /// walls at opposite ends stays two rows, which is what the architect sees when
+        /// they look at it.
+        /// </remarks>
+        public static List<LinkClashItem> MergeStackedHits(
+            IEnumerable<LinkClashItem> clashes,
+            double radiusMm = MergeRadiusMm)
+        {
+            var merged = new List<LinkClashItem>();
+
+            foreach (var group in (clashes ?? Enumerable.Empty<LinkClashItem>())
+                         .Where(clash => clash != null)
+                         .GroupBy(clash => (clash.LinkInstanceId, clash.LinkElementId)))
+            {
+                // Deepest first, so the row that represents a cluster is picked by the
+                // very first member that lands in it. An unmeasured overlap sorts last:
+                // it is worth reporting, but it is not the one to name the collision by.
+                var ordered = group
+                    .OrderByDescending(clash => clash.DepthMm ?? double.MinValue)
+                    .ToList();
+
+                var clusters = new List<LinkClashItem>();
+
+                foreach (var clash in ordered)
+                {
+                    var host = clusters.FirstOrDefault(candidate =>
+                        WithinRadius(candidate.PointMm, clash.PointMm, radiusMm));
+
+                    if (host == null)
+                    {
+                        clusters.Add(clash);
+                        continue;
+                    }
+
+                    host.AlsoHits ??= new List<ClashLayerHit>();
+                    host.AlsoHits.Add(new ClashLayerHit
+                    {
+                        HostElementId = clash.HostElementId,
+                        HostCategory = clash.HostCategory,
+                        HostType = clash.HostType,
+                        DepthMm = clash.DepthMm
+                    });
+                }
+
+                merged.AddRange(clusters);
+            }
+
+            return merged;
+        }
+
+        private static bool WithinRadius(JZPoint a, JZPoint b, double radiusMm)
+        {
+            if (a == null || b == null)
+                return false;
+
+            var dx = a.X - b.X;
+            var dy = a.Y - b.Y;
+            var dz = a.Z - b.Z;
+
+            return dx * dx + dy * dy + dz * dz <= radiusMm * radiusMm;
         }
 
         /// <summary>
@@ -114,6 +200,14 @@ namespace RevitMCPCommandSet.Utils
 
             var message = $"Пересечений: {result.TotalClashes} в {scanned} " +
                           $"{LinkWord(scanned)}, порог {Format(result.ToleranceMm)} мм.";
+
+            if (result.RawClashCount > result.TotalClashes)
+            {
+                // Without this line the count looks like the tool missed things: the
+                // model shows eighteen overlaps and the report says four.
+                message += $" Слои стен свёрнуты: {result.RawClashCount} перекрытий → " +
+                           $"{result.TotalClashes} строк, остальные в alsoHits.";
+            }
 
             var top = result.ByCategoryPair ?? new List<ClashPairCount>();
             if (top.Count > 0)

@@ -52,6 +52,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
         private int _maxHostElements = 50000;
         private int _timeBudgetSeconds = 90;
         private bool _includeRooms = true;
+        private bool _mergeLayers = true;
 
         /// <summary>Solids thinner than this are modelling debris, not geometry (ft³).</summary>
         private const double MinSolidVolume = 1e-6;
@@ -69,7 +70,8 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             int maxClashes = 500,
             int maxHostElements = 50000,
             int timeBudgetSeconds = 90,
-            bool includeRooms = true)
+            bool includeRooms = true,
+            bool mergeLayers = true)
         {
             _linkNameFilter = linkNameFilter ?? string.Empty;
             _hostCategoryNames = (hostCategories ?? Enumerable.Empty<string>()).ToList();
@@ -82,6 +84,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             // cut off by the wait, and the caller would get a timeout instead of a list.
             _timeBudgetSeconds = Math.Max(5, Math.Min(150, timeBudgetSeconds));
             _includeRooms = includeRooms;
+            _mergeLayers = mergeLayers;
             TaskCompleted = false;
             _resetEvent.Reset();
         }
@@ -129,7 +132,15 @@ namespace RevitMCPCommandSet.Services.DataExtraction
 
                 total.Stop();
                 result.ElapsedMs = total.ElapsedMilliseconds;
+
+                result.RawClashCount = result.Clashes.Count;
+                if (_mergeLayers)
+                    result.Clashes = ClashRules.MergeStackedHits(result.Clashes);
+
                 result.TotalClashes = result.Clashes.Count;
+                // The summary counts rows, not layers — otherwise «Стены ↔ Каркас
+                // несущий — 18» describes how the walls are modelled rather than how
+                // much of the building is in trouble.
                 result.ByCategoryPair = ClashRules.Summarise(result.Clashes);
 
                 // Deepest first: page one is then the page worth arguing about, and the

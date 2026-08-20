@@ -30,10 +30,11 @@ namespace RevitMCPCommandSet.Commands.DataExtraction
                 int maxHostElements = parameters?["maxHostElements"]?.Value<int>() ?? 50000;
                 int timeBudgetSeconds = parameters?["timeBudgetSeconds"]?.Value<int>() ?? 90;
                 bool includeRooms = parameters?["includeRooms"]?.Value<bool>() ?? true;
+                bool mergeLayers = parameters?["mergeLayers"]?.Value<bool>() ?? true;
 
                 _handler.SetParameters(
                     linkNameFilter, hostCategories, linkCategories, toleranceMm, levelName,
-                    maxClashes, maxHostElements, timeBudgetSeconds, includeRooms);
+                    maxClashes, maxHostElements, timeBudgetSeconds, includeRooms, mergeLayers);
 
                 // The handler caps itself at a 150 s budget; the wait has to outlast that
                 // so a run that used its whole budget returns a list rather than a timeout.
