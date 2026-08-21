@@ -202,6 +202,44 @@ public class ThroughCrossingTests
         // be wrong; the preview lets it be judged by eye.
         await Assert.That(MepOpeningRules.PassesThrough(50, 0)).IsTrue();
     }
+
+    [Test]
+    public async Task RunSquareOnToTheWall_IsCrossingIt()
+    {
+        await Assert.That(MepOpeningRules.RunCrossesHost(1.0)).IsTrue();
+    }
+
+    [Test]
+    public async Task RunLyingAgainstTheFace_IsNotCrossingIt()
+    {
+        // The live case depth alone could not catch: a beam along a 15 mm finish layer
+        // covers the whole of those 15 mm, so by depth it «passes through» — and asked
+        // for a 4250 mm hole through the отделка.
+        await Assert.That(MepOpeningRules.RunCrossesHost(0.0)).IsFalse();
+        await Assert.That(MepOpeningRules.RunCrossesHost(0.05)).IsFalse();
+    }
+
+    [Test]
+    public async Task SharpButRealCrossing_IsKept()
+    {
+        // A pipe threading a wall at a sharp angle is still a pipe that needs a hole.
+        await Assert.That(MepOpeningRules.RunCrossesHost(0.25)).IsTrue();
+    }
+
+    [Test]
+    public async Task DirectionAlongTheAxis_DoesNotMatter()
+    {
+        // The run drawn the other way round is the same run.
+        await Assert.That(MepOpeningRules.RunCrossesHost(-1.0)).IsTrue();
+        await Assert.That(MepOpeningRules.RunCrossesHost(-0.05)).IsFalse();
+    }
+
+    [Test]
+    public async Task RunWithoutAnAxis_KeepsTheOpening()
+    {
+        // A fitting has no direction, so it cannot be judged to run along anything.
+        await Assert.That(MepOpeningRules.RunCrossesHost(double.NaN)).IsTrue();
+    }
 }
 
 /// <summary>

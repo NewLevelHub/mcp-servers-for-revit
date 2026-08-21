@@ -45,6 +45,41 @@ namespace RevitMCPCommandSet.Utils
         public const double ThroughFraction = 0.8;
 
         /// <summary>
+        /// How square-on a run has to meet an element before it is crossing it rather
+        /// than running along it: the cosine between the axis of the run and the normal
+        /// of the host.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="PassesThrough"/> alone cannot tell the two apart on a thin layer.
+        /// A beam lying along a 15 mm finish covers the whole of those 15 mm, so by depth
+        /// it «passes through» — and the live run duly asked for a 4250 mm hole through
+        /// the отделка. By direction it is unmistakable: a crossing has a real component
+        /// along the normal, a run lying against the face has almost none.
+        ///
+        /// 0.2 is about 78° off square — generous, because a pipe threading a wall at a
+        /// sharp angle is still a pipe that needs a hole.
+        /// </remarks>
+        public const double MinCrossingAlignment = 0.2;
+
+        /// <summary>
+        /// Is this run crossing the element, or travelling along it?
+        /// </summary>
+        /// <param name="alignmentWithNormal">
+        /// |cos| between the axis of the run and the normal of the host. Negative values
+        /// are treated as their absolute value — direction along the axis is meaningless
+        /// here. Pass a negative number for «unknown» to keep the opening.
+        /// </param>
+        public static bool RunCrossesHost(
+            double alignmentWithNormal,
+            double threshold = MinCrossingAlignment)
+        {
+            if (double.IsNaN(alignmentWithNormal))
+                return true;
+
+            return Math.Abs(alignmentWithNormal) >= threshold;
+        }
+
+        /// <summary>
         /// How far apart the layers of one wall assembly can sit. Openings for the same
         /// run within this distance are one hole through a stack — бетон, утеплитель,
         /// штукатурка, отделка — not several holes in several walls.

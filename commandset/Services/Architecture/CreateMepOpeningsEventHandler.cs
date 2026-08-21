@@ -353,9 +353,13 @@ namespace RevitMCPCommandSet.Services.Architecture
 
                             crossing.HostThicknessMm = Math.Round(thicknessMm, 1);
 
-                            // A run lying along the inside of a wall needs the смежник to
-                            // move it, not a 6-metre hole cut through the building.
-                            if (!MepOpeningRules.PassesThrough(crossing.ThroughMm, thicknessMm))
+                            // Two ways a run can touch an element without needing a hole,
+                            // and each catches what the other misses. By depth: it grazes
+                            // the face and stops. By direction: it lies along a thin layer
+                            // and covers the whole of its 15 mm without ever crossing it.
+                            var alignment = AlignmentWithNormal(mep, link, frame.Value);
+                            if (!MepOpeningRules.PassesThrough(crossing.ThroughMm, thicknessMm) ||
+                                !MepOpeningRules.RunCrossesHost(alignment))
                             {
                                 result.SkippedNotThrough++;
                                 continue;
@@ -368,6 +372,34 @@ namespace RevitMCPCommandSet.Services.Architecture
             }
 
             return crossings;
+        }
+
+        /// <summary>
+        /// |cos| between the axis of the run and the normal of the host, or NaN when the
+        /// run has no axis to speak of — a fitting, an accessory. NaN keeps the opening:
+        /// something without a direction cannot be judged to be running along anything.
+        /// </summary>
+        private static double AlignmentWithNormal(Element mep, LinkTarget link, HostFrame frame)
+        {
+            try
+            {
+                if (!((mep?.Location as LocationCurve)?.Curve is Curve curve))
+                    return double.NaN;
+
+                // The chord, not the tangent: a пологая curve threading a wall is judged
+                // by where it is going, and a straight run gives the exact direction.
+                var direction = curve.GetEndPoint(1).Subtract(curve.GetEndPoint(0));
+                if (direction.GetLength() < 1e-9)
+                    return double.NaN;
+
+                // The run is stored in the coordinates of the link; the normal is ours.
+                var inHost = link.ToHost.OfVector(direction).Normalize();
+                return inHost.DotProduct(frame.W);
+            }
+            catch
+            {
+                return double.NaN;
+            }
         }
 
         /// <summary>
