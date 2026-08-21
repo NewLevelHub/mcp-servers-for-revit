@@ -48,6 +48,10 @@ namespace RevitMCPCommandSet.Models.Architecture
         [JsonProperty("roomName", NullValueHandling = NullValueHandling.Ignore)]
         public string RoomName { get; set; }
 
+        /// <summary>Номер помещения — что стоит на плане рядом с названием.</summary>
+        [JsonProperty("roomNumber", NullValueHandling = NullValueHandling.Ignore)]
+        public string RoomNumber { get; set; }
+
         [JsonProperty("linkName")]
         public string LinkName { get; set; } = string.Empty;
 

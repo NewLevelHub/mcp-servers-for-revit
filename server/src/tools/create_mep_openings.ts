@@ -14,8 +14,11 @@ export function registerCreateMepOpeningsTool(server: McpServer) {
       "fins of masonry between them. Each row carries a марка, the size, the отметка низа above the " +
       "level, the room, and the ids of both our element and the engineering runs it is cut for. " +
       "PREVIEW BY DEFAULT: apply=false returns the plan and touches nothing; call again with apply=true " +
-      "after the architect has read it. A re-run does not duplicate — openings already in the model come " +
-      "back as status 'exists'. Use check_link_clashes first to see what is hitting what; this tool is " +
+      "after the architect has read it. It also reads back the openings the model already carries, by " +
+      "their ОТВ mark, so asking again after the holes are cut still returns the задание — with those rows " +
+      "as status 'exists' — instead of «отверстия не нужны». That only works for openings placed as a " +
+      "family: pass openingTypeId, or a plain Revit opening is cut that carries no mark and cannot be " +
+      "read back or scheduled. Use check_link_clashes first to see what is hitting what; this tool is " +
       "the answer for the МЕР runs that are supposed to pass through.",
     {
       apply: z

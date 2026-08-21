@@ -393,6 +393,75 @@ public class OpeningMarkTests
     }
 }
 
+/// <summary>
+/// Reading a mark back (REV-186). A задание has to survive being built: after the holes
+/// are cut the runs no longer cross anything, so the only way to show it again is to
+/// read the openings themselves — and then keep numbering where the model left off.
+/// </summary>
+public class MarkNumberTests
+{
+    [Test]
+    [Arguments("ОТВ-2эт-03", 3)]
+    [Arguments("ОТВ-2эт-12", 12)]
+    [Arguments("ОТВ-07", 7)]
+    [Arguments("ОТВ-Уровень1-01", 1)]
+    public async Task Number_IsReadBackOffTheMark(string mark, int expected)
+    {
+        await Assert.That(MepOpeningRules.ReadMarkNumber(mark)).IsEqualTo(expected);
+    }
+
+    [Test]
+    [Arguments("ОТВ")]
+    [Arguments("отверстие в стене")]
+    [Arguments("")]
+    [Arguments(null)]
+    public async Task MarkTypedByHand_ReadsAsZeroRatherThanThrowing(string mark)
+    {
+        // Somebody's own mark must not stop the numbering — it just does not contribute.
+        await Assert.That(MepOpeningRules.ReadMarkNumber(mark)).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task MarkAndNumber_RoundTrip()
+    {
+        // What BuildMark writes, ReadMarkNumber has to read: otherwise a re-run starts
+        // at 01 again and the floor ends up with two «ОТВ-2эт-01».
+        for (var i = 1; i <= 30; i++)
+        {
+            var mark = MepOpeningRules.BuildMark("2 этаж", i);
+            await Assert.That(MepOpeningRules.ReadMarkNumber(mark)).IsEqualTo(i);
+        }
+    }
+}
+
+public class OpeningProximityTests
+{
+    [Test]
+    public async Task SamePlace_IsRecognised()
+    {
+        var a = new JZPoint(-10931, 0, 4900);
+        var b = new JZPoint(-10931 + 100, 0, 4900);
+
+        await Assert.That(MepOpeningRules.WithinMm(a, b, 150)).IsTrue();
+    }
+
+    [Test]
+    public async Task DifferentPlace_IsNot()
+    {
+        var a = new JZPoint(-10931, 0, 4900);
+        var b = new JZPoint(-10931, 3000, 4900);
+
+        await Assert.That(MepOpeningRules.WithinMm(a, b, 150)).IsFalse();
+    }
+
+    [Test]
+    public async Task MissingPoint_IsNotAMatch()
+    {
+        // A row without a centre must not silently cancel a planned opening.
+        await Assert.That(MepOpeningRules.WithinMm(null, new JZPoint(0, 0, 0), 150)).IsFalse();
+    }
+}
+
 public class OpeningRectTests
 {
     [Test]

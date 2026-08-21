@@ -14,20 +14,30 @@ namespace RevitMCPCommandSet.Utils
     public static class OpeningTypeSizer
     {
         /// <summary>Families name their width differently; any writable one will do.</summary>
+        // The fallbacks are appended, never inserted: TrySetLength writes into the first
+        // writable one it meets, and reordering this list would silently start sizing a
+        // different parameter than it did before.
         public static readonly BuiltInParameter[] WidthParameters =
         {
             BuiltInParameter.DOOR_WIDTH,
             BuiltInParameter.WINDOW_WIDTH,
             BuiltInParameter.FAMILY_WIDTH_PARAM,
-            BuiltInParameter.GENERIC_WIDTH
+            BuiltInParameter.GENERIC_WIDTH,
+            BuiltInParameter.FAMILY_ROUGH_WIDTH_PARAM
         };
 
+        /// <summary>
+        /// CASEWORK_HEIGHT is here because ADSK_Окно_Проем keeps its height in it —
+        /// found when a созданное opening read back as 0 mm high (REV-186).
+        /// </summary>
         public static readonly BuiltInParameter[] HeightParameters =
         {
             BuiltInParameter.DOOR_HEIGHT,
             BuiltInParameter.WINDOW_HEIGHT,
             BuiltInParameter.FAMILY_HEIGHT_PARAM,
-            BuiltInParameter.GENERIC_HEIGHT
+            BuiltInParameter.GENERIC_HEIGHT,
+            BuiltInParameter.CASEWORK_HEIGHT,
+            BuiltInParameter.FAMILY_ROUGH_HEIGHT_PARAM
         };
 
         public static bool TrySetLength(
@@ -53,16 +63,39 @@ namespace RevitMCPCommandSet.Utils
             return false;
         }
 
-        public static double ReadLength(FamilySymbol symbol, BuiltInParameter[] candidates)
+        /// <summary>
+        /// The size off whichever candidate parameter actually carries one.
+        /// </summary>
+        /// <remarks>
+        /// Takes an Element rather than a FamilySymbol because half of these families
+        /// keep the size on the instance and half on the type, and reading only the type
+        /// gave a созданное opening back as 0 × 0 (REV-186). A parameter that exists but
+        /// holds nothing is skipped rather than returned as a zero size.
+        /// </remarks>
+        public static double ReadLength(Element element, BuiltInParameter[] candidates)
         {
             foreach (var bip in candidates)
             {
-                var param = symbol?.get_Parameter(bip);
-                if (param != null && param.StorageType == StorageType.Double)
-                    return param.AsDouble();
+                var param = element?.get_Parameter(bip);
+                if (param == null || param.StorageType != StorageType.Double || !param.HasValue)
+                    continue;
+
+                var value = param.AsDouble();
+                if (value > 0)
+                    return value;
             }
 
             return 0;
+        }
+
+        /// <summary>Size off the instance, falling back to its type.</summary>
+        public static double ReadLength(
+            FamilyInstance instance,
+            FamilySymbol symbol,
+            BuiltInParameter[] candidates)
+        {
+            var onInstance = ReadLength((Element)instance, candidates);
+            return onInstance > 0 ? onInstance : ReadLength(symbol, candidates);
         }
 
         /// <summary>A type of the family already at this size, or null.</summary>

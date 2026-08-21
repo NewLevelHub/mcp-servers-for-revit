@@ -271,7 +271,8 @@ namespace RevitMCPCommandSet.Utils
             return a.MepElementIds.Intersect(b.MepElementIds).Any();
         }
 
-        private static bool WithinRadius(JZPoint a, JZPoint b, double radiusMm)
+        /// <summary>Are the two points within this distance of each other?</summary>
+        public static bool WithinMm(JZPoint a, JZPoint b, double radiusMm)
         {
             if (a == null || b == null)
                 return false;
@@ -281,6 +282,31 @@ namespace RevitMCPCommandSet.Utils
             var dz = a.Z - b.Z;
 
             return dx * dx + dy * dy + dz * dz <= radiusMm * radiusMm;
+        }
+
+        private static bool WithinRadius(JZPoint a, JZPoint b, double radiusMm) =>
+            WithinMm(a, b, radiusMm);
+
+        /// <summary>
+        /// The number out of «ОТВ-2эт-03», so a re-run continues the numbering instead of
+        /// starting again at 01 and leaving two openings with the same mark on one floor.
+        /// Returns 0 for anything it cannot read — a mark somebody typed by hand.
+        /// </summary>
+        public static int ReadMarkNumber(string mark)
+        {
+            if (string.IsNullOrWhiteSpace(mark))
+                return 0;
+
+            var digits = new System.Text.StringBuilder();
+            for (var i = mark.Length - 1; i >= 0; i--)
+            {
+                if (!char.IsDigit(mark[i]))
+                    break;
+
+                digits.Insert(0, mark[i]);
+            }
+
+            return digits.Length > 0 && int.TryParse(digits.ToString(), out var value) ? value : 0;
         }
 
         /// <summary>

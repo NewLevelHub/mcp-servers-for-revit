@@ -116,13 +116,20 @@ namespace RevitMCPCommandSet.Services.Architecture
                 // layers of one wall — the second needs the first to have settled, or a
                 // bundle in the concrete would not recognise the same bundle in the
                 // insulation as its own stack.
-                var openings = MepOpeningRules.FoldLayers(Fold(crossings));
-                Renumber(openings);
+                var planned = MepOpeningRules.FoldLayers(Fold(crossings));
+
+                // The задание the model already carries, read back off the openings
+                // themselves. Without this the whole thing evaporates the moment it is
+                // built: the holes remove the material, the runs stop crossing anything,
+                // and asking again answers «отверстия не нужны» on a floor full of them.
+                var existing = ReadExistingOpenings(doc);
+                DropAlreadyCut(existing, planned);
+                NumberNewOpenings(existing, planned);
+
+                var openings = existing.Concat(planned).ToList();
                 result.Openings = openings;
                 result.TotalOpenings = openings.Count;
-
-                MarkExisting(doc, openings);
-                result.SkippedExistingCount = openings.Count(item => item.Status == "exists");
+                result.SkippedExistingCount = existing.Count;
 
                 if (_apply)
                 {
@@ -635,23 +642,6 @@ namespace RevitMCPCommandSet.Services.Architecture
             return openings;
         }
 
-        /// <summary>
-        /// Marks, once the list is final. Numbered per level and in the order the openings
-        /// come out, so «ОТВ-2эт-03» means the same thing on the plan and in the ведомость.
-        /// </summary>
-        private static void Renumber(List<MepOpeningPlanItem> openings)
-        {
-            var perLevelIndex = new Dictionary<string, int>(StringComparer.CurrentCulture);
-
-            foreach (var item in openings)
-            {
-                var levelKey = item.HostLevel ?? string.Empty;
-                perLevelIndex.TryGetValue(levelKey, out var index);
-                perLevelIndex[levelKey] = ++index;
-                item.Mark = MepOpeningRules.BuildMark(item.HostLevel, index);
-            }
-        }
-
         private MepOpeningPlanItem Describe(List<Crossing> bundle)
         {
             var first = bundle.FirstOrDefault();
@@ -695,6 +685,8 @@ namespace RevitMCPCommandSet.Services.Architecture
                 item.BottomAboveLevelMm =
                     Math.Round(rect.CentreV - size.HeightMm / 2.0 - levelElevationMm, 1);
             }
+
+            ReadRoom(doc, centre, item);
 
             foreach (var crossing in bundle)
                 crossing.Link.Info.OpeningCount++;
@@ -762,65 +754,143 @@ namespace RevitMCPCommandSet.Services.Architecture
         /// Marks the openings that already exist, so a second run reports them instead of
         /// cutting the same hole twice. Read-only: it runs before any transaction.
         /// </summary>
-        private static void MarkExisting(Document doc, List<MepOpeningPlanItem> openings)
+        /// <summary>
+        /// The задание as the model already holds it: openings placed earlier, read back
+        /// off their own marks.
+        /// </summary>
+        /// <remarks>
+        /// This is what makes a задание something that can be shown again a month later.
+        /// Only openings placed as a family come back — a plain Revit opening carries no
+        /// mark, so there is nothing to recognise it by. That is the concrete reason to
+        /// pass openingTypeId, and it is worth more than the ведомость it also enables.
+        ///
+        /// Which runs an opening was cut for is NOT recoverable: it lived in the link, not
+        /// in our model. The row comes back with its size, place and mark, and an empty
+        /// list of МЕР ids rather than an invented one.
+        /// </remarks>
+        private List<MepOpeningPlanItem> ReadExistingOpenings(Document doc)
         {
-            var existing = new List<(long HostId, XYZ Centre)>();
+            var found = new List<MepOpeningPlanItem>();
 
             try
             {
-                foreach (var opening in new FilteredElementCollector(doc)
-                             .OfClass(typeof(Opening))
-                             .Cast<Opening>())
-                {
-                    var box = opening.get_BoundingBox(null);
-                    if (box == null)
-                        continue;
-
-                    existing.Add((opening.Host?.Id.GetValue() ?? 0, (box.Min + box.Max) / 2.0));
-                }
-
                 foreach (var instance in new FilteredElementCollector(doc)
                              .OfClass(typeof(FamilyInstance))
                              .Cast<FamilyInstance>())
                 {
-                    if (instance.Host == null || !(instance.Location is LocationPoint location))
-                        continue;
-
-                    // Only our own openings count. Matching any hosted instance would let
-                    // a door standing near a planned hole cancel it — and the задание
-                    // would quietly come back one opening short.
                     var mark = instance.get_Parameter(BuiltInParameter.ALL_MODEL_MARK)?.AsString();
-                    if (string.IsNullOrEmpty(mark) || !mark.StartsWith(MarkPrefix, StringComparison.CurrentCultureIgnoreCase))
+                    if (string.IsNullOrWhiteSpace(mark) ||
+                        !mark.StartsWith(MarkPrefix, StringComparison.CurrentCultureIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (!(instance.Location is LocationPoint location))
                         continue;
 
-                    existing.Add((instance.Host.Id.GetValue(), location.Point));
+                    var host = instance.Host;
+                    var symbol = instance.Symbol;
+                    var levelName = ReadLevelName(doc, host ?? instance, out var levelElevationMm);
+
+                    // Instance first, type second: these families are split on where they
+                    // keep the size, and reading only the type gave back 0 × 0.
+                    var widthMm = RevitUnitConversion.ToMillimeters(
+                        OpeningTypeSizer.ReadLength(instance, symbol, OpeningTypeSizer.WidthParameters));
+                    var heightMm = RevitUnitConversion.ToMillimeters(
+                        OpeningTypeSizer.ReadLength(instance, symbol, OpeningTypeSizer.HeightParameters));
+
+                    var item = new MepOpeningPlanItem
+                    {
+                        Mark = mark.Trim(),
+                        Status = "exists",
+                        HostElementId = host?.Id.GetValue() ?? 0,
+                        HostKind = host is Floor ? "floor" : "wall",
+                        HostCategory = host?.Category?.Name ?? string.Empty,
+                        HostType = ReadTypeName(doc, host),
+                        HostLevel = levelName,
+                        WidthMm = Math.Round(widthMm, 1),
+                        HeightMm = Math.Round(heightMm, 1),
+                        CentreMm = ToMillimetres(location.Point),
+                        OpeningElementId = instance.Id.GetValue(),
+                        Note = "Уже создано ранее."
+                    };
+
+                    if (item.HostKind == "wall")
+                    {
+                        // Revit's own sill first — it is what the model actually holds, and
+                        // deriving it from the insertion point is what hid the placement
+                        // error in the first place.
+                        var sill = instance.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM);
+                        if (sill != null && sill.HasValue && sill.StorageType == StorageType.Double)
+                        {
+                            item.BottomAboveLevelMm =
+                                Math.Round(RevitUnitConversion.ToMillimeters(sill.AsDouble()), 1);
+                        }
+                        else if (heightMm > 0)
+                        {
+                            var centreVMm = RevitUnitConversion.ToMillimeters(location.Point.Z);
+                            item.BottomAboveLevelMm =
+                                Math.Round(centreVMm - heightMm / 2.0 - levelElevationMm, 1);
+                        }
+                    }
+
+                    ReadRoom(doc, location.Point, item);
+                    found.Add(item);
                 }
             }
             catch
             {
-                // Without the reading a re-run may duplicate, which is bad but visible.
-                // Failing the whole задание over it would be worse.
-                return;
+                // A задание that cannot be read back is a smaller problem than one that
+                // cannot be built at all; the run goes on with what it measured.
             }
 
-            var radiusFt = RevitUnitConversion.FromMillimeters(ExistingMatchMm);
+            return found
+                .OrderBy(item => item.Mark, StringComparer.CurrentCulture)
+                .ToList();
+        }
 
-            foreach (var item in openings)
+        /// <summary>
+        /// Removes from the plan the holes that are already cut, matched by host and
+        /// place. Keeps a re-run from proposing what somebody already built.
+        /// </summary>
+        private static void DropAlreadyCut(
+            List<MepOpeningPlanItem> existing,
+            List<MepOpeningPlanItem> planned)
+        {
+            if (existing.Count == 0 || planned.Count == 0)
+                return;
+
+            planned.RemoveAll(item => existing.Any(done =>
+                done.HostElementId == item.HostElementId &&
+                MepOpeningRules.WithinMm(done.CentreMm, item.CentreMm, ExistingMatchMm)));
+        }
+
+        /// <summary>
+        /// Marks for the new holes only, continuing the numbering the model already uses.
+        /// Restarting at 01 would give two «ОТВ-2эт-01» on one floor.
+        /// </summary>
+        private static void NumberNewOpenings(
+            List<MepOpeningPlanItem> existing,
+            List<MepOpeningPlanItem> planned)
+        {
+            var perLevel = new Dictionary<string, int>(StringComparer.CurrentCulture);
+
+            foreach (var item in existing)
             {
-                var centre = ToFeet(item.CentreMm);
+                var key = item.HostLevel ?? string.Empty;
+                perLevel.TryGetValue(key, out var current);
+                perLevel[key] = Math.Max(current, MepOpeningRules.ReadMarkNumber(item.Mark));
+            }
 
-                var match = existing.FirstOrDefault(candidate =>
-                    candidate.HostId == item.HostElementId &&
-                    candidate.Centre != null &&
-                    candidate.Centre.DistanceTo(centre) <= radiusFt);
-
-                if (match.Centre == null)
-                    continue;
-
-                item.Status = "exists";
-                item.Note = "Проём здесь уже есть — повторно не создаётся.";
+            foreach (var item in planned)
+            {
+                var key = item.HostLevel ?? string.Empty;
+                perLevel.TryGetValue(key, out var current);
+                perLevel[key] = ++current;
+                item.Mark = MepOpeningRules.BuildMark(item.HostLevel, current);
             }
         }
+
 
         // --- creating ------------------------------------------------------------
 
@@ -943,6 +1013,7 @@ namespace RevitMCPCommandSet.Services.Architecture
                     centre, symbol, wall, level, StructuralType.NonStructural);
 
                 SetMark(instance, item);
+                SetSill(instance, item);
                 return instance;
             }
 
@@ -1008,6 +1079,40 @@ namespace RevitMCPCommandSet.Services.Architecture
             var up = frame.Value.V.Multiply(RevitUnitConversion.FromMillimeters(item.HeightMm / 2.0));
 
             return (centre.Subtract(along).Subtract(up), centre.Add(along).Add(up));
+        }
+
+        /// <summary>
+        /// Puts the bottom of the opening where the задание says it is.
+        /// </summary>
+        /// <remarks>
+        /// <c>NewFamilyInstance</c> reads the point it is given as the SILL of a window,
+        /// not as its centre — so the first live run placed every hole half a height too
+        /// high: the задание said низ 853.5 and Revit reported «Высота нижнего бруса
+        /// 1003.5», exactly 150 mm of a 300 mm opening. The beam then passed below its
+        /// own hole.
+        ///
+        /// Setting the sill explicitly is better than moving the insertion point by half
+        /// a height and hoping: it says what we mean, and it does not depend on which end
+        /// of the family Revit treats as the anchor.
+        /// </remarks>
+        private static void SetSill(Element element, MepOpeningPlanItem item)
+        {
+            if (item?.BottomAboveLevelMm == null)
+                return;
+
+            try
+            {
+                var sill = element?.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM);
+                if (sill == null || sill.IsReadOnly)
+                    return;
+
+                sill.Set(RevitUnitConversion.FromMillimeters(item.BottomAboveLevelMm.Value));
+            }
+            catch
+            {
+                // A family with no sill parameter keeps the placement it was given; the
+                // отметка низа in the report is then the one to trust over the model.
+            }
         }
 
         private static void SetMark(Element element, MepOpeningPlanItem item)
@@ -1136,6 +1241,29 @@ namespace RevitMCPCommandSet.Services.Architecture
             }
         }
 
+        /// <summary>
+        /// The room the opening falls in. «ОТВ-2эт-03 в коридоре» is what lets a монтажник
+        /// find it without opening a 3D view, and it is a column of the ведомость.
+        /// </summary>
+        private static void ReadRoom(Document doc, XYZ point, MepOpeningPlanItem item)
+        {
+            if (point == null || item == null)
+                return;
+
+            try
+            {
+                if (!(doc.GetRoomAtPoint(point) is Room room))
+                    return;
+
+                item.RoomName = room.Name;
+                item.RoomNumber = room.Number;
+            }
+            catch
+            {
+                // GetRoomAtPoint throws on a model with no room volumes computed.
+            }
+        }
+
         private static string ReadLevelName(Document doc, Element element, out double elevationMm)
         {
             elevationMm = 0;
@@ -1170,6 +1298,17 @@ namespace RevitMCPCommandSet.Services.Architecture
             if (result.TotalOpenings == 0)
                 return "Пересечений инженерных систем с нашими стенами и перекрытиями не найдено — " +
                        "отверстия не нужны.";
+
+            var pending = result.TotalOpenings - result.SkippedExistingCount;
+
+            // Everything already cut. Saying «нужно 6» here would read as work to do on a
+            // floor where the work is done — and the whole point of reading the openings
+            // back is that the задание can be shown again afterwards.
+            if (!result.Applied && pending == 0)
+            {
+                return $"Задание на отверстия: {result.TotalOpenings}, все уже созданы в модели. " +
+                       "Новых пересечений нет — резать нечего.";
+            }
 
             var message = $"Отверстий: {result.TotalOpenings}";
             if (result.RawCrossings > result.TotalOpenings)
