@@ -58,6 +58,7 @@ export function registerLoadFamilyTool(server: McpServer) {
               text: `Load family failed: ${error instanceof Error ? error.message : String(error)}`,
             },
           ],
+          isError: true,
         };
       }
     }

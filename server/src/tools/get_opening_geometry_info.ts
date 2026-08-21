@@ -46,6 +46,7 @@ export function registerGetOpeningGeometryInfoTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

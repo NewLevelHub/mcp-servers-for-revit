@@ -292,6 +292,7 @@ export function registerCreateStairTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

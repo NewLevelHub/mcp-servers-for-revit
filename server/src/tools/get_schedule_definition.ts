@@ -71,6 +71,7 @@ export function registerGetScheduleDefinitionTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

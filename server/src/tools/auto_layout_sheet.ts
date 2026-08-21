@@ -146,6 +146,7 @@ export function registerAutoLayoutSheetTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

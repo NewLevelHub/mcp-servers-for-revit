@@ -53,6 +53,7 @@ export function registerGetElementsParametersTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

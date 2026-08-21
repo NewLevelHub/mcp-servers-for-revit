@@ -80,6 +80,7 @@ export function registerExportRoomFinishDataTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

@@ -286,6 +286,7 @@ export function registerGetCadLinkGeometryTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

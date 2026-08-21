@@ -150,6 +150,7 @@ export function registerRenderTepTableTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

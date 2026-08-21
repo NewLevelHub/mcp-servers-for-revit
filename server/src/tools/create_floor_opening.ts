@@ -152,6 +152,7 @@ export function registerCreateFloorOpeningTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

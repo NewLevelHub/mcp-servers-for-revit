@@ -109,6 +109,7 @@ export function registerAIElementFilterTool(server: McpServer) {
                 }`,
             },
           ],
+          isError: true,
         };
       }
     }

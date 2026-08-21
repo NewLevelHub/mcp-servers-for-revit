@@ -124,6 +124,7 @@ export function registerCreateNodeDetailTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

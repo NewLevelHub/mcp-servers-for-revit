@@ -64,6 +64,7 @@ export function registerEnsureOpeningTypeTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

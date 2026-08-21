@@ -97,6 +97,7 @@ export function registerCreateDetailRegionsTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

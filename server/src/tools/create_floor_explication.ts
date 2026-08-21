@@ -125,6 +125,7 @@ export function registerCreateFloorExplicationTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

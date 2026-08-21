@@ -52,6 +52,7 @@ export function registerBatchExecuteTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

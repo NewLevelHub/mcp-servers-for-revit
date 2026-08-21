@@ -90,6 +90,7 @@ function registerScheduleExportTool(
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

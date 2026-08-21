@@ -135,6 +135,7 @@ export function registerCreateDetailViewTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

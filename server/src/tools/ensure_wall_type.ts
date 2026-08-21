@@ -59,6 +59,7 @@ export function registerEnsureWallTypeTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

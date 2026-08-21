@@ -93,6 +93,7 @@ export function registerConfigureGridDisplayTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

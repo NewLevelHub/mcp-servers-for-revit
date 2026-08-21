@@ -115,6 +115,7 @@ export function registerCreateFinishScheduleTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

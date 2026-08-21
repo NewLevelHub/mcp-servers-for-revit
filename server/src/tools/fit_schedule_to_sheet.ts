@@ -98,6 +98,7 @@ export function registerFitScheduleToSheetTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

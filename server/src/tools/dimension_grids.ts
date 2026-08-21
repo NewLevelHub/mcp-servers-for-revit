@@ -124,6 +124,7 @@ export function registerDimensionGridsTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

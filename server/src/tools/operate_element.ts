@@ -61,6 +61,7 @@ export function registerOperateElementTool(server: McpServer) {
               text: `Operate elements failed: ${error instanceof Error ? error.message : String(error)}`,
             },
           ],
+          isError: true,
         };
       }
     }

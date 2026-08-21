@@ -47,6 +47,7 @@ export function registerGetRoomGeometryMetricsTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

@@ -51,6 +51,7 @@ export function registerExportApartmentDataTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

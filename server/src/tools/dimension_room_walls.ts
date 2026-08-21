@@ -83,6 +83,7 @@ export function registerDimensionRoomWallsTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

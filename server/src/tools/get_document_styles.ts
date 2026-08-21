@@ -89,6 +89,7 @@ export function registerGetDocumentStylesTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

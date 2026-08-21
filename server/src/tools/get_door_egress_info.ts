@@ -45,6 +45,7 @@ export function registerGetDoorEgressInfoTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

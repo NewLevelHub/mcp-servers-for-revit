@@ -133,6 +133,7 @@ export function registerCreatePointBasedElementTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

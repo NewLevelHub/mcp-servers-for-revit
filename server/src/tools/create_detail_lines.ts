@@ -92,6 +92,7 @@ export function registerCreateDetailLinesTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

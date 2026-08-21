@@ -48,6 +48,7 @@ export function registerCreateCurtainWallScheduleTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

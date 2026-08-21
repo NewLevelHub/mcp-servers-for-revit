@@ -61,6 +61,7 @@ export function registerSendCodeToRevitTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

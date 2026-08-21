@@ -62,6 +62,7 @@ export function registerCreateSheetTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

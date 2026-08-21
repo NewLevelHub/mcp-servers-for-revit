@@ -39,6 +39,7 @@ export function registerDeleteElementTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

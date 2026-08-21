@@ -166,6 +166,7 @@ export function registerCreateRailingTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

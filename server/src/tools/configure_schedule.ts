@@ -145,6 +145,7 @@ export function registerConfigureScheduleTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

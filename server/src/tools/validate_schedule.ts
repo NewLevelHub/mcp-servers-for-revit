@@ -59,6 +59,7 @@ export function registerValidateScheduleTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

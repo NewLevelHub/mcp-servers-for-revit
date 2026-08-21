@@ -47,6 +47,7 @@ export function registerExportTepDataTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }

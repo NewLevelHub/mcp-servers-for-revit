@@ -201,6 +201,76 @@ function checkTwinCrossReferences(toolSet) {
   }
 }
 
+/**
+ * A tool that catches its own exception and answers with a plain result.
+ *
+ * `wrapToolHandler` turns a *thrown* error into `isError: true`, but a handler
+ * that catches first and returns `{ content: [{ text: "… failed: …" }] }` never
+ * throws, so nothing downstream can tell the call apart from a success. The
+ * dislike packages of 20.08.2026 recorded `ok: true` over «Color operation
+ * failed: Category 'Помещения' not found» for exactly this reason, and 57 of
+ * the 92 tools were doing it.
+ *
+ * The rule is narrow on purpose: a catch block may return whatever it likes, as
+ * long as it says `isError`.
+ */
+function checkCatchBlocksFlagErrors(tools) {
+  for (const base of tools) {
+    const p = path.join(root, "server", "src", "tools", `${base}.ts`);
+    if (!fs.existsSync(p)) continue;
+    const text = fs.readFileSync(p, "utf8");
+
+    const re = /\bcatch\s*\([^)]*\)\s*\{/g;
+    let match;
+    while ((match = re.exec(text))) {
+      const open = match.index + match[0].length - 1;
+      const close = matchBrace(text, open);
+      if (close < 0) continue;
+      const body = text.slice(open + 1, close - 1);
+      if (!/\bcontent\s*:/.test(body)) continue;
+      if (/\bisError\b/.test(body)) continue;
+      errors.push(
+        `"${base}" catches an error and returns a result without isError — ` +
+          `the model and the dislike log will both read the failure as success`
+      );
+      break;
+    }
+  }
+}
+
+/** Index just past the block that starts at `open` (a `{`), skipping literals. */
+function matchBrace(src, open) {
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    const c = src[i];
+    if (c === "`" || c === '"' || c === "'") {
+      const quote = c;
+      i++;
+      while (i < src.length) {
+        if (src[i] === "\\") {
+          i += 2;
+          continue;
+        }
+        if (quote === "`" && src[i] === "$" && src[i + 1] === "{") {
+          const end = matchBrace(src, i + 1);
+          if (end < 0) return -1;
+          i = end;
+          continue;
+        }
+        if (src[i] === quote) break;
+        i++;
+      }
+      continue;
+    }
+    if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth === 0) return i + 1;
+    }
+  }
+  return -1;
+}
+
 function main() {
   const tools = listToolBases();
   const toolSet = new Set(tools);
@@ -225,6 +295,7 @@ function main() {
 
   checkRegisterPriority();
   checkTwinCrossReferences(toolSet);
+  checkCatchBlocksFlagErrors(tools);
 
   // --- alias map integrity ---
   for (const [mcp, revit] of Object.entries(ALIASES)) {

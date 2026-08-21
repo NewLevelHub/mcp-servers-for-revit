@@ -45,6 +45,7 @@ export function registerGetVerticalCirculationInfoTool(server: McpServer) {
               }`,
             },
           ],
+          isError: true,
         };
       }
     }
