@@ -68,10 +68,15 @@ namespace revit_mcp_plugin.UI.Assistant
         private string _selectedReason;
         private readonly List<Button> _reasonChips = new List<Button>();
         private TextBox _commentBox;
+        /// <summary>Past a handful the extra shots stop being evidence and only make the package heavy.</summary>
+        private const int MaxShots = 5;
+
         private Button _shotBtn;
+        private Button _pasteBtn;
+        private TextBlock _shotHint;
         private Border _shotPreview;
-        private Image _shotThumb;
-        private string _shotPath;
+        private WrapPanel _shotList;
+        private readonly List<string> _shotPaths = new List<string>();
         private Button _sendBtn;
         private TextBlock _feedbackStatusText;
         private readonly string _metaFooter;
@@ -314,26 +319,38 @@ namespace revit_mcp_plugin.UI.Assistant
             };
             AutomationProperties.SetName(_commentBox, "Комментарий к дизлайку");
             _commentBox.TextChanged += (s, e) => UpdateSendEnabled();
+            _commentBox.PreviewKeyDown += CommentBoxPreviewKeyDown;
             stack.Children.Add(_commentBox);
 
-            _shotBtn = new Button
-            {
-                Content = "📷 Приложить скрин",
-                Margin = new Thickness(0, 6, 0, 0),
-                Padding = new Thickness(8, 4, 8, 4),
-                FontSize = 11,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                Background = Brushes.White,
-                Foreground = new SolidColorBrush(Color.FromRgb(0x1A, 0x27, 0x44)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(0xD5, 0xDE, 0xE8)),
-                BorderThickness = new Thickness(1),
-                Cursor = Cursors.Hand,
-                ToolTip = "Снимок окна Revit в текущем виде — попадёт в отчёт вместе с жалобой",
-            };
-            AutomationProperties.SetName(_shotBtn, "Приложить скриншот к дизлайку");
-            _shotBtn.Template = BuildSimpleRoundedButtonTemplate(12);
+            // Two ways in on purpose: the full-screen grab is one click and always available,
+            // but it cannot point at anything. A crop the architect took themselves can.
+            var shotRow = new WrapPanel { Margin = new Thickness(0, 6, 0, 0) };
+
+            _shotBtn = MakeShotButton(
+                "📷 Скрин экрана",
+                "Снимок окна Revit в текущем виде — попадёт в отчёт вместе с жалобой",
+                "Приложить снимок экрана к дизлайку");
             _shotBtn.Click += (s, e) => CaptureShot();
-            stack.Children.Add(_shotBtn);
+            shotRow.Children.Add(_shotBtn);
+
+            _pasteBtn = MakeShotButton(
+                "📋 Вставить свой",
+                "Свой скриншот из буфера обмена: вырежьте нужное через Win+Shift+S, потом сюда (или Ctrl+V в поле выше)",
+                "Вставить скриншот из буфера обмена");
+            _pasteBtn.Click += (s, e) => PasteShot();
+            shotRow.Children.Add(_pasteBtn);
+
+            stack.Children.Add(shotRow);
+
+            _shotHint = new TextBlock
+            {
+                Visibility = Visibility.Collapsed,
+                FontSize = 10.5,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 4, 0, 0),
+                Foreground = new SolidColorBrush(Color.FromRgb(0xB0, 0x2A, 0x2A)),
+            };
+            stack.Children.Add(_shotHint);
 
             _shotPreview = BuildShotPreview();
             stack.Children.Add(_shotPreview);
@@ -361,72 +378,63 @@ namespace revit_mcp_plugin.UI.Assistant
             return form;
         }
 
-        private Border BuildShotPreview()
-        {
-            _shotThumb = new Image
-            {
-                MaxWidth = 150,
-                MaxHeight = 90,
-                Stretch = Stretch.Uniform,
-                Margin = new Thickness(0, 0, 6, 0),
-            };
 
-            var remove = new Button
+        private Button MakeShotButton(string caption, string tooltip, string automationName)
+        {
+            var btn = new Button
             {
-                Content = "убрать",
-                Padding = new Thickness(7, 3, 7, 3),
-                FontSize = 10.5,
-                VerticalAlignment = VerticalAlignment.Top,
+                Content = caption,
+                Margin = new Thickness(0, 0, 6, 0),
+                Padding = new Thickness(8, 4, 8, 4),
+                FontSize = 11,
                 Background = Brushes.White,
-                Foreground = new SolidColorBrush(Color.FromRgb(0xB0, 0x2A, 0x2A)),
+                Foreground = new SolidColorBrush(Color.FromRgb(0x1A, 0x27, 0x44)),
                 BorderBrush = new SolidColorBrush(Color.FromRgb(0xD5, 0xDE, 0xE8)),
                 BorderThickness = new Thickness(1),
                 Cursor = Cursors.Hand,
+                ToolTip = tooltip,
             };
-            AutomationProperties.SetName(remove, "Убрать скриншот");
-            remove.Template = BuildSimpleRoundedButtonTemplate(10);
-            remove.Click += (s, e) => ClearShot();
+            AutomationProperties.SetName(btn, automationName);
+            btn.Template = BuildSimpleRoundedButtonTemplate(12);
+            return btn;
+        }
 
-            var row = new StackPanel { Orientation = Orientation.Horizontal };
-            row.Children.Add(new Border
-            {
-                CornerRadius = new CornerRadius(6),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(0xD5, 0xDE, 0xE8)),
-                BorderThickness = new Thickness(1),
-                ClipToBounds = true,
-                Child = _shotThumb,
-            });
-            row.Children.Add(remove);
-
+        private Border BuildShotPreview()
+        {
+            _shotList = new WrapPanel();
             return new Border
             {
                 Visibility = Visibility.Collapsed,
                 Margin = new Thickness(0, 6, 0, 0),
-                Child = row,
+                Child = _shotList,
             };
         }
 
         /// <summary>
-        /// Grabs the Revit window as it looks right now. The panel and the open form are
-        /// part of the frame on purpose — it shows which answer the complaint is about.
+        /// Rebuilds the thumbnail strip from <see cref="_shotPaths"/>. Every shot carries its
+        /// own ✕: with a single attachment "убрать" and "убрать всё" were the same thing,
+        /// with four of them they are not.
         /// </summary>
-        private void CaptureShot()
+        private void RenderShots()
         {
-            ClearShot();
+            if (_shotList == null) return;
 
-            // Let WPF finish painting the pressed button first, or the shot catches the
-            // form half-rendered.
-            try { Dispatcher.Invoke(new Action(() => { }), DispatcherPriority.Render); }
-            catch { /* not fatal */ }
+            _shotList.Children.Clear();
+            foreach (var path in _shotPaths)
+                _shotList.Children.Add(BuildShotTile(path));
 
-            var path = FeedbackScreenshot.Capture(_turnId);
-            if (string.IsNullOrEmpty(path))
+            if (_shotPreview != null)
+                _shotPreview.Visibility = _shotPaths.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private FrameworkElement BuildShotTile(string path)
+        {
+            var thumb = new Image
             {
-                _shotBtn.Content = "📷 Не удалось снять экран";
-                return;
-            }
-
-            _shotPath = path;
+                MaxWidth = 74,
+                MaxHeight = 56,
+                Stretch = Stretch.Uniform,
+            };
             try
             {
                 var bmp = new BitmapImage();
@@ -436,35 +444,179 @@ namespace revit_mcp_plugin.UI.Assistant
                 bmp.DecodePixelWidth = 150;
                 bmp.EndInit();
                 bmp.Freeze();
-                _shotThumb.Source = bmp;
-                _shotPreview.Visibility = Visibility.Visible;
+                thumb.Source = bmp;
             }
-            catch { /* the file is saved either way; only the preview is lost */ }
+            catch { /* the file is attached either way; only its preview is lost */ }
 
-            _shotBtn.Content = "📷 Скрин приложен";
+            var remove = new Button
+            {
+                Content = "✕",
+                Width = 18,
+                Height = 18,
+                Padding = new Thickness(0),
+                FontSize = 10,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, -4, -4, 0),
+                Background = Brushes.White,
+                Foreground = new SolidColorBrush(Color.FromRgb(0xB0, 0x2A, 0x2A)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0xD5, 0xDE, 0xE8)),
+                BorderThickness = new Thickness(1),
+                Cursor = Cursors.Hand,
+                ToolTip = "Убрать этот скрин",
+            };
+            AutomationProperties.SetName(remove, "Убрать скриншот");
+            remove.Template = BuildSimpleRoundedButtonTemplate(9);
+            remove.Click += (s, e) => RemoveShot(path);
+
+            var tile = new Grid { Margin = new Thickness(0, 0, 8, 6) };
+            tile.Children.Add(new Border
+            {
+                CornerRadius = new CornerRadius(6),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0xD5, 0xDE, 0xE8)),
+                BorderThickness = new Thickness(1),
+                Background = Brushes.White,
+                ClipToBounds = true,
+                MinWidth = 40,
+                MinHeight = 30,
+                Child = thumb,
+            });
+            tile.Children.Add(remove);
+            return tile;
+        }
+
+        /// <summary>
+        /// Grabs the Revit window as it looks right now. The panel and the open form are
+        /// part of the frame on purpose — it shows which answer the complaint is about.
+        /// </summary>
+        private void CaptureShot()
+        {
+            if (!HasRoomForAnotherShot())
+                return;
+
+            // Let WPF finish painting the pressed button first, or the shot catches the
+            // form half-rendered.
+            try { Dispatcher.Invoke(new Action(() => { }), DispatcherPriority.Render); }
+            catch { /* not fatal */ }
+
+            var path = FeedbackScreenshot.Capture(_turnId);
+            if (string.IsNullOrEmpty(path))
+            {
+                ShowShotHint("Не удалось снять экран.", error: true);
+                return;
+            }
+
+            AttachShot(path);
+        }
+
+        /// <summary>
+        /// Attaches the picture the architect cropped themselves. The full-screen grab shows
+        /// the whole window, where the wall that came out wrong is one detail among hundreds;
+        /// a Win+Shift+S crop points straight at it.
+        /// </summary>
+        private void PasteShot()
+        {
+            if (!HasRoomForAnotherShot())
+                return;
+
+            var path = FeedbackScreenshot.SaveFromClipboard(_turnId);
+            if (string.IsNullOrEmpty(path))
+            {
+                ShowShotHint("В буфере нет картинки. Вырежьте нужный кусок через Win+Shift+S и нажмите ещё раз.", error: true);
+                return;
+            }
+
+            AttachShot(path);
+        }
+
+        /// <summary>
+        /// One complaint often needs two pictures — the wrong result and the drawing it was
+        /// supposed to follow — so shots add up instead of replacing each other.
+        /// </summary>
+        private void AttachShot(string path)
+        {
+            _shotPaths.Add(path);
+            HideShotHint();
+            RenderShots();
             UpdateSendEnabled();
         }
 
-        /// <summary>Drops the pending shot and deletes its file — see <see cref="ResetShotUi"/>.</summary>
-        private void ClearShot()
+        private bool HasRoomForAnotherShot()
         {
-            if (!string.IsNullOrEmpty(_shotPath))
+            if (_shotPaths.Count < MaxShots)
+                return true;
+
+            ShowShotHint($"Больше {MaxShots} скринов к одной жалобе не приложить — уберите лишний.", error: true);
+            return false;
+        }
+
+        /// <summary>Drops one shot and deletes its file; the rest of the complaint stays.</summary>
+        private void RemoveShot(string path)
+        {
+            if (!_shotPaths.Remove(path))
+                return;
+
+            try { File.Delete(path); } catch { /* leave the orphan, purge sweeps it */ }
+            RenderShots();
+            UpdateSendEnabled();
+        }
+
+        /// <summary>
+        /// Ctrl+V in the comment box attaches the clipboard picture instead of doing nothing.
+        /// A TextBox silently swallows an image paste, and the crop the architect just took
+        /// is exactly the thing they meant to send. Text on the clipboard still pastes as text.
+        /// </summary>
+        private void CommentBoxPreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.V || (Keyboard.Modifiers & ModifierKeys.Control) != ModifierKeys.Control)
+                return;
+
+            bool hasText;
+            try { hasText = System.Windows.Clipboard.ContainsText(); }
+            catch { hasText = false; }
+            if (hasText || !FeedbackScreenshot.ClipboardHasImage())
+                return;
+
+            e.Handled = true;
+            PasteShot();
+        }
+
+        private void ShowShotHint(string text, bool error)
+        {
+            if (_shotHint == null) return;
+            _shotHint.Text = text;
+            _shotHint.Foreground = new SolidColorBrush(error
+                ? Color.FromRgb(0xB0, 0x2A, 0x2A)
+                : Color.FromRgb(0x5A, 0x66, 0x75));
+            _shotHint.Visibility = Visibility.Visible;
+        }
+
+        private void HideShotHint()
+        {
+            if (_shotHint == null) return;
+            _shotHint.Text = string.Empty;
+            _shotHint.Visibility = Visibility.Collapsed;
+        }
+
+        /// <summary>Drops every pending shot and deletes the files — see <see cref="ResetShotUi"/>.</summary>
+        private void ClearShots()
+        {
+            foreach (var path in _shotPaths)
             {
-                try { File.Delete(_shotPath); } catch { /* leave the orphan, purge sweeps it */ }
+                try { File.Delete(path); } catch { /* leave the orphan, purge sweeps it */ }
             }
             ResetShotUi();
         }
 
         /// <summary>
-        /// Forgets the shot without touching the file. Used after submit, where ownership
-        /// has passed to the rating patch that now names it.
+        /// Forgets the shots without touching the files. Used after submit, where ownership
+        /// has passed to the rating patch that now names them.
         /// </summary>
         private void ResetShotUi()
         {
-            _shotPath = null;
-            if (_shotThumb != null) _shotThumb.Source = null;
-            if (_shotPreview != null) _shotPreview.Visibility = Visibility.Collapsed;
-            if (_shotBtn != null) _shotBtn.Content = "📷 Приложить скрин";
+            _shotPaths.Clear();
+            RenderShots();
+            HideShotHint();
         }
 
         /// <summary>
@@ -475,7 +627,7 @@ namespace revit_mcp_plugin.UI.Assistant
         {
             var enabled = _selectedReason != null
                 || !string.IsNullOrWhiteSpace(_commentBox?.Text)
-                || !string.IsNullOrEmpty(_shotPath);
+                || _shotPaths.Count > 0;
             if (_sendBtn != null)
                 _sendBtn.IsEnabled = enabled;
             ApplySendButtonEnabledStyle(enabled);
@@ -642,21 +794,21 @@ namespace revit_mcp_plugin.UI.Assistant
                 ApplyChipStyle(c, selected: false);
             if (_commentBox != null)
                 _commentBox.Text = string.Empty;
-            ClearShot();
+            ClearShots();
             UpdateSendEnabled();
         }
 
         private void SubmitDislike()
         {
             var comment = _commentBox?.Text?.Trim();
-            var shot = _shotPath;
-            if (_selectedReason == null && string.IsNullOrEmpty(comment) && string.IsNullOrEmpty(shot)) return;
+            var shots = _shotPaths.Count > 0 ? _shotPaths.ToArray() : null;
+            if (_selectedReason == null && string.IsNullOrEmpty(comment) && shots == null) return;
 
-            // Hand the file over before HideDislikeForm runs, otherwise ClearShot deletes
-            // the very screenshot the rating patch has just been told to reference.
+            // Hand the files over before HideDislikeForm runs, otherwise ClearShots deletes
+            // the very screenshots the rating patch has just been told to reference.
             ResetShotUi();
             FeedbackSubmitted?.Invoke(this, new FeedbackEventArgs(
-                _turnId, -1, _selectedReason, string.IsNullOrEmpty(comment) ? null : comment, shot));
+                _turnId, -1, _selectedReason, string.IsNullOrEmpty(comment) ? null : comment, shots));
             HideDislikeForm();
             ApplyRatingButtonStyle(_dislikeBtn, active: true);
         }
@@ -857,20 +1009,26 @@ namespace revit_mcp_plugin.UI.Assistant
 
     public sealed class FeedbackEventArgs : EventArgs
     {
+        private static readonly string[] NoShots = new string[0];
+
         public string TurnId { get; }
         public int Rating { get; }
         public string Reason { get; }
         public string Comment { get; }
-        /// <summary>Full path to the attached screenshot under Logs/feedback-shots, or null.</summary>
-        public string ShotPath { get; }
 
-        public FeedbackEventArgs(string turnId, int rating, string reason, string comment, string shotPath = null)
+        /// <summary>Full paths to the attached screenshots under Logs/feedback-shots; never null.</summary>
+        public IReadOnlyList<string> ShotPaths { get; }
+
+        /// <summary>First attachment, or null — for callers that only ever expected one.</summary>
+        public string ShotPath => ShotPaths.Count > 0 ? ShotPaths[0] : null;
+
+        public FeedbackEventArgs(string turnId, int rating, string reason, string comment, IReadOnlyList<string> shotPaths = null)
         {
             TurnId = turnId;
             Rating = rating;
             Reason = reason;
             Comment = comment;
-            ShotPath = shotPath;
+            ShotPaths = shotPaths ?? NoShots;
         }
     }
 

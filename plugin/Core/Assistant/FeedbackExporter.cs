@@ -161,11 +161,13 @@ namespace revit_mcp_plugin.Core.Assistant
 
                 foreach (var d in dislikes)
                 {
-                    if (string.IsNullOrEmpty(d.Shot)) continue;
-                    var src = Path.Combine(shotsDir, d.Shot);
-                    if (!File.Exists(src)) continue;
-                    try { zip.CreateEntryFromFileSafe(src, "shots/" + d.Shot); }
-                    catch { /* one unreadable shot must not lose the whole package */ }
+                    foreach (var shot in d.Shots)
+                    {
+                        var src = Path.Combine(shotsDir, shot);
+                        if (!File.Exists(src)) continue;
+                        try { zip.CreateEntryFromFileSafe(src, "shots/" + shot); }
+                        catch { /* one unreadable shot must not lose the whole package */ }
+                    }
                 }
             }
 
@@ -232,6 +234,32 @@ namespace revit_mcp_plugin.Core.Assistant
 
         // ── Internal data ────────────────────────────────────────────────────────
 
+        /// <summary>
+        /// Shot file names of one patch. Complaints written before REV-152 carry a single
+        /// "shot" string, and those logs are still sitting on the architects' machines
+        /// waiting to be exported — read both shapes.
+        /// </summary>
+        private static List<string> ReadShotNames(JObject patch)
+        {
+            var names = new List<string>();
+
+            if (patch["shots"] is JArray arr)
+            {
+                foreach (var item in arr)
+                {
+                    var name = item?.ToString();
+                    if (!string.IsNullOrWhiteSpace(name))
+                        names.Add(name);
+                }
+            }
+
+            var legacy = patch["shot"]?.ToString();
+            if (!string.IsNullOrWhiteSpace(legacy) && !names.Contains(legacy))
+                names.Add(legacy);
+
+            return names;
+        }
+
         private sealed class DislikeEntry
         {
             public string TurnId;
@@ -243,7 +271,7 @@ namespace revit_mcp_plugin.Core.Assistant
             public string Reply;
             public string Reason;
             public string Comment;
-            public string Shot;
+            public List<string> Shots = new List<string>();
             public List<string> ToolChain = new List<string>();
             public int Rounds;
             public long TotalMs;
@@ -307,7 +335,7 @@ namespace revit_mcp_plugin.Core.Assistant
                     Reply = turn?["reply"]?.ToString(),
                     Reason = patch["reason"]?.ToString(),
                     Comment = patch["comment"]?.ToString(),
-                    Shot = patch["shot"]?.ToString(),
+                    Shots = ReadShotNames(patch),
                     Rounds = turn?["rounds"]?.Value<int>() ?? 0,
                     TotalMs = turn?["totalMs"]?.Value<long>() ?? 0,
                     Outcome = turn?["outcome"]?.ToString(),
@@ -394,9 +422,9 @@ namespace revit_mcp_plugin.Core.Assistant
             // Без версии непонятно, баг это или машина, до которой исправление ещё не доехало.
             sb.AppendLine($"- Версия сборки: `{BuildVersion.Current}`");
             sb.AppendLine($"- Всего дизлайков в пакете: **{dislikes.Count}**");
-            var shots = dislikes.Count(d => !string.IsNullOrEmpty(d.Shot));
+            var shots = dislikes.Sum(d => d.Shots.Count);
             if (shots > 0)
-                sb.AppendLine($"- Со скриншотами: **{shots}** (папка `shots/`)");
+                sb.AppendLine($"- Скриншотов: **{shots}** (папка `shots/`)");
             sb.AppendLine();
 
             var byReason = dislikes.GroupBy(d => d.Reason ?? "(без тега)").OrderByDescending(g => g.Count());
@@ -420,10 +448,10 @@ namespace revit_mcp_plugin.Core.Assistant
                         sb.AppendLine($"- Ответ ассистента: «{Truncate(d.Reply, 300)}»");
                     if (!string.IsNullOrEmpty(d.FailureDetail))
                         sb.AppendLine($"- Техническая ошибка: `{Truncate(d.FailureDetail, 300)}`");
-                    if (!string.IsNullOrEmpty(d.Shot))
+                    foreach (var shot in d.Shots)
                     {
                         sb.AppendLine();
-                        sb.AppendLine($"![скрин]({"shots/" + d.Shot})");
+                        sb.AppendLine($"![скрин]({"shots/" + shot})");
                     }
                     sb.AppendLine($"- turnId: `{d.TurnId}` · outcome: {d.Outcome}");
                     sb.AppendLine();
@@ -451,7 +479,7 @@ namespace revit_mcp_plugin.Core.Assistant
                     ["build"] = BuildVersion.Current,
                     ["reason"] = d.Reason,
                     ["comment"] = d.Comment,
-                    ["shot"] = string.IsNullOrEmpty(d.Shot) ? null : "shots/" + d.Shot,
+                    ["shots"] = new JArray(d.Shots.Select(s => "shots/" + s).ToArray()),
                     ["turn"] = d.RawTurn,
                 };
                 sb.AppendLine(jo.ToString(Formatting.None));

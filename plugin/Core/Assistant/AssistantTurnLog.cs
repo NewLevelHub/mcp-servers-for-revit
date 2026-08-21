@@ -133,7 +133,14 @@ namespace revit_mcp_plugin.Core.Assistant
                             ["durationMs"] = tc.DurationMs,
                             ["error"] = tc.Error,
                             ["resultBytes"] = tc.ResultBytes,
-                            ["summary"] = Truncate(tc.Summary, 400),
+                            // A failed call's summary IS the diagnosis, and 400 chars
+                            // cut it exactly where it started being useful: the
+                            // dislike packages of 20.08.2026 all end mid-way through
+                            // "Invalid arguments for tool …", one character before the
+                            // line that names the argument the model should have used.
+                            // A successful call's summary is a payload nobody reads in
+                            // full, so only the failures get the longer allowance.
+                            ["summary"] = Truncate(tc.Summary, tc.Ok ? 400 : 2000),
                             ["missingTypeId"] = tc.MissingTypeId,
                             ["injectedTypeId"] = tc.InjectedTypeId,
                         });
@@ -155,7 +162,7 @@ namespace revit_mcp_plugin.Core.Assistant
         /// Returns false when the write failed, so the UI can tell the architect their feedback
         /// was not actually saved instead of silently swallowing it.
         /// </summary>
-        public static bool WriteRatingPatch(string turnId, int rating, string reason, string comment, string shotPath = null)
+        public static bool WriteRatingPatch(string turnId, int rating, string reason, string comment, IReadOnlyList<string> shotPaths = null)
         {
             try
             {
@@ -167,10 +174,19 @@ namespace revit_mcp_plugin.Core.Assistant
                     ["ts"] = DateTime.UtcNow.ToString("O"),
                 };
 
-                // File name only: the shot travels inside the export package, where the
+                // File names only: the shots travel inside the export package, where the
                 // architect's absolute path under %AppData% means nothing.
-                if (!string.IsNullOrWhiteSpace(shotPath))
-                    patch["shot"] = Path.GetFileName(shotPath);
+                if (shotPaths != null)
+                {
+                    var names = new JArray();
+                    foreach (var p in shotPaths)
+                    {
+                        if (!string.IsNullOrWhiteSpace(p))
+                            names.Add(Path.GetFileName(p));
+                    }
+                    if (names.Count > 0)
+                        patch["shots"] = names;
+                }
 
                 var jo = new JObject
                 {

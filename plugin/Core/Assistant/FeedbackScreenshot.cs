@@ -4,6 +4,7 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Windows.Media.Imaging;
 using revit_mcp_plugin.Utils;
 
 namespace revit_mcp_plugin.Core.Assistant
@@ -69,6 +70,154 @@ namespace revit_mcp_plugin.Core.Assistant
             {
                 return null;
             }
+        }
+
+        /// <summary>
+        /// True when the clipboard holds a picture we could attach — a Win+Shift+S crop,
+        /// a copied image file, anything with pixels in it.
+        /// </summary>
+        public static bool ClipboardHasImage()
+        {
+            try
+            {
+                return System.Windows.Clipboard.ContainsImage() || FirstImageFromDropList() != null;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Saves the clipboard picture beside the captured ones and returns its PNG path,
+        /// or null when the clipboard holds no image. The full-screen grab shows the whole
+        /// window; the architect's own Win+Shift+S crop shows the one wall that came out
+        /// wrong — so let them choose. Never throws, same contract as <see cref="Capture"/>.
+        /// </summary>
+        public static string SaveFromClipboard(string turnId)
+        {
+            try
+            {
+                var image = ReadClipboardImage();
+                if (image == null)
+                    return null;
+
+                var path = Path.Combine(GetShotsDirectory(), BuildFileName(turnId));
+                var encoder = new PngBitmapEncoder();
+                encoder.Frames.Add(BitmapFrame.Create(Downscale(image)));
+                using (var file = File.Create(path))
+                {
+                    encoder.Save(file);
+                }
+                return path;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static BitmapSource ReadClipboardImage()
+        {
+            // A Snipping Tool crop also lands on the clipboard as a real PNG stream, and that
+            // copy is the one worth taking: Clipboard.GetImage rebuilds the picture from the
+            // DIB, where an all-zero alpha channel is indistinguishable from an opaque one,
+            // and the crop then saves out as solid black.
+            try
+            {
+                var data = System.Windows.Clipboard.GetDataObject();
+                if (data != null && data.GetDataPresent("PNG"))
+                {
+                    using (var stream = data.GetData("PNG") as Stream)
+                    {
+                        if (stream != null)
+                            return Freeze(BitmapFrame.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad));
+                    }
+                }
+            }
+            catch { /* fall through to the plain bitmap */ }
+
+            try
+            {
+                if (System.Windows.Clipboard.ContainsImage())
+                {
+                    var image = System.Windows.Clipboard.GetImage();
+                    if (image != null)
+                        return Freeze(new FormatConvertedBitmap(image, System.Windows.Media.PixelFormats.Bgr24, null, 0));
+                }
+            }
+            catch { /* fall through to a copied file */ }
+
+            try
+            {
+                var file = FirstImageFromDropList();
+                if (file != null)
+                {
+                    var bmp = new BitmapImage();
+                    bmp.BeginInit();
+                    bmp.CacheOption = BitmapCacheOption.OnLoad; // do not hold the file open
+                    bmp.UriSource = new Uri(file);
+                    bmp.EndInit();
+                    return Freeze(bmp);
+                }
+            }
+            catch { /* nothing usable on the clipboard */ }
+
+            return null;
+        }
+
+        /// <summary>
+        /// First clipboard entry that looks like an image file — copying a picture in Explorer
+        /// puts a path list on the clipboard, not pixels.
+        /// </summary>
+        private static string FirstImageFromDropList()
+        {
+            System.Collections.Specialized.StringCollection files;
+            try
+            {
+                if (!System.Windows.Clipboard.ContainsFileDropList())
+                    return null;
+                files = System.Windows.Clipboard.GetFileDropList();
+            }
+            catch
+            {
+                return null;
+            }
+
+            if (files == null)
+                return null;
+
+            foreach (string file in files)
+            {
+                if (string.IsNullOrEmpty(file))
+                    continue;
+                var ext = Path.GetExtension(file);
+                if (string.IsNullOrEmpty(ext))
+                    continue;
+                if (Array.IndexOf(ClipboardImageExtensions, ext.ToLowerInvariant()) >= 0 && File.Exists(file))
+                    return file;
+            }
+            return null;
+        }
+
+        private static readonly string[] ClipboardImageExtensions =
+            { ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff" };
+
+        /// <summary>Same width cap as a captured shot — the report still has to travel.</summary>
+        private static BitmapSource Downscale(BitmapSource source)
+        {
+            if (source.PixelWidth <= MaxWidth)
+                return source;
+
+            var scale = (double)MaxWidth / source.PixelWidth;
+            return Freeze(new TransformedBitmap(source, new System.Windows.Media.ScaleTransform(scale, scale)));
+        }
+
+        private static BitmapSource Freeze(BitmapSource source)
+        {
+            if (source != null && source.CanFreeze && !source.IsFrozen)
+                source.Freeze();
+            return source;
         }
 
         private static Rectangle ResolveBounds()
