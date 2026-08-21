@@ -462,11 +462,10 @@ public class CreateScheduleEventHandler : IExternalEventHandler, IWaitableExtern
                     continue;
 
                 if (schedulableField.FieldType == preferredType)
-                    preferredMatch = schedulableField;
-                else if (anyMatch == null &&
-                         (schedulableField.FieldType == ScheduleFieldType.Instance ||
-                          schedulableField.FieldType == ScheduleFieldType.ElementType))
-                    anyMatch = schedulableField;
+                    preferredMatch = Better(preferredMatch, schedulableField);
+                else if (schedulableField.FieldType == ScheduleFieldType.Instance ||
+                         schedulableField.FieldType == ScheduleFieldType.ElementType)
+                    anyMatch = Better(anyMatch, schedulableField);
             }
 
             if (preferredMatch != null)
@@ -476,6 +475,32 @@ public class CreateScheduleEventHandler : IExternalEventHandler, IWaitableExtern
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Which of two fields of the same name to keep: the built-in one.
+    /// </summary>
+    /// <remarks>
+    /// A шаблон ADSK carries project parameters named exactly like Revit's own —
+    /// «Марка», «Ширина», «Высота». Whichever of them came last used to win, so the
+    /// column silently bound to an empty project parameter and the spec came back with
+    /// full rows and blank cells (found on the ведомость отверстий, REV-186). Nothing in
+    /// the answer said anything was wrong: the schedule had the right columns and the
+    /// right count of rows.
+    ///
+    /// Built-in wins because a caller who passes the bare name «Марка» means the mark
+    /// Revit itself keeps. Anyone who wants the org parameter can still name it exactly
+    /// through the '|' alias list, or pass its parameterId.
+    /// </remarks>
+    private static SchedulableField Better(SchedulableField current, SchedulableField candidate)
+    {
+        if (current == null)
+            return candidate;
+
+        var currentIsBuiltIn = GetElementIdValue(current.ParameterId) < 0;
+        var candidateIsBuiltIn = GetElementIdValue(candidate.ParameterId) < 0;
+
+        return !currentIsBuiltIn && candidateIsBuiltIn ? candidate : current;
     }
 
     /// <summary>
