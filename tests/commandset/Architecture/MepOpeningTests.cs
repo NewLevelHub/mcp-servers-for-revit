@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
+using RevitMCPCommandSet.Models.Architecture;
+using RevitMCPCommandSet.Models.Common;
 using RevitMCPCommandSet.Utils;
 using TUnit.Core;
 
@@ -152,6 +154,179 @@ public class OpeningClusterTests
     public async Task OneRun_IsLeftAlone()
     {
         await Assert.That(Cluster(200, new Rect(0, 110, 0, 110)).Count).IsEqualTo(1);
+    }
+}
+
+/// <summary>
+/// Through or along (REV-168). A hole is cut where a run goes in one face and out the
+/// other; a run lying along the inside of a wall needs the смежник to move it.
+/// </summary>
+public class ThroughCrossingTests
+{
+    [Test]
+    public async Task PipeAcrossAWall_NeedsAHole()
+    {
+        // 500 mm wall, the overlap spans the whole of it.
+        await Assert.That(MepOpeningRules.PassesThrough(500, 500)).IsTrue();
+    }
+
+    [Test]
+    public async Task RunLyingAlongTheWall_NeedsNoHole()
+    {
+        // The live case: a beam grazing the inside face by 1 mm asked for a 6-metre
+        // opening through the building.
+        await Assert.That(MepOpeningRules.PassesThrough(1, 500)).IsFalse();
+    }
+
+    [Test]
+    public async Task AngledRunClippingACorner_StillCounts()
+    {
+        // Crossing near the end of a wall it may not quite reach the far face; 0.8 keeps
+        // that a genuine crossing rather than dropping a hole somebody has to cut.
+        await Assert.That(MepOpeningRules.PassesThrough(420, 500)).IsTrue();
+        await Assert.That(MepOpeningRules.PassesThrough(390, 500)).IsFalse();
+    }
+
+    [Test]
+    public async Task ThinFinishLayer_IsJudgedAgainstItsOwnThickness()
+    {
+        // A 15 mm finish layer is passed through by 15 mm, not by 500.
+        await Assert.That(MepOpeningRules.PassesThrough(15, 15)).IsTrue();
+        await Assert.That(MepOpeningRules.PassesThrough(1, 15)).IsFalse();
+    }
+
+    [Test]
+    public async Task UnmeasurableThickness_KeepsTheOpening()
+    {
+        // Dropping a real hole because the host was hard to read is the expensive way to
+        // be wrong; the preview lets it be judged by eye.
+        await Assert.That(MepOpeningRules.PassesThrough(50, 0)).IsTrue();
+    }
+}
+
+/// <summary>
+/// One hole through a stack of wall layers is one row of the задание — and still several
+/// cuts in Revit (REV-168).
+/// </summary>
+public class LayerFoldingTests
+{
+    private static MepOpeningPlanItem Item(
+        long hostId,
+        double thicknessMm,
+        double x,
+        long mepId = 500,
+        double widthMm = 250,
+        string level = "2 этаж")
+    {
+        return new MepOpeningPlanItem
+        {
+            HostElementId = hostId,
+            HostThicknessMm = thicknessMm,
+            HostLevel = level,
+            MepElementIds = new List<long> { mepId },
+            WidthMm = widthMm,
+            HeightMm = 300,
+            CentreMm = new JZPoint(x, 0, 4900)
+        };
+    }
+
+    [Test]
+    public async Task LayersOfOneWall_BecomeOneRow()
+    {
+        // The live reading: бетон 500, two layers of минвата, штукатурка, отделка.
+        var folded = MepOpeningRules.FoldLayers(new List<MepOpeningPlanItem>
+        {
+            Item(1, 500, -10931),
+            Item(2, 50, -11331),
+            Item(3, 50, -11381),
+            Item(4, 20, -11416),
+            Item(5, 15, -10798),
+        });
+
+        await Assert.That(folded.Count).IsEqualTo(1);
+        await Assert.That(folded[0].AlsoCuts!.Count).IsEqualTo(4);
+    }
+
+    [Test]
+    public async Task StructuralLayer_BecomesTheRow()
+    {
+        // The задание is about the 500 mm of concrete, not about the 15 mm of finish —
+        // and the order the collector happened to return them in must not decide it.
+        var folded = MepOpeningRules.FoldLayers(new List<MepOpeningPlanItem>
+        {
+            Item(5, 15, -10798),
+            Item(1, 500, -10931),
+        });
+
+        await Assert.That(folded[0].HostElementId).IsEqualTo(1L);
+        await Assert.That(folded[0].HostThicknessMm).IsEqualTo(500);
+    }
+
+    [Test]
+    public async Task EveryLayer_KeepsItsOwnIdAndCentre()
+    {
+        // Revit cuts each layer separately, and they sit at different depths.
+        var folded = MepOpeningRules.FoldLayers(new List<MepOpeningPlanItem>
+        {
+            Item(1, 500, -10931),
+            Item(7, 50, -11331),
+        });
+
+        var layer = folded[0].AlsoCuts!.Single();
+        await Assert.That(layer.HostElementId).IsEqualTo(7L);
+        await Assert.That(layer.CentreMm.X).IsEqualTo(-11331);
+    }
+
+    [Test]
+    public async Task Hole_TakesTheWidestReadingInTheStack()
+    {
+        var folded = MepOpeningRules.FoldLayers(new List<MepOpeningPlanItem>
+        {
+            Item(1, 500, -10931, widthMm: 250),
+            Item(2, 50, -11331, widthMm: 400),
+        });
+
+        await Assert.That(folded[0].WidthMm).IsEqualTo(400);
+    }
+
+    [Test]
+    public async Task SamePipeThroughTwoWalls_StaysTwoOpenings()
+    {
+        var folded = MepOpeningRules.FoldLayers(new List<MepOpeningPlanItem>
+        {
+            Item(1, 500, 0),
+            Item(2, 500, 5000),
+        });
+
+        await Assert.That(folded.Count).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task DifferentRunsInTheSameWall_AreNotFolded()
+    {
+        // Two pipes far enough apart to have their own holes must keep them, however
+        // close the wall layers are.
+        var folded = MepOpeningRules.FoldLayers(new List<MepOpeningPlanItem>
+        {
+            Item(1, 500, -10931, mepId: 500),
+            Item(2, 50, -11331, mepId: 999),
+        });
+
+        await Assert.That(folded.Count).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task SingleOpening_GetsNoAlsoCuts()
+    {
+        var folded = MepOpeningRules.FoldLayers(new List<MepOpeningPlanItem> { Item(1, 500, 0) });
+
+        await Assert.That(folded[0].AlsoCuts).IsNull();
+    }
+
+    [Test]
+    public async Task EmptyInput_IsNotAFailure()
+    {
+        await Assert.That(MepOpeningRules.FoldLayers(null).Count).IsEqualTo(0);
     }
 }
 

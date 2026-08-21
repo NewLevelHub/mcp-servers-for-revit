@@ -30,6 +30,21 @@ namespace RevitMCPCommandSet.Models.Architecture
         [JsonProperty("hostLevel", NullValueHandling = NullValueHandling.Ignore)]
         public string HostLevel { get; set; }
 
+        /// <summary>
+        /// Thickness of this element, mm — how the structural layer is told from the
+        /// finish when the layers of one wall are folded into one opening.
+        /// </summary>
+        [JsonProperty("hostThicknessMm")]
+        public double HostThicknessMm { get; set; }
+
+        /// <summary>
+        /// The other layers of the same wall this hole also has to go through — утеплитель,
+        /// штукатурка, отделка. One row is one hole, but every layer is a separate element
+        /// in Revit and every one of them gets cut, or the pipe runs into the insulation.
+        /// </summary>
+        [JsonProperty("alsoCuts", NullValueHandling = NullValueHandling.Ignore)]
+        public List<MepOpeningLayerCut> AlsoCuts { get; set; }
+
         [JsonProperty("roomName", NullValueHandling = NullValueHandling.Ignore)]
         public string RoomName { get; set; }
 
@@ -91,6 +106,36 @@ namespace RevitMCPCommandSet.Models.Architecture
         public string Note { get; set; }
     }
 
+    /// <summary>
+    /// One more element the same hole passes through — a layer of the same wall. It
+    /// carries its own centre because the layers sit at different depths across the
+    /// assembly, and its own id because Revit cuts each of them separately.
+    /// </summary>
+    public class MepOpeningLayerCut
+    {
+        [JsonProperty("hostElementId")]
+        public long HostElementId { get; set; }
+
+        [JsonProperty("hostCategory")]
+        public string HostCategory { get; set; } = string.Empty;
+
+        [JsonProperty("hostType", NullValueHandling = NullValueHandling.Ignore)]
+        public string HostType { get; set; }
+
+        [JsonProperty("hostThicknessMm")]
+        public double HostThicknessMm { get; set; }
+
+        [JsonProperty("centreMm")]
+        public JZPoint CentreMm { get; set; } = new JZPoint();
+
+        /// <summary>created | failed | exists — filled in when the openings are cut.</summary>
+        [JsonProperty("status", NullValueHandling = NullValueHandling.Ignore)]
+        public string Status { get; set; }
+
+        [JsonProperty("openingElementId", NullValueHandling = NullValueHandling.Ignore)]
+        public long? OpeningElementId { get; set; }
+    }
+
     /// <summary>What one link contributed to the задание.</summary>
     public class MepOpeningLinkInfo
     {
@@ -147,9 +192,16 @@ namespace RevitMCPCommandSet.Models.Architecture
         [JsonProperty("totalOpenings")]
         public int TotalOpenings { get; set; }
 
-        /// <summary>Crossings found before пачки труб were folded into shared holes.</summary>
+        /// <summary>Crossings found before пачки труб and wall layers were folded.</summary>
         [JsonProperty("rawCrossings")]
         public int RawCrossings { get; set; }
+
+        /// <summary>
+        /// Overlaps that turned out to run along the inside of an element rather than
+        /// through it. Those are a coordination argument, not a hole to cut.
+        /// </summary>
+        [JsonProperty("skippedNotThrough")]
+        public int SkippedNotThrough { get; set; }
 
         [JsonProperty("createdCount")]
         public int CreatedCount { get; set; }

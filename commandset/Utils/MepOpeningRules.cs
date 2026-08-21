@@ -1,3 +1,6 @@
+using RevitMCPCommandSet.Models.Architecture;
+using RevitMCPCommandSet.Models.Common;
+
 namespace RevitMCPCommandSet.Utils
 {
     /// <summary>
@@ -30,6 +33,42 @@ namespace RevitMCPCommandSet.Utils
 
         /// <summary>An opening smaller than this is not worth a задание.</summary>
         public const double MinOpeningSizeMm = 50.0;
+
+        /// <summary>
+        /// How much of the host a run has to get through before it needs a hole rather
+        /// than an argument. A pipe passing through enters one face and leaves by the
+        /// other, so the overlap spans the whole thickness; a beam lying along the inside
+        /// of a wall overlaps it by a millimetre and needs no opening at all — it needs
+        /// the смежник to move it. 0.8 rather than 1.0 because a run crossing at an angle
+        /// near the end of a wall can clip a corner and still be a genuine crossing.
+        /// </summary>
+        public const double ThroughFraction = 0.8;
+
+        /// <summary>
+        /// How far apart the layers of one wall assembly can sit. Openings for the same
+        /// run within this distance are one hole through a stack — бетон, утеплитель,
+        /// штукатурка, отделка — not several holes in several walls.
+        /// </summary>
+        public const double LayerRadiusMm = 800.0;
+
+        /// <summary>
+        /// Does this run pass through, or merely graze the inside of the element?
+        /// </summary>
+        /// <remarks>
+        /// A thickness we could not measure counts as passing through: dropping a real
+        /// opening because the host was hard to read is the expensive way to be wrong,
+        /// and the row can still be judged by eye in the preview.
+        /// </remarks>
+        public static bool PassesThrough(
+            double overlapThroughMm,
+            double hostThicknessMm,
+            double fraction = ThroughFraction)
+        {
+            if (hostThicknessMm <= 0)
+                return true;
+
+            return overlapThroughMm >= fraction * hostThicknessMm;
+        }
 
         /// <summary>
         /// A rectangle in the plane of the host element, millimetres. U runs along the
@@ -124,6 +163,89 @@ namespace RevitMCPCommandSet.Utils
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Folds the openings cut for the same run through the layers of one wall into a
+        /// single row of the задание.
+        /// </summary>
+        /// <remarks>
+        /// A wall is a stack of separate elements here, so one pipe through one wall asked
+        /// for бетон, two layers of минвата, штукатурка and отделка — five holes. As a
+        /// document that is wrong: it is one hole. As an instruction to Revit it is right:
+        /// every layer is its own element and every one has to be cut, or the pipe runs
+        /// into the insulation.
+        ///
+        /// So the thickest layer — the structural one, the size the задание is really
+        /// about — becomes the row, and the rest move into <see cref="MepOpeningPlanItem.AlsoCuts"/>
+        /// with their own ids and centres. All of them are then cut at the size of the row,
+        /// so the hole is the same rectangle all the way through the assembly.
+        ///
+        /// Grouping is by run AND by place: the same pipe through two walls a room apart
+        /// stays two openings.
+        /// </remarks>
+        public static List<MepOpeningPlanItem> FoldLayers(
+            IEnumerable<MepOpeningPlanItem> items,
+            double radiusMm = LayerRadiusMm)
+        {
+            var folded = new List<MepOpeningPlanItem>();
+
+            // Thickest first, so the layer that becomes the row is the first one to open
+            // a group rather than whichever the collector happened to return first.
+            var ordered = (items ?? Enumerable.Empty<MepOpeningPlanItem>())
+                .Where(item => item != null)
+                .OrderByDescending(item => item.HostThicknessMm)
+                .ToList();
+
+            foreach (var item in ordered)
+            {
+                var primary = folded.FirstOrDefault(candidate =>
+                    SharesARun(candidate, item) &&
+                    WithinRadius(candidate.CentreMm, item.CentreMm, radiusMm));
+
+                if (primary == null)
+                {
+                    folded.Add(item);
+                    continue;
+                }
+
+                primary.AlsoCuts ??= new List<MepOpeningLayerCut>();
+                primary.AlsoCuts.Add(new MepOpeningLayerCut
+                {
+                    HostElementId = item.HostElementId,
+                    HostCategory = item.HostCategory,
+                    HostType = item.HostType,
+                    HostThicknessMm = item.HostThicknessMm,
+                    CentreMm = item.CentreMm
+                });
+
+                // The hole has to clear the widest reading of it anywhere in the stack.
+                primary.WidthMm = Math.Max(primary.WidthMm, item.WidthMm);
+                primary.HeightMm = Math.Max(primary.HeightMm, item.HeightMm);
+            }
+
+            return folded;
+        }
+
+        /// <summary>Two openings are for the same hole only if they are for the same run.</summary>
+        private static bool SharesARun(MepOpeningPlanItem a, MepOpeningPlanItem b)
+        {
+            if (a?.MepElementIds == null || b?.MepElementIds == null)
+                return false;
+
+            return a.MepElementIds.Intersect(b.MepElementIds).Any();
+        }
+
+        private static bool WithinRadius(JZPoint a, JZPoint b, double radiusMm)
+        {
+            if (a == null || b == null)
+                return false;
+
+            var dx = a.X - b.X;
+            var dy = a.Y - b.Y;
+            var dz = a.Z - b.Z;
+
+            return dx * dx + dy * dy + dz * dz <= radiusMm * radiusMm;
         }
 
         /// <summary>

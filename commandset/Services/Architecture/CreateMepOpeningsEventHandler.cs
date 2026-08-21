@@ -112,7 +112,12 @@ namespace RevitMCPCommandSet.Services.Architecture
                 var crossings = Measure(doc, result, links, mepCategories, total);
                 result.RawCrossings = crossings.Count;
 
-                var openings = Fold(crossings);
+                // Two foldings, in this order. First пачки труб on one element, then the
+                // layers of one wall — the second needs the first to have settled, or a
+                // bundle in the concrete would not recognise the same bundle in the
+                // insulation as its own stack.
+                var openings = MepOpeningRules.FoldLayers(Fold(crossings));
+                Renumber(openings);
                 result.Openings = openings;
                 result.TotalOpenings = openings.Count;
 
@@ -202,6 +207,12 @@ namespace RevitMCPCommandSet.Services.Architecture
             public Element Mep;
             public MepOpeningRules.OpeningRect Rect;
             public double CentreWMm;
+
+            /// <summary>Thickness of the host at this spot, mm — read off its own solid.</summary>
+            public double HostThicknessMm;
+
+            /// <summary>How far the run got across the host, mm — the through-or-along test.</summary>
+            public double ThroughMm;
         }
 
         // --- links ---------------------------------------------------------------
@@ -315,6 +326,14 @@ namespace RevitMCPCommandSet.Services.Architecture
                 {
                     foreach (var hostSolid in hostSolids)
                     {
+                        // The thickness at this spot, read off the element itself rather
+                        // than from a type parameter: a multi-layer wall is several
+                        // elements here, and each layer has its own.
+                        var thicknessMm =
+                            TryMeasure(hostSolid, frame.Value, out _, out var hostWMin, out var hostWMax)
+                                ? hostWMax - hostWMin
+                                : 0;
+
                         var inLink = SolidUtils.CreateTransformed(hostSolid, link.ToLink);
                         var outline = BuildOutline(inLink);
                         if (outline == null)
@@ -329,8 +348,20 @@ namespace RevitMCPCommandSet.Services.Architecture
                         foreach (var mep in collector)
                         {
                             var crossing = MeasureCrossing(host, hostKind, frame.Value, link, mep, inLink);
-                            if (crossing != null)
-                                crossings.Add(crossing);
+                            if (crossing == null)
+                                continue;
+
+                            crossing.HostThicknessMm = Math.Round(thicknessMm, 1);
+
+                            // A run lying along the inside of a wall needs the смежник to
+                            // move it, not a 6-metre hole cut through the building.
+                            if (!MepOpeningRules.PassesThrough(crossing.ThroughMm, thicknessMm))
+                            {
+                                result.SkippedNotThrough++;
+                                continue;
+                            }
+
+                            crossings.Add(crossing);
                         }
                     }
                 }
@@ -403,7 +434,8 @@ namespace RevitMCPCommandSet.Services.Architecture
                 Link = link,
                 Mep = mep,
                 Rect = rect.Value,
-                CentreWMm = (wMin + wMax) / 2.0
+                CentreWMm = (wMin + wMax) / 2.0,
+                ThroughMm = wMax - wMin
             };
         }
 
@@ -543,7 +575,6 @@ namespace RevitMCPCommandSet.Services.Architecture
         private List<MepOpeningPlanItem> Fold(List<Crossing> crossings)
         {
             var openings = new List<MepOpeningPlanItem>();
-            var perLevelIndex = new Dictionary<string, int>(StringComparer.CurrentCulture);
 
             foreach (var group in crossings.GroupBy(crossing => crossing.Host.Id.GetValue()))
             {
@@ -561,11 +592,8 @@ namespace RevitMCPCommandSet.Services.Architecture
                     if (item == null)
                         continue;
 
-                    var levelKey = item.HostLevel ?? string.Empty;
-                    perLevelIndex.TryGetValue(levelKey, out var index);
-                    perLevelIndex[levelKey] = ++index;
-                    item.Mark = MepOpeningRules.BuildMark(item.HostLevel, index);
-
+                    // Marks are handed out after the layers are folded — numbering here
+                    // would leave the задание with gaps where a layer was absorbed.
                     openings.Add(item);
                     if (openings.Count >= _maxOpenings)
                         return openings;
@@ -573,6 +601,23 @@ namespace RevitMCPCommandSet.Services.Architecture
             }
 
             return openings;
+        }
+
+        /// <summary>
+        /// Marks, once the list is final. Numbered per level and in the order the openings
+        /// come out, so «ОТВ-2эт-03» means the same thing on the plan and in the ведомость.
+        /// </summary>
+        private static void Renumber(List<MepOpeningPlanItem> openings)
+        {
+            var perLevelIndex = new Dictionary<string, int>(StringComparer.CurrentCulture);
+
+            foreach (var item in openings)
+            {
+                var levelKey = item.HostLevel ?? string.Empty;
+                perLevelIndex.TryGetValue(levelKey, out var index);
+                perLevelIndex[levelKey] = ++index;
+                item.Mark = MepOpeningRules.BuildMark(item.HostLevel, index);
+            }
         }
 
         private MepOpeningPlanItem Describe(List<Crossing> bundle)
@@ -600,6 +645,7 @@ namespace RevitMCPCommandSet.Services.Architecture
                 HostCategory = first.Host.Category?.Name ?? string.Empty,
                 HostType = ReadTypeName(doc, first.Host),
                 HostLevel = levelName,
+                HostThicknessMm = bundle.Max(crossing => crossing.HostThicknessMm),
                 LinkName = first.Link.Info.LinkName,
                 LinkSection = first.Link.Info.Section,
                 MepElementIds = bundle.Select(crossing => crossing.Mep.Id.GetValue()).Distinct().ToList(),
@@ -777,6 +823,11 @@ namespace RevitMCPCommandSet.Services.Architecture
                         item.Status = "created";
                         item.OpeningElementId = created.Id.GetValue();
                         result.CreatedCount++;
+
+                        // The hole is one hole, but the wall is a stack of elements and
+                        // Revit cuts each of them separately. Stopping at the structural
+                        // layer would leave the pipe running into the insulation.
+                        CutRemainingLayers(doc, item, source);
                     }
                     catch (Exception ex)
                     {
@@ -787,6 +838,45 @@ namespace RevitMCPCommandSet.Services.Architecture
                 }
 
                 tx.Commit();
+            }
+        }
+
+        /// <summary>
+        /// Cuts the same rectangle through the remaining layers of the assembly. Each
+        /// layer is reported on its own: one of them failing is worth knowing about, and
+        /// is not a reason to call the whole opening a failure.
+        /// </summary>
+        private void CutRemainingLayers(Document doc, MepOpeningPlanItem item, FamilySymbol source)
+        {
+            foreach (var layer in item.AlsoCuts ?? new List<MepOpeningLayerCut>())
+            {
+                try
+                {
+                    // The layer is cut at the size of the row, not at its own reading:
+                    // the hole has to be the same rectangle all the way through.
+                    var proxy = new MepOpeningPlanItem
+                    {
+                        Mark = item.Mark,
+                        HostElementId = layer.HostElementId,
+                        HostKind = item.HostKind,
+                        WidthMm = item.WidthMm,
+                        HeightMm = item.HeightMm,
+                        CentreMm = layer.CentreMm
+                    };
+
+                    var created = item.HostKind == "floor"
+                        ? CreateFloorOpening(doc, proxy)
+                        : CreateWallOpening(doc, proxy, source);
+
+                    layer.Status = created == null ? "failed" : "created";
+                    if (created != null)
+                        layer.OpeningElementId = created.Id.GetValue();
+                }
+                catch (Exception ex)
+                {
+                    layer.Status = "failed";
+                    item.Note = $"Слой {layer.HostElementId} не прорезан: {ex.Message}";
+                }
             }
         }
 
@@ -1058,10 +1148,18 @@ namespace RevitMCPCommandSet.Services.Architecture
 
             var message = $"Отверстий: {result.TotalOpenings}";
             if (result.RawCrossings > result.TotalOpenings)
-                message += $" (пересечений {result.RawCrossings}, пачки объединены)";
+                message += $" (пересечений {result.RawCrossings}, пачки труб и слои стен объединены)";
 
             message += $". Запас {Math.Round(result.ClearanceMm)} мм, размеры кратны " +
                        $"{Math.Round(result.SizeStepMm)} мм.";
+
+            if (result.SkippedNotThrough > 0)
+            {
+                // Without this line the смежник's runs look forgotten, when in fact they
+                // were considered and judged not to need a hole.
+                message += $" Не сквозных задеваний (идут вдоль, отверстие не нужно): " +
+                           $"{result.SkippedNotThrough}.";
+            }
 
             if (!result.Applied)
             {
