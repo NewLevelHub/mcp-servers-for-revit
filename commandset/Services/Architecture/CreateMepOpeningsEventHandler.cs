@@ -896,9 +896,12 @@ namespace RevitMCPCommandSet.Services.Architecture
                         CentreMm = layer.CentreMm
                     };
 
+                    // Layers get a plain opening even when the row got a family. The mark
+                    // and the ведомость live on the row, and a window family placed into
+                    // a 1 mm mesh layer is a fight with Revit for nothing.
                     var created = item.HostKind == "floor"
                         ? CreateFloorOpening(doc, proxy)
-                        : CreateWallOpening(doc, proxy, source);
+                        : CreateWallOpening(doc, proxy, null);
 
                     layer.Status = created == null ? "failed" : "created";
                     if (created != null)
@@ -946,15 +949,18 @@ namespace RevitMCPCommandSet.Services.Architecture
             // No family to place: cut a native opening instead. It holds no mark and will
             // not appear in a ведомость, and the caller is told so rather than left to
             // discover an empty schedule.
-            var profile = BuildWallProfile(wall, item, centre);
-            if (profile == null)
+            // A wall takes its own overload — two opposite corners, not a profile.
+            // NewOpening(host, profile, perpendicular) is for floors, ceilings and roofs
+            // and refuses a wall outright.
+            var corners = BuildWallCorners(wall, item, centre);
+            if (corners == null)
             {
-                item.Note = "Стена криволинейная — обычный проём по прямоугольнику в ней не построить. " +
+                item.Note = "Стена криволинейная — прямоугольный проём в ней так не построить. " +
                             "Передайте openingTypeId, чтобы ставить семейство.";
                 return null;
             }
 
-            var opening = doc.Create.NewOpening(wall, profile, true);
+            var opening = doc.Create.NewOpening(wall, corners.Value.From, corners.Value.To);
             item.Note = "Создан обычный проём без семейства: марка и ведомость по нему не соберутся. " +
                         "Передайте openingTypeId, чтобы ставить семейство.";
             return opening;
@@ -988,33 +994,20 @@ namespace RevitMCPCommandSet.Services.Architecture
         }
 
         /// <summary>
-        /// Rectangle in the plane of the wall, for a native opening. Built along the wall
-        /// direction rather than along project X: a wall running north-south would
-        /// otherwise get a degenerate profile and Revit would refuse it.
+        /// Opposite corners of the opening, in the plane of the wall. Built along the
+        /// wall direction rather than along project X: a wall running north-south would
+        /// otherwise get a degenerate rectangle and Revit would refuse it.
         /// </summary>
-        private static CurveArray BuildWallProfile(Wall wall, MepOpeningPlanItem item, XYZ centre)
+        private static (XYZ From, XYZ To)? BuildWallCorners(Wall wall, MepOpeningPlanItem item, XYZ centre)
         {
             var frame = BuildFrame(wall, out _);
             if (frame == null)
                 return null;
 
-            var halfW = RevitUnitConversion.FromMillimeters(item.WidthMm / 2.0);
-            var halfH = RevitUnitConversion.FromMillimeters(item.HeightMm / 2.0);
+            var along = frame.Value.U.Multiply(RevitUnitConversion.FromMillimeters(item.WidthMm / 2.0));
+            var up = frame.Value.V.Multiply(RevitUnitConversion.FromMillimeters(item.HeightMm / 2.0));
 
-            var along = frame.Value.U.Multiply(halfW);
-            var up = frame.Value.V.Multiply(halfH);
-
-            var p0 = centre.Subtract(along).Subtract(up);
-            var p1 = centre.Add(along).Subtract(up);
-            var p2 = centre.Add(along).Add(up);
-            var p3 = centre.Subtract(along).Add(up);
-
-            var profile = new CurveArray();
-            profile.Append(Line.CreateBound(p0, p1));
-            profile.Append(Line.CreateBound(p1, p2));
-            profile.Append(Line.CreateBound(p2, p3));
-            profile.Append(Line.CreateBound(p3, p0));
-            return profile;
+            return (centre.Subtract(along).Subtract(up), centre.Add(along).Add(up));
         }
 
         private static void SetMark(Element element, MepOpeningPlanItem item)
