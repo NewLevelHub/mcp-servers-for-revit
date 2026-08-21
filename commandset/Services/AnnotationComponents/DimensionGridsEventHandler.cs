@@ -348,6 +348,21 @@ public class DimensionGridsEventHandler : IExternalEventHandler, IWaitableExtern
                     $"chain may be overall-only. [{diag}]");
             }
 
+            // Exactly two references means one span across the whole facade — the
+            // building envelope, measured wall face to wall face. That is the
+            // overall dimension again, on the wrong tier and with a different
+            // number than the axis-to-axis one below it: the plan then carries two
+            // габарита (19200 and 19000), which is what «две общего размера с двух
+            // сторон» was about on 20.08.2026. The overall tier already refuses to
+            // repeat the inter-axis chain for the same reason; do the same here.
+            if (cuts.Count == 2)
+            {
+                warnings.Add(
+                    $"Opening tier ({facadeSide}): no openings or piers to measure — " +
+                    $"a 2-reference chain would repeat the overall dimension, skipped. [{diag}]");
+                return null;
+            }
+
             var references = new ReferenceArray();
             foreach (var cut in cuts)
                 references.Append(cut.Reference);

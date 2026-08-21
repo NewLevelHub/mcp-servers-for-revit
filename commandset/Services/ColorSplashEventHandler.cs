@@ -54,13 +54,13 @@ namespace RevitMCPCommandSet.Services
                     return;
                 }
 
-                Category category = FindCategory(_categoryName);
+                Category category = CategoryResolver.Find(doc, _categoryName);
                 if (category == null)
                 {
                     ColoringResults = new
                     {
                         success = false,
-                        message = $"Category '{_categoryName}' not found"
+                        message = CategoryResolver.DescribeMiss(doc, _categoryName)
                     };
                     return;
                 }
@@ -114,18 +114,6 @@ namespace RevitMCPCommandSet.Services
         }
 
         public string GetName() => "Color Splash";
-
-        private Category FindCategory(string name)
-        {
-            foreach (Category cat in doc.Settings.Categories)
-            {
-                if (cat.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
-                {
-                    return cat;
-                }
-            }
-            return null;
-        }
 
 #if REVIT2022_OR_GREATER
         /// <summary>
@@ -435,7 +423,9 @@ namespace RevitMCPCommandSet.Services
             Parameter param = FindParameter(sampleRoom, parameterName);
             if (param?.Definition == null)
             {
-                error = $"у помещений нет параметра «{parameterName}».";
+                // Name the parameters the room does have: "нет параметра «Имя»" on
+                // its own sent the model guessing instead of correcting itself.
+                error = ElementParameterHelper.DescribeMissingParameter(sampleRoom, parameterName) + ".";
                 return false;
             }
 
@@ -549,9 +539,16 @@ namespace RevitMCPCommandSet.Services
         }
 #endif
 
+        /// <summary>
+        ///     Parameter names are localised the same way category names are: «Имя»
+        ///     does not exist on a room in an English Revit session, and «Number»
+        ///     does not exist in a Russian one. Matching the raw string is what made
+        ///     the same request fail after Revit was restarted in another language
+        ///     (20.08.2026) — so route through the RU↔EN alias table instead.
+        /// </summary>
         private static Parameter FindParameter(Element element, string parameterName)
         {
-            Parameter parameter = element.LookupParameter(parameterName);
+            Parameter parameter = ElementParameterHelper.FindParameter(element, parameterName);
             if (parameter != null)
             {
                 return parameter;
@@ -561,7 +558,10 @@ namespace RevitMCPCommandSet.Services
             if (typeId != ElementId.InvalidElementId)
             {
                 Element elementType = element.Document.GetElement(typeId);
-                parameter = elementType?.LookupParameter(parameterName);
+                if (elementType != null)
+                {
+                    parameter = ElementParameterHelper.FindParameter(elementType, parameterName);
+                }
             }
 
             return parameter;
