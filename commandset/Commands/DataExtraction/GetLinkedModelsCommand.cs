@@ -26,10 +26,16 @@ namespace RevitMCPCommandSet.Commands.DataExtraction
                 int coordinateSamples = parameters?["coordinateSamples"]?.Value<int>() ?? 1;
                 string levelName = parameters?["levelName"]?.Value<string>() ?? string.Empty;
                 string nameFilter = parameters?["nameFilter"]?.Value<string>() ?? string.Empty;
+                // REV-169: сверка общей площадки. Выключено по умолчанию — обход осей
+                // и уровней каждой связи не нужен тем, кто просто спрашивает список.
+                bool includeLevels = parameters?["includeLevels"]?.Value<bool>() ?? false;
+                bool includeGrids = parameters?["includeGrids"]?.Value<bool>() ?? false;
+                bool includeSitePoints = parameters?["includeSitePoints"]?.Value<bool>() ?? false;
 
                 _handler.SetParameters(
                     includeElementCounts, includeCategories, categoryLimit,
-                    coordinateSamples, levelName, nameFilter);
+                    coordinateSamples, levelName, nameFilter,
+                    includeLevels, includeGrids, includeSitePoints);
 
                 // The default pass is a few milliseconds per link, but a project with a
                 // dozen ИОС links and includeCategories on walks every element of every

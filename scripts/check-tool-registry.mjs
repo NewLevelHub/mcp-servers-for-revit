@@ -62,6 +62,8 @@ const SERVER_ONLY_TOOLS = new Set([
   "fill_title_block",
   // orchestrates ai_element_filter + get_elements_parameters, no Revit command of its own
   "check_sheet_readiness",
+  // Сверка общей площадки: считает по данным get_linked_models, своей команды нет.
+  "check_shared_site",
   "number_rooms",
   "trace_walls_from_cad",
   "trace_openings_from_cad",

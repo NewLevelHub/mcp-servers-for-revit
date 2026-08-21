@@ -42,6 +42,9 @@ namespace RevitMCPCommandSet.Services.DataExtraction
         private int _coordinateSamples = 1;
         private string _levelName = string.Empty;
         private string _nameFilter = string.Empty;
+        private bool _includeLevels;
+        private bool _includeGrids;
+        private bool _includeSitePoints;
 
         /// <summary>Elements looked at before giving up on finding a placed one.</summary>
         private const int SampleScanLimit = 5000;
@@ -56,7 +59,10 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             int categoryLimit = 8,
             int coordinateSamples = 1,
             string levelName = "",
-            string nameFilter = "")
+            string nameFilter = "",
+            bool includeLevels = false,
+            bool includeGrids = false,
+            bool includeSitePoints = false)
         {
             _includeElementCounts = includeElementCounts;
             _includeCategories = includeCategories;
@@ -64,6 +70,9 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             _coordinateSamples = Math.Max(0, Math.Min(20, coordinateSamples));
             _levelName = levelName ?? string.Empty;
             _nameFilter = nameFilter ?? string.Empty;
+            _includeLevels = includeLevels;
+            _includeGrids = includeGrids;
+            _includeSitePoints = includeSitePoints;
             TaskCompleted = false;
             _resetEvent.Reset();
         }
@@ -110,7 +119,8 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                     UnloadedCount = links.Count(link => IsUnloaded(link.Status)),
                     BrokenCount = links.Count(link => IsBroken(link.Status)),
                     ElapsedMs = total.ElapsedMilliseconds,
-                    Links = links
+                    Links = links,
+                    HostSite = ReadSite(doc, _includeLevels, _includeGrids, _includeSitePoints)
                 };
                 ResultInfo.Message = BuildMessage(ResultInfo);
             }
@@ -188,6 +198,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                 }
 
                 info.IsReadable = true;
+                info.Site = ReadSite(linkDoc, _includeLevels, _includeGrids, _includeSitePoints);
                 ReadContent(linkDoc, instance, info);
                 return info;
             }
@@ -316,6 +327,174 @@ namespace RevitMCPCommandSet.Services.DataExtraction
 
             return samples;
         }
+
+        /// <summary>
+        /// Levels, grids and setting-out points of a document — ours or a link's (REV-169).
+        /// </summary>
+        /// <remarks>
+        /// Read in the document's OWN coordinates. Сверка общей площадки asks whether the
+        /// two models were set out the same way; transforming the link into our numbers
+        /// first would paper over exactly the difference the check exists to find.
+        ///
+        /// Each of the three readings is wrapped separately: a file with no grids is
+        /// ordinary and must still give up its levels.
+        /// </remarks>
+        internal static SiteSurveyInfo ReadSite(Document doc, bool levels, bool grids, bool points)
+        {
+            if (doc == null || (!levels && !grids && !points))
+                return null;
+
+            var site = new SiteSurveyInfo();
+
+            if (levels)
+            {
+                try
+                {
+                    site.Levels = new FilteredElementCollector(doc)
+                        .OfClass(typeof(Level))
+                        .Cast<Level>()
+                        .Select(level => new SiteLevelInfo
+                        {
+                            Name = level.Name ?? string.Empty,
+                            ElevationMm = Math.Round(RevitUnitConversion.ToMillimeters(level.Elevation), 1),
+                            ElementId = level.Id.GetValue()
+                        })
+                        .OrderBy(level => level.ElevationMm)
+                        .ToList();
+                }
+                catch (Exception ex)
+                {
+                    site.Note = $"Уровни не прочитаны: {ex.Message}";
+                }
+            }
+
+            if (grids)
+            {
+                try
+                {
+                    site.Grids = new FilteredElementCollector(doc)
+                        .OfClass(typeof(Grid))
+                        .Cast<Grid>()
+                        .Select(ReadGrid)
+                        .Where(grid => grid != null)
+                        .OrderBy(grid => grid.Name, StringComparer.CurrentCulture)
+                        .ToList();
+                }
+                catch (Exception ex)
+                {
+                    site.Note = Append(site.Note, $"Оси не прочитаны: {ex.Message}");
+                }
+            }
+
+            if (points)
+            {
+                try
+                {
+                    site.Points = ReadSitePoints(doc);
+                }
+                catch (Exception ex)
+                {
+                    site.Note = Append(site.Note, $"Базовые точки не прочитаны: {ex.Message}");
+                }
+            }
+
+            return site;
+        }
+
+        private static SiteGridInfo ReadGrid(Grid grid)
+        {
+            try
+            {
+                var curve = grid.Curve;
+                if (curve == null)
+                    return null;
+
+                return new SiteGridInfo
+                {
+                    Name = grid.Name ?? string.Empty,
+                    StartMm = ToMillimetres(curve.GetEndPoint(0)),
+                    EndMm = ToMillimetres(curve.GetEndPoint(1)),
+                    IsCurved = !(curve is Line),
+                    ElementId = grid.Id.GetValue()
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// The two points a проект is set out from. Both are ordinary elements in Revit,
+        /// found by category rather than by any dedicated API.
+        /// </summary>
+        private static SitePointsInfo ReadSitePoints(Document doc)
+        {
+            var info = new SitePointsInfo();
+
+            // Both points are BasePoint elements told apart by IsShared. Looking them up
+            // by category found only the survey point inside a link — the project base
+            // point came back empty there while the host gave up both, and a сверка that
+            // silently drops half of what it promises to compare is worse than one that
+            // says it could not read it.
+            var points = new FilteredElementCollector(doc)
+                .OfClass(typeof(BasePoint))
+                .Cast<BasePoint>()
+                .ToList();
+
+            info.ProjectBasePointMm = ReadBasePoint(points.FirstOrDefault(point => !point.IsShared));
+            info.SurveyPointMm = ReadBasePoint(points.FirstOrDefault(point => point.IsShared));
+
+            try
+            {
+                var angle = doc.ActiveProjectLocation?.GetProjectPosition(XYZ.Zero)?.Angle;
+                if (angle != null)
+                    info.AngleToTrueNorthDeg = Math.Round(angle.Value * 180.0 / Math.PI, 4);
+            }
+            catch
+            {
+                // A model with no project location keeps the two points and no angle.
+            }
+
+            return info;
+        }
+
+        /// <summary>
+        /// A setting-out point, read off its parameters rather than its Location.
+        /// </summary>
+        /// <remarks>
+        /// The first live run came back with the angle to north and no points at all:
+        /// <c>Location as LocationPoint</c> gives nothing on a base point in this version.
+        /// The three coordinate parameters are what the Revit UI itself shows, and they
+        /// exist all the way back to 2020, unlike <c>BasePoint.Position</c>.
+        /// </remarks>
+        private static JZPoint ReadBasePoint(BasePoint point)
+        {
+            try
+            {
+                if (point == null)
+                    return null;
+
+                var x = point.get_Parameter(BuiltInParameter.BASEPOINT_EASTWEST_PARAM);
+                var y = point.get_Parameter(BuiltInParameter.BASEPOINT_NORTHSOUTH_PARAM);
+                var z = point.get_Parameter(BuiltInParameter.BASEPOINT_ELEVATION_PARAM);
+
+                if (x == null || y == null || z == null)
+                    return point.Location is LocationPoint location ? ToMillimetres(location.Point) : null;
+
+                return new JZPoint(
+                    Math.Round(RevitUnitConversion.ToMillimeters(x.AsDouble()), 1),
+                    Math.Round(RevitUnitConversion.ToMillimeters(y.AsDouble()), 1),
+                    Math.Round(RevitUnitConversion.ToMillimeters(z.AsDouble()), 1));
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string Append(string existing, string addition) =>
+            string.IsNullOrEmpty(existing) ? addition : existing + " " + addition;
 
         private static LinkPlacementInfo ReadPlacement(RevitLinkInstance instance)
         {

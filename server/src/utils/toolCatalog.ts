@@ -175,7 +175,7 @@ export const TOOL_GROUPS: Readonly<Record<ToolGroupName, readonly string[]>> = {
   ],
 
   /** Смежники: the linked АР/КР/ИОС models of the same project. */
-  links: ["get_linked_models", "check_link_clashes", "create_mep_openings"],
+  links: ["get_linked_models", "check_link_clashes", "create_mep_openings", "check_shared_site"],
 
   /** Structure and circulation the everyday set does not cover. */
   modeling: [

@@ -61,6 +61,80 @@ namespace RevitMCPCommandSet.Models.DataExtraction
         public int Count { get; set; }
     }
 
+    /// <summary>
+    /// A level of a model — ours or a link's — for сверка общей площадки (REV-169).
+    /// </summary>
+    public class SiteLevelInfo
+    {
+        [JsonProperty("name")]
+        public string Name { get; set; } = string.Empty;
+
+        /// <summary>Elevation above the internal origin, mm. The number that has to match.</summary>
+        [JsonProperty("elevationMm")]
+        public double ElevationMm { get; set; }
+
+        [JsonProperty("elementId")]
+        public long ElementId { get; set; }
+    }
+
+    /// <summary>
+    /// A grid line. Compared by name and by where it runs — a matching name on a line
+    /// half a metre away is worse than a missing one, because it looks fine.
+    /// </summary>
+    public class SiteGridInfo
+    {
+        [JsonProperty("name")]
+        public string Name { get; set; } = string.Empty;
+
+        [JsonProperty("startMm")]
+        public JZPoint StartMm { get; set; } = new JZPoint();
+
+        [JsonProperty("endMm")]
+        public JZPoint EndMm { get; set; } = new JZPoint();
+
+        /// <summary>Curved grids exist and cannot be compared as two endpoints alone.</summary>
+        [JsonProperty("isCurved")]
+        public bool IsCurved { get; set; }
+
+        [JsonProperty("elementId")]
+        public long ElementId { get; set; }
+    }
+
+    /// <summary>
+    /// Where a model thinks it stands: the two points every проект is set out from.
+    /// </summary>
+    public class SitePointsInfo
+    {
+        /// <summary>Project Base Point, in the internal coordinates of that model, mm.</summary>
+        [JsonProperty("projectBasePointMm", NullValueHandling = NullValueHandling.Ignore)]
+        public JZPoint ProjectBasePointMm { get; set; }
+
+        /// <summary>Survey Point — where the model sits on the actual site, mm.</summary>
+        [JsonProperty("surveyPointMm", NullValueHandling = NullValueHandling.Ignore)]
+        public JZPoint SurveyPointMm { get; set; }
+
+        /// <summary>Angle from Project North to True North, degrees.</summary>
+        [JsonProperty("angleToTrueNorthDeg", NullValueHandling = NullValueHandling.Ignore)]
+        public double? AngleToTrueNorthDeg { get; set; }
+    }
+
+    /// <summary>Levels, grids and setting-out points of one model (REV-169).</summary>
+    public class SiteSurveyInfo
+    {
+        [JsonProperty("levels", NullValueHandling = NullValueHandling.Ignore)]
+        public List<SiteLevelInfo> Levels { get; set; }
+
+        [JsonProperty("grids", NullValueHandling = NullValueHandling.Ignore)]
+        public List<SiteGridInfo> Grids { get; set; }
+
+        [JsonProperty("points", NullValueHandling = NullValueHandling.Ignore)]
+        public SitePointsInfo Points { get; set; }
+
+        /// <summary>Why something is missing — a link that could not be read, say.</summary>
+        [JsonProperty("note", NullValueHandling = NullValueHandling.Ignore)]
+        public string Note { get; set; }
+    }
+
     /// <summary>One <c>RevitLinkInstance</c> of the open model.</summary>
     public class LinkedModelInfo
     {
@@ -105,6 +179,15 @@ namespace RevitMCPCommandSet.Models.DataExtraction
         [JsonProperty("placement", NullValueHandling = NullValueHandling.Ignore)]
         public LinkPlacementInfo Placement { get; set; }
 
+        /// <summary>
+        /// Levels, grids and setting-out points of the link, when asked for (REV-169).
+        /// In the link's OWN coordinates: сверка общей площадки is about whether the two
+        /// models are set out the same way, and transforming them first would hide the
+        /// very difference it looks for.
+        /// </summary>
+        [JsonProperty("site", NullValueHandling = NullValueHandling.Ignore)]
+        public SiteSurveyInfo Site { get; set; }
+
         /// <summary>Elements in the link, or null when it could not be opened.</summary>
         [JsonProperty("elementCount", NullValueHandling = NullValueHandling.Ignore)]
         public int? ElementCount { get; set; }
@@ -136,6 +219,13 @@ namespace RevitMCPCommandSet.Models.DataExtraction
 
         [JsonProperty("message")]
         public string Message { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Levels, grids and setting-out points of OUR model, when asked for (REV-169) —
+        /// the side every link is compared against.
+        /// </summary>
+        [JsonProperty("hostSite", NullValueHandling = NullValueHandling.Ignore)]
+        public SiteSurveyInfo HostSite { get; set; }
 
         /// <summary>Title of the open model, so a link list is never read against the wrong file.</summary>
         [JsonProperty("hostModel")]
