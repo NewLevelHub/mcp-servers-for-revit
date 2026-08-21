@@ -73,6 +73,9 @@ export function initializeDatabase() {
   `);
 
   ensureNormRulesSchema(db);
+  // Model snapshots (REV-170) are NOT here. This file is the shipped seed of the
+  // norm library and every update replaces it; snapshots have to outlive that,
+  // so they live in the user profile — see `database/snapshotDb.ts`.
 }
 
 initializeDatabase();

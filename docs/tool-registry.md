@@ -32,7 +32,7 @@ Some MCP tools never call Revit (norm library). Some Revit commands are **intern
 
 ### `lite`, tool groups and per-turn switching (REV-157, REV-41)
 
-The full catalog serialises to ~194 KB of JSON schema — about 51k tokens the
+The full catalog serialises to ~225 KB of JSON schema — about 59k tokens the
 model reads before writing its first character, on **every** turn. That is the
 main reason a one-line question took ~12 s in the in-Revit chat.
 
@@ -50,23 +50,31 @@ is in neither, so nothing can go missing silently.
 | `annotation` | dimensions, tags, text notes, filled regions, node details |
 | `cad` | `get_cad_link_geometry` + `trace_*_from_cad` |
 | `links` | `get_linked_models`, `check_link_clashes` — связи смежников и коллизии с ними |
+| `changes` | `create_model_snapshot` — снимок выдачи, с которым сравнивают следующую версию |
 | `modeling` | grids, stairs, railings, floor openings, framing, family loading |
 | `advanced` | `send_code_to_revit`, `say_hello` |
 
-Measured on this build (`tools/list` over stdio, ~3.8 B/token):
+Measured on this build (`tools/list` over stdio, ~3.8 B/token), 21.08.2026:
 
 | Profile | Tools | Bytes | ≈ tokens |
 |---------|------:|------:|---------:|
-| `default` | 92 | 193 893 | 51 024 |
-| `lite` | 22 | 32 001 | 8 421 |
-| `lite+cad` | 26 | 49 353 | 12 988 |
-| `lite+sheets` | 29 | 50 383 | 13 259 |
-| `lite+modeling` | 31 | 57 776 | 15 204 |
-| `lite+annotation` | 35 | 62 164 | 16 359 |
-| `lite+schedules` | 36 | 62 963 | 16 569 |
-| `lite+norms` | 43 | 69 824 | 18 375 |
-| `lite+sheets,annotation` | 42 | 80 546 | 21 196 |
-| `lite+all` | 92 | 193 893 | 51 024 |
+| `default` | 99 | 224 608 | 59 107 |
+| `lite` | 22 | 34 866 | 9 175 |
+| `lite+quality` | 24 | 37 932 | 9 982 |
+| `lite+changes` | 23 | 40 199 | 10 579 |
+| `lite+links` | 26 | 48 436 | 12 746 |
+| `lite+cad` | 26 | 52 401 | 13 790 |
+| `lite+sheets` | 29 | 53 811 | 14 161 |
+| `lite+modeling` | 31 | 60 742 | 15 985 |
+| `lite+annotation` | 35 | 66 931 | 17 613 |
+| `lite+schedules` | 36 | 67 045 | 17 643 |
+| `lite+norms` | 43 | 74 604 | 19 633 |
+| `lite+sheets,annotation` | 42 | 85 876 | 22 599 |
+| `lite+all` | 99 | 224 608 | 59 107 |
+
+The previous figures in this table were taken at 92 tools and had drifted by
+seven; re-measure with `tools/list` when adding a tool rather than adjusting a
+row by hand.
 
 An unknown group name is logged and ignored, never fatal — a typo in an env var
 must not cost the Revit connection.
@@ -325,6 +333,129 @@ Revit марку не держит, а значит его не опознать
 раздаются с того номера, на котором остановилась модель — иначе на этаже
 появились бы две «ОТВ-2эт-01».
 
+## Снимок модели в базу (REV-170)
+
+| Tool | Revit command | What it does |
+|------|---------------|--------------|
+| `create_model_snapshot` | `export_model_snapshot` (по страницам) | пишет состояние открытой модели в `~/.mcp-servers-for-revit/model-snapshots.db`: на элемент — `ElementId`, `UniqueId`, категория, тип, уровень, помещение, габарит и хеш ключевых параметров. Он же перечисляет (`action: "list"`) и удаляет (`action: "delete"`) снимки |
+
+Первый тикет эпика «Что изменилось». `compare_model_versions` (REV-171),
+облака изменений и таблица ревизий читают снимки отсюда — своих чтений модели у
+них не будет.
+
+**В Revit ничего не пишется.** Транзакция не открывается: это чтение модели и
+запись в нашу базу. Единственное, что инструмент меняет, — содержимое
+`model-snapshots.db`.
+
+**Почему БД, а не файл.** Каталог ленты (REV-151) лёг файлом: он маленький и
+читается целиком. Здесь наоборот — сотни тысяч строк, несколько снимков одной
+модели рядом и запросы вида «что есть в этом снимке, чего нет в прошлом». Это
+работа для SQLite, которая в сервере уже подключена. Решение зафиксировано в
+тикете, чтобы не обсуждать его заново на ревью.
+
+**Страницами, а не одним ответом.** 300 000 элементов не проходят в кадр сокета
+(предел 50 МБ). Сервер просит страницу (`batchSize`, по умолчанию 5000), пишет её
+в базу одной транзакцией и просит следующую. Отсюда же и «писать пачками» из
+тикета: транзакция на строку заставила бы SQLite синхронизироваться на каждом
+элементе.
+
+**Список элементов строится один раз.** Решить, что попадает в снимок, нельзя без
+категории элемента, а категорию нельзя прочитать, не материализовав элемент, —
+значит, фильтр это полный проход по модели. Он делается на первой странице,
+сортируется по id (чтобы страницы не наезжали и не пропускали) и кэшируется в
+обработчике под `snapshotToken`. Если токен на следующей странице другой — модель
+правили во время снятия; сервер останавливается, помечает снимок `partial` и
+говорит об этом, вместо того чтобы сшить два разных состояния в один снимок.
+
+**Ключи стабильные, а не локализованные.** Категория едет как
+`categoryKey` (`OST_Walls`) рядом с локализованным `category` («Стены»), а
+параметры — под именами `BuiltInParameter` (`ALL_MODEL_MARK`), а не под «Марка».
+Revit на тестовой машине запускается то по-русски, то по-английски
+(см. `docs/` и историю REV-165): снимок, сделанный на локализованных ключах,
+сравнился бы с вчерашним как «переписана вся модель». Локализованные подписи
+едут отдельно, один раз на страницу, — отчёту есть что показать архитектору.
+
+**Что считается изменением.** Хеш берётся от ключевого набора параметров:
+марка и комментарии, стадия создания и сноса, уровень и смещения, конструктивные
+привязки стен, длина/площадь/объём, имя-номер-площадь помещения. Набор
+фиксированный и короткий — обход `Element.Parameters` на 300k элементов это
+десятки миллионов чтений значений. Свои параметры организации добавляются по
+имени через `extraParameters`.
+
+Правила хеша живут в `server/src/utils/modelSnapshot.ts` и проверяются
+`modelSnapshot.test.ts` без Revit: значение изменилось — хеш изменился, порядок
+параметров поменялся — не изменился, шум округления ниже 1e-6 не изменение,
+пустой параметр и отсутствующий — одно и то же.
+
+**Повторный запуск не дублирует записи.** Два замка: снимок уникален по паре
+(модель, имя) — повторная «выдача АР 19.08.2026» замещает прежнюю, а не ложится
+рядом; элемент уникален по паре (снимок, `UniqueId`) — повторно пришедшая
+страница переписывает свои строки. Хранится `keepPerModel` снимков одной модели
+(по умолчанию 5), старшие удаляются после **успешного** снятия нового — после
+оборвавшегося не удаляется ничего.
+
+**Неполный снимок отвечает ошибкой.** `success: false` и `status: "partial"`,
+то есть `normalizeToolResult` поднимает `isError`. Снимок, в котором не хватает
+половины модели, при сравнении читается как «всё это добавили с прошлого раза»;
+молча отдать его за готовую выдачу — ровно та болезнь, из-за которой в тулах
+появился `isError`.
+
+`create_model_snapshot` и `analyze_model_statistics` — пара в `TOOL_TWINS`. Оба
+обходят всю модель и рассказывают, что в ней; но первый стоит минуты и остаётся
+в базе, а второй отвечает за секунды и не хранит ничего. Взять дешёвый, чтобы
+«записать выдачу», значит потерять сравнение совсем — прошлое состояние потом
+неоткуда взять.
+
+**Что в снимок не идёт.** Аннотации и элементы вида (`includeAnnotation`), и
+служебные категории (`includeServiceCategories`): эскизные линии перекрытий и
+лестниц, материалы, наборы характеристик, листы, компоненты легенды, камеры,
+траектория солнца. На «Коротком блоке» это 10 325 строк из 27 162 — 38 % снимка,
+из них 9 576 одних только `OST_SketchLines`. Дело не в объёме: эскизные линии —
+внутренности перекрытия, и правка одной плиты пришла бы как тридцать изменённых
+линий вместо одного изменённого перекрытия, площадь и объём которого снимок и так
+пишет. Отсечение узкое: разделители помещений, границы зон и базовые точки
+остаются — это либо замысел, либо то, что нельзя пропустить.
+
+**Уровень есть не у всех, и это состояние модели.** На «Коротком блоке» 25 %
+элементов снимка без уровня, из них 3900 балок. Проверено в самой модели: у них
+нет ни `LevelId`, ни «Опорного уровня», ни одного параметра, указывающего на
+`Level`. Снимок читает уровень через `LevelId`, потом через именованные
+параметры, потом просматривает все параметры элемента в поисках ссылки на
+`Level` — и, не найдя, оставляет пусто, а не выдумывает этаж. Группировать такие
+элементы REV-171 может по Z габарита, который в снимке есть.
+
+**Снимки лежат не в `revit-data.db`, и это сделано намеренно.**
+Файл базы — `~/.mcp-servers-for-revit/model-snapshots.db`
+(`server/src/database/snapshotDb.ts`), переопределяется переменной
+`REVIT_MCP_SNAPSHOT_DB`.
+
+Тикет называл `server/revit-data.db`, и половина того решения в силе: SQLite, а
+не файл в профиле. Но конкретно **этот** файл — seed библиотеки норм: он
+собирается в репозитории и везётся со сборкой, а `deploy-local`
+(`Deploy-NormLibrary` в `build-assistant-cursor.ps1`) и авто-апдейтер
+(`Update-RevitMcp.ps1`) **заменяют его целиком**, оставляя прежний лишь как
+`revit-data.db.bak`. Снимки там прожили бы до первого обновления — и «что
+изменилось с прошлой выдачи» осталось бы без второй половины сравнения.
+
+Соседний файл внутри `mcp-server/` не спас бы тоже: апдейтер собирает дерево
+заново и подменяет целиком, перенося из старой установки только `Logs` и
+настройки. Поэтому снимки уехали в профиль пользователя — туда же, где живут
+каталог ленты (REV-151) и JSONL-метрики, и куда релизный тракт не заглядывает.
+Снимок, снятый до обновления, есть и после него, и после переустановки, и после
+перехода на другую версию Revit.
+
+У двух баз противоположные сроки жизни: библиотека норм приезжает со сборкой и
+свободно заменяется, снимки принадлежат архитектору. `snapshots.test.ts`
+проверяет, что путь не ведёт ни в `revit-data.db`, ни внутрь `mcp-server/`.
+
+**Чего пока нет.** В режиме openai панель этот инструмент не видит: каталог там
+пишется руками в `plugin/Core/Assistant/ToolCatalog.cs`. Это тот же пробел, что
+у эпика «Смежники», и закрывается тем же тикетом (`links-openai-catalog`) —
+добавляя туда связи, добавьте и `create_model_snapshot`. В режиме cursor
+инструмент виден сразу: сервер находит его сканированием папки.
+
+Замеры времени снятия — [performance.md](performance.md).
+
 ## Assistant tool profiles (in-Revit chat, REV-112)
 
 Separate from `MCP_TOOL_PROFILE` (server env). The dockable assistant filters
@@ -358,6 +489,7 @@ These are **intentional**. MCP / Cursor may send the stable AI-facing name; Revi
 | `color_elements` | `color_splash` |
 | `tag_all_rooms` | `tag_rooms` |
 | `tag_all_walls` | `tag_walls` |
+| `create_model_snapshot` | `export_model_snapshot` |
 
 `fill_title_block` and `number_rooms` are **server-only** (Cursor MCP). They are not in the assistant catalog; calling them returns a clear Russian soft-error.
 
@@ -392,6 +524,7 @@ These are **intentional**. MCP / Cursor may send the stable AI-facing name; Revi
 | `get_document_styles` | `commandset` | Also returns `lineStyles`, `filledRegionTypes`, `fillPatterns` (not only dimensions/grids/text) |
 | `trace_columns_from_cad` | `server-only` | Orchestrates `get_cad_link_geometry` + column symbol grouping + `create_point_based_element` with rotation (REV-149); rectangular and round columns. Columns must **not** go through `trace_walls_from_cad` — they come out as four stubs |
 | `check_door_width`, `check_tambour_size`, `check_room_norms`, `check_window_openings`, `check_vertical_circulation`, `check_accessibility`, `check_evacuation_distance` | `server-only` (or hybrid) | Often compose geometry/export commands + norm library; may not have a matching `check_*` in `command.json` |
+| `create_model_snapshot` | `server-only` orchestrator over `export_model_snapshot` | Pages the model out of Revit and writes it into `model_snapshots` / `snapshot_elements`; also lists and deletes snapshots. Hashing and storage live in TS (`utils/modelSnapshot.ts`, `database/snapshots.ts`), the Revit command only reports facts (REV-170) |
 | `highlight_room_tags` | **removed / not implemented** | Do not advertise; do not add to `PRIORITY_TOOL_FILES` without a tool file |
 
 ## Default 1:1 map

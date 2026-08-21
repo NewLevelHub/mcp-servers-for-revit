@@ -13,7 +13,11 @@ function asStatisticsResult(
 export function registerAnalyzeModelStatisticsTool(server: McpServer) {
   server.tool(
     "analyze_model_statistics",
-    "Analyze model complexity with element counts. Returns detailed statistics about the Revit model including total element counts, total types, total families, views, sheets, counts by category (with type/family breakdown), and level-by-level element distribution. Useful for model auditing, performance analysis, and understanding model composition.",
+    "Analyze model complexity with element counts. Returns detailed statistics about the Revit model including total element counts, total types, total families, views, sheets, counts by category (with type/family breakdown), and level-by-level element distribution. Useful for model auditing, performance analysis, and understanding model composition. " +
+      "This is the fast reading of what the model holds RIGHT NOW — counts only, cached, nothing stored. " +
+      "To be able to answer «что изменилось с прошлой выдачи» later, use create_model_snapshot instead: " +
+      "it records every element with its parameters into our database, takes minutes, and is what a " +
+      "version comparison is built on. Counting elements is not a snapshot and cannot be compared against one.",
     {
       includeDetailedTypes: z
         .boolean()
