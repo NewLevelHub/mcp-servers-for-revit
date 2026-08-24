@@ -33,12 +33,20 @@ namespace RevitMCPCommandSet.Commands.ExecuteDynamicCode
                 JArray parametersArray = parameters["parameters"] as JArray;
                 object[] executionParameters = parametersArray?.ToObject<object[]>() ?? Array.Empty<object>();
                 string transactionMode = parameters["transactionMode"]?.Value<string>() ?? ExecuteCodeEventHandler.TransactionModeAuto;
+                // REV-175 sandbox knobs — optional; SetExecutionParameters clamps both to sane bounds.
+                int maxChangedElements = parameters["maxChangedElements"]?.Value<int>() ?? 0;
+                int timeoutSeconds = parameters["timeoutSeconds"]?.Value<int>() ?? 0;
 
                 // 设置执行参数
-                _handler.SetExecutionParameters(code, executionParameters, transactionMode);
+                _handler.SetExecutionParameters(code, executionParameters, transactionMode, maxChangedElements, timeoutSeconds);
+
+                // The ExternalEvent wait has to stay comfortably above the sandbox's own timeout
+                // (SandboxGuard), or we'd report "timed out" here while the UI thread is still
+                // inside the loop, still working toward its own internal cutoff.
+                var waitMs = Math.Max(60000, (_handler.EffectiveTimeoutSeconds + 30) * 1000);
 
                 // 触发外部事件并等待完成
-                if (RaiseAndWaitForCompletion(60000)) // 1分钟超时
+                if (RaiseAndWaitForCompletion(waitMs))
                 {
                     return _handler.ResultInfo;
                 }

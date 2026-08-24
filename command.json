@@ -215,7 +215,7 @@
     },
     {
       "commandName": "send_code_to_revit",
-      "description": "Выполнить C#-код в Revit с доступом к Document и API",
+      "description": "Выполнить C#-код в Revit с доступом к Document и API. Песочница (REV-175): trial-режим с гарантированным откатом, лимит на число изменённых элементов, таймаут цикла, запрет файловой системы/сети",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
