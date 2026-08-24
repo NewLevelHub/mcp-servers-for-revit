@@ -17,27 +17,69 @@ namespace RevitMCPCommandSet.Commands.ExecuteDynamicCode
         public const string TransactionModeAuto = "auto";
         public const string TransactionModeNone = "none";
 
+        /// <summary>
+        /// REV-175: run the snippet in a transaction that is ALWAYS rolled back, regardless of
+        /// outcome. Use this to preview what generated code would do before letting it commit.
+        /// </summary>
+        public const string TransactionModeTrial = "trial";
+
+        // REV-175 sandbox defaults/bounds. Not user-configurable beyond these clamps, so a
+        // request can't disable the safety net by asking for an absurd budget.
+        private const int DefaultMaxChangedElements = 500;
+        private const int MaxAllowedChangedElements = 20000;
+        private const int DefaultTimeoutSeconds = 10;
+        private const int MaxAllowedTimeoutSeconds = 120;
+
+        /// <summary>Exposed for tests — see <see cref="SandboxGuard" /> remarks for why this exists.</summary>
+        public const long LoopIterationBudget = 300_000;
+
         // 代码执行参数
         private string _generatedCode;
         private object[] _executionParameters;
         private string _transactionMode = TransactionModeAuto;
+        private int _maxChangedElements = DefaultMaxChangedElements;
+        private int _timeoutSeconds = DefaultTimeoutSeconds;
 
         // 执行结果信息
         public ExecutionResultInfo ResultInfo { get; private set; }
+
+        /// <summary>
+        /// The (clamped) timeout this run will actually use — read after <see cref="SetExecutionParameters" />
+        /// so the caller can size its own ExternalEvent wait comfortably above it.
+        /// </summary>
+        public int EffectiveTimeoutSeconds => _timeoutSeconds;
 
         // 状态同步对象
         public bool TaskCompleted { get; private set; }
         private readonly ManualResetEvent _resetEvent = new ManualResetEvent(false);
 
         // 设置要执行的代码和参数
-        public void SetExecutionParameters(string code, object[] parameters = null, string transactionMode = TransactionModeAuto)
+        public void SetExecutionParameters(
+            string code,
+            object[] parameters = null,
+            string transactionMode = TransactionModeAuto,
+            int maxChangedElements = 0,
+            int timeoutSeconds = 0)
         {
             _generatedCode = code;
             _executionParameters = parameters ?? Array.Empty<object>();
-            _transactionMode = transactionMode == TransactionModeNone ? TransactionModeNone : TransactionModeAuto;
+            _transactionMode = transactionMode switch
+            {
+                TransactionModeNone => TransactionModeNone,
+                TransactionModeTrial => TransactionModeTrial,
+                _ => TransactionModeAuto,
+            };
+            _maxChangedElements = Clamp(
+                maxChangedElements > 0 ? maxChangedElements : DefaultMaxChangedElements,
+                1, MaxAllowedChangedElements);
+            _timeoutSeconds = Clamp(
+                timeoutSeconds > 0 ? timeoutSeconds : DefaultTimeoutSeconds,
+                1, MaxAllowedTimeoutSeconds);
             TaskCompleted = false;
             _resetEvent.Reset();
         }
+
+        private static int Clamp(int value, int min, int max) => Math.Max(min, Math.Min(max, value));
 
         // 等待执行完成 - IWaitableExternalEventHandler接口实现
         public bool WaitForCompletion(int timeoutMilliseconds = 10000)
@@ -48,43 +90,73 @@ namespace RevitMCPCommandSet.Commands.ExecuteDynamicCode
 
         public void Execute(UIApplication app)
         {
+            var isTrial = _transactionMode == TransactionModeTrial;
+            var diff = ChangeIntent.Empty;
+            ResultInfo = new ExecutionResultInfo { IsTrial = isTrial };
+
             try
             {
                 var doc = app.ActiveUIDocument.Document;
-                ResultInfo = new ExecutionResultInfo();
+                var recorder = new ChangeIntentRecorder(doc);
+                var timeout = TimeSpan.FromSeconds(_timeoutSeconds);
 
                 object result;
                 if (_transactionMode == TransactionModeNone)
                 {
-                    result = CompileAndExecuteCode(
-                        code: _generatedCode,
-                        doc: doc,
-                        parameters: _executionParameters
-                    );
+                    // No transaction of ours to roll back — the snippet is expected to manage
+                    // its own. The timeout/iteration/API guards still apply, but the "nothing
+                    // reaches the document" guarantee below only holds for auto/trial.
+                    try
+                    {
+                        result = CompileAndExecuteCode(_generatedCode, doc, _executionParameters, timeout);
+                        diff = recorder.Diff();
+                        EnforceLimit(diff);
+                    }
+                    catch
+                    {
+                        diff = recorder.Diff();
+                        throw;
+                    }
                 }
                 else
                 {
-                    using (var transaction = new Transaction(doc, "执行AI代码"))
+                    var transactionName = isTrial ? "Проба AI-кода (REV-175)" : "执行AI代码";
+                    using var transaction = new Transaction(doc, transactionName);
+                    transaction.Start();
+                    try
                     {
-                        transaction.Start();
+                        result = CompileAndExecuteCode(_generatedCode, doc, _executionParameters, timeout);
+                        diff = recorder.Diff();
+                        EnforceLimit(diff); // throws before we ever commit if the budget is blown
 
-                        result = CompileAndExecuteCode(
-                            code: _generatedCode,
-                            doc: doc,
-                            parameters: _executionParameters
-                        );
-
-                        transaction.Commit();
+                        // Trial never commits, even on success — that's the whole point.
+                        if (isTrial)
+                            transaction.RollBack();
+                        else
+                            transaction.Commit();
+                    }
+                    catch
+                    {
+                        // Capture the diff before undoing it, so a failure still reports what the
+                        // code was in the middle of doing (REV-175's "journal of intent").
+                        diff = recorder.Diff();
+                        if (transaction.HasStarted() && !transaction.HasEnded())
+                            transaction.RollBack();
+                        throw;
                     }
                 }
 
                 ResultInfo.Success = true;
                 ResultInfo.Result = JsonConvert.SerializeObject(result);
+                ResultInfo.TotalChangedElements = diff.TouchedCount;
+                ResultInfo.IntentReport = diff.BuildReport();
             }
             catch (Exception ex)
             {
                 ResultInfo.Success = false;
-                ResultInfo.ErrorMessage = $"执行失败: {ex.Message}";
+                ResultInfo.ErrorMessage = DescribeFailure(ex);
+                ResultInfo.TotalChangedElements = diff.TouchedCount;
+                ResultInfo.IntentReport = diff.BuildReport();
             }
             finally
             {
@@ -93,7 +165,31 @@ namespace RevitMCPCommandSet.Commands.ExecuteDynamicCode
             }
         }
 
-        private object CompileAndExecuteCode(string code, Document doc, object[] parameters)
+        /// <summary>Throws once the run has created/deleted more than the configured budget.</summary>
+        private void EnforceLimit(ChangeIntent diff)
+        {
+            if (diff.TouchedCount > _maxChangedElements)
+                throw new SandboxLimitExceededException(diff.TouchedCount, _maxChangedElements);
+        }
+
+        /// <summary>REV-175: turn the sandbox's own exceptions into a message an architect can act on.</summary>
+        private static string DescribeFailure(Exception ex)
+        {
+            return ex switch
+            {
+                SandboxTimeoutException t =>
+                    $"остановлено таймаутом: код не уложился в {t.Limit.TotalSeconds:0.#} с — похоже на бесконечный цикл.",
+                SandboxLoopIterationLimitException li =>
+                    $"остановлено лимитом итераций цикла: {li.Iterations} > {li.Max} — похоже на обход всей модели много раз подряд.",
+                SandboxLimitExceededException l =>
+                    $"остановлено лимитом: код затронул {l.Touched} элементов при лимите {l.Max}; ничего не применено.",
+                SandboxSecurityException s =>
+                    $"запрещённый API: {s.SymbolName} (файловая система, сеть и процессы недоступны из песочницы).",
+                _ => $"执行失败: {ex.Message}",
+            };
+        }
+
+        private object CompileAndExecuteCode(string code, Document doc, object[] parameters, TimeSpan timeout)
         {
             // 包装代码以规范入口点
             var wrappedCode = $@"
@@ -117,6 +213,11 @@ namespace AIGeneratedCode
 
             var syntaxTree = CSharpSyntaxTree.ParseText(wrappedCode);
 
+            // REV-175: inject a timeout/iteration check into every loop before the snippet is
+            // compiled — see SandboxGuard/LoopGuardRewriter for why this stands in for a real
+            // timeout (there's no thread here to abort).
+            syntaxTree = LoopGuardRewriter.Apply(syntaxTree);
+
             // 添加必要的程序集引用（引用所有已加载的程序集）
             var references = AppDomain.CurrentDomain.GetAssemblies()
                 .Where(a => !a.IsDynamic && !string.IsNullOrEmpty(a.Location))
@@ -131,6 +232,9 @@ namespace AIGeneratedCode
                 references: references,
                 options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
             );
+
+            // REV-175: block filesystem/network/process APIs before spending time on Emit.
+            DangerousApiGuard.Validate(compilation.GetSemanticModel(syntaxTree), syntaxTree.GetRoot());
 
             using (var ms = new MemoryStream())
             {
@@ -151,7 +255,21 @@ namespace AIGeneratedCode
                 var executorType = assembly.GetType("AIGeneratedCode.CodeExecutor");
                 var executeMethod = executorType.GetMethod("Execute");
 
-                return executeMethod.Invoke(null, new object[] { doc, parameters });
+                SandboxGuard.Begin(timeout, LoopIterationBudget);
+                try
+                {
+                    return executeMethod.Invoke(null, new object[] { doc, parameters });
+                }
+                catch (TargetInvocationException tie) when (tie.InnerException != null)
+                {
+                    // Unwrap so SandboxTimeoutException/SandboxLimitExceededException reach
+                    // DescribeFailure as themselves, not buried in a reflection wrapper.
+                    throw tie.InnerException;
+                }
+                finally
+                {
+                    SandboxGuard.End();
+                }
             }
         }
 
@@ -172,5 +290,17 @@ namespace AIGeneratedCode
 
         [JsonProperty("errorMessage")]
         public string ErrorMessage { get; set; } = string.Empty;
+
+        /// <summary>REV-175: true when this run's transaction was rolled back unconditionally.</summary>
+        [JsonProperty("isTrial")]
+        public bool IsTrial { get; set; }
+
+        /// <summary>REV-175: human-readable (Russian) journal of what the code created/deleted.</summary>
+        [JsonProperty("intentReport")]
+        public string IntentReport { get; set; }
+
+        /// <summary>REV-175: distinct elements created + deleted, for the caller's own display.</summary>
+        [JsonProperty("totalChangedElements")]
+        public int TotalChangedElements { get; set; }
     }
 }

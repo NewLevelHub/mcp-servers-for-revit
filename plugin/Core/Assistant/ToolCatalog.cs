@@ -1392,10 +1392,13 @@ namespace revit_mcp_plugin.Core.Assistant
                     P(R("commands"),
                       ("commands", A("object"), "[{method, params}]"))),
                 T("send_code_to_revit",
-                    "Execute C# in Revit. ONLY if user explicitly allowed. Prefer create_* tools.",
+                    "Execute C# in Revit. ONLY if user explicitly allowed. Prefer create_* tools. " +
+                    "REV-175 sandbox: blocks filesystem/network APIs, caps elements touched, stops runaway loops. " +
+                    "Use transactionMode 'trial' first to preview via intentReport before committing with 'auto'.",
                     P(R("code"),
                       ("code", S(), "C# source"),
-                      ("description", S(), null))),
+                      ("description", S(), null),
+                      ("transactionMode", E("auto", "none", "trial"), "default 'auto'; 'trial' always rolls back"))),
             };
         }
 
