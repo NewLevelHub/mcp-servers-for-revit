@@ -50,7 +50,7 @@ is in neither, so nothing can go missing silently.
 | `annotation` | dimensions, tags, text notes, filled regions, node details |
 | `cad` | `get_cad_link_geometry` + `trace_*_from_cad` |
 | `links` | `get_linked_models`, `check_link_clashes` — связи смежников и коллизии с ними |
-| `changes` | `create_model_snapshot` — снимок выдачи, с которым сравнивают следующую версию |
+| `changes` | `create_model_snapshot` — снимок выдачи; `compare_model_versions` — сравнение снимка с текущим состоянием (или с другим снимком), человеческим языком |
 | `modeling` | grids, stairs, railings, floor openings, framing, family loading |
 | `advanced` | `send_code_to_revit`, `say_hello` |
 
@@ -451,10 +451,61 @@ Revit на тестовой машине запускается то по-рус
 **Чего пока нет.** В режиме openai панель этот инструмент не видит: каталог там
 пишется руками в `plugin/Core/Assistant/ToolCatalog.cs`. Это тот же пробел, что
 у эпика «Смежники», и закрывается тем же тикетом (`links-openai-catalog`) —
-добавляя туда связи, добавьте и `create_model_snapshot`. В режиме cursor
-инструмент виден сразу: сервер находит его сканированием папки.
+добавляя туда связи, добавьте и `create_model_snapshot` (и `compare_model_versions`,
+REV-171 — тот же пробел, ещё не закрыт). В режиме cursor инструмент виден сразу:
+сервер находит его сканированием папки.
 
 Замеры времени снятия — [performance.md](performance.md).
+
+## Сравнение версий модели (REV-171)
+
+| Tool | Revit command | What it does |
+|------|---------------|--------------|
+| `compare_model_versions` | `export_model_snapshot` (только для "текущего состояния"; не нужен, если сравниваются два снимка) | Диффит два снимка из `create_model_snapshot`, либо снимок и открытую сейчас модель. Отвечает сводкой сверху и списком, сгруппированным по уровням и помещениям, с пагинацией |
+
+Второй тикет эпика «Что изменилось» — стоит на `create_model_snapshot` (REV-170)
+и ничего своего в базу не пишет. Облака изменений и таблица ревизий (REV-172)
+будут строиться на этом diff'е.
+
+**Пары ищутся по `UniqueId`, не по геометрии.** Это то же самое ключевание, на
+котором стоит снимок: Revit не меняет `UniqueId`, пока элемент не удалён и не
+создан заново, поэтому переставленная стена сама попадает в «есть в обоих
+снимках» и обходится без геометрического мэтчинга. Смещение центра bounding box
+дальше `moveToleranceMm` (по умолчанию 5 мм — тот же порядок, что допуск на
+оси в REV-169) отмечает элемент как «переставлен».
+
+**Что не считается изменением.** `HOST_AREA_COMPUTED`, `HOST_VOLUME_COMPUTED`,
+`CURVE_ELEM_LENGTH`, `ROOM_PERIMETER` — пересчитываемые Revit'ом числа; сами по
+себе они из diff'а исключены (`VOLATILE_PARAMETER_KEYS` в `utils/modelDiff.ts`),
+иначе перекрытие в соседней комнате приходило бы как «изменение» каждый раз, когда
+где-то на этаже подвинули стену. `ROOM_AREA` исключением не является: это та
+самая цифра, ради которой затевался весь эпик — «площадь пом. 45 выросла на
+4 м²» строится именно на ней.
+
+**Заголовок собирается, не считывается с одного элемента.** `buildDiffHeadline`
+кластерует переставленные элементы по (уровень, категория) и берёт самый большой
+кластер, плюс самое большое изменение площади помещения — ровно два факта из
+примера в тикете. Единичная перестановка в заголовок не попадает: кластер меньше
+двух элементов — не находка для сводки, только для списка.
+
+**У элементов без уровня** (см. предыдущий раздел — балки без `LevelId`) свой
+уровень пуст и в снимке, и здесь; diff складывает их в отдельную группу
+«(без уровня)», а не пытается угадать этаж по Z габарита — это способнее
+дальнейшего тикета, если понадобится.
+
+**Сравнение с текущим состоянием vs. с другим снимком.** Без `toSnapshotId` /
+`toLabel` инструмент читает открытую модель напрямую через `export_model_snapshot`
+(та же постраничная схема, что в `create_model_snapshot`) и ничего не сохраняет —
+сравнение разовое. С двумя `snapshotId` Revit не нужен вовсе: оба снимка уже в
+`model-snapshots.db`.
+
+**Имя модели проверяется.** Снимок «выдачи АР» и открытая сейчас модель другого
+проекта дают бессмысленные числа; инструмент отказывает, если имена не совпадают,
+если явно не передан `allowModelMismatch: true`.
+
+Правила самого diff'а живут в `server/src/utils/modelDiff.ts` и проверяются
+`modelDiff.test.ts` без Revit — на синтетических `SnapshotElementRow`, как и
+`modelSnapshot.test.ts` для REV-170.
 
 ## Assistant tool profiles (in-Revit chat, REV-112)
 
@@ -525,6 +576,7 @@ These are **intentional**. MCP / Cursor may send the stable AI-facing name; Revi
 | `trace_columns_from_cad` | `server-only` | Orchestrates `get_cad_link_geometry` + column symbol grouping + `create_point_based_element` with rotation (REV-149); rectangular and round columns. Columns must **not** go through `trace_walls_from_cad` — they come out as four stubs |
 | `check_door_width`, `check_tambour_size`, `check_room_norms`, `check_window_openings`, `check_vertical_circulation`, `check_accessibility`, `check_evacuation_distance` | `server-only` (or hybrid) | Often compose geometry/export commands + norm library; may not have a matching `check_*` in `command.json` |
 | `create_model_snapshot` | `server-only` orchestrator over `export_model_snapshot` | Pages the model out of Revit and writes it into `model_snapshots` / `snapshot_elements`; also lists and deletes snapshots. Hashing and storage live in TS (`utils/modelSnapshot.ts`, `database/snapshots.ts`), the Revit command only reports facts (REV-170) |
+| `compare_model_versions` | `server-only`; calls `export_model_snapshot` only for the "current state" side | Diffs two stored snapshots, or a snapshot against a fresh read of the open model. Matching, filtering and wording all live in TS (`utils/modelDiff.ts`), tested against synthetic rows (REV-171) |
 | `highlight_room_tags` | **removed / not implemented** | Do not advertise; do not add to `PRIORITY_TOOL_FILES` without a tool file |
 
 ## Default 1:1 map
