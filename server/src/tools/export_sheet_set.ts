@@ -77,7 +77,8 @@ export function registerExportSheetSetTool(server: McpServer) {
       "изобретаются; если в проекте больше одной настройки и dwgSetupName не передан, отказывает и называет " +
       "варианты. " +
       "Перед выпуском стоит спросить check_sheet_readiness напрямую, если нужно решить, что дозаполнить, а не " +
-      "просто пропустить.",
+      "просто пропустить. Сквозную перенумерацию делайте до этого инструмента, через create_sheet_index — " +
+      "иначе PDF/DWG уже уедут под старыми номерами.",
     {
       format: z.enum(["pdf", "dwg", "both"]).optional().default("pdf").describe("Что выпускать. По умолчанию pdf."),
       outputDir: z.string().min(1).describe("Папка на машине с Revit, куда пишутся файлы. Должна существовать."),

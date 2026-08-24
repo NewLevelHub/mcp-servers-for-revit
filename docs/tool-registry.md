@@ -46,7 +46,7 @@ is in neither, so nothing can go missing silently.
 | `norms` | the `check_*` family, `run_norm_audit`, `apply_norm_result`, the rule library, and the geometry readers they feed on |
 | `quality` | `get_model_warnings`, `check_sheet_readiness` — model health before issue |
 | `schedules` | schedules and ведомости, `validate_schedule`, bulk data export |
-| `sheets` | sheets, title blocks, view placement, auto-layout, ТЭП table, `export_sheet_set` — печать/экспорт готового комплекта |
+| `sheets` | sheets, title blocks, view placement, auto-layout, ТЭП table, `export_sheet_set` — печать/экспорт готового комплекта, `create_sheet_index` — ведомость, перенумерация, дыры/дубли |
 | `annotation` | dimensions, tags, text notes, filled regions, node details |
 | `cad` | `get_cad_link_geometry` + `trace_*_from_cad` |
 | `links` | `get_linked_models`, `check_link_clashes` — связи смежников и коллизии с ними |
@@ -452,7 +452,7 @@ Revit на тестовой машине запускается то по-рус
 пишется руками в `plugin/Core/Assistant/ToolCatalog.cs`. Это тот же пробел, что
 у эпика «Смежники», и закрывается тем же тикетом (`links-openai-catalog`) —
 добавляя туда связи, добавьте и `create_model_snapshot` (и `compare_model_versions`,
-`create_revision_clouds`, `export_sheet_set` — весь эпик REV-171/172/173, тот же
+`create_revision_clouds`, `export_sheet_set`, `create_sheet_index` — весь эпик REV-171–174, тот же
 пробел, ещё не закрыт). В режиме cursor инструмент виден сразу: сервер находит
 его сканированием папки.
 
@@ -605,8 +605,46 @@ Revit. Плагин отвечает только на то, чего TypeScript
 
 **Чего эта версия не делает.** Марка ГИПа на комплект («выдано в производство
 работ» и т.п.) и штамп «Копия верна» не проставляются — только сам файл под
-нужным именем. Указатель листов и сквозная нумерация комплекта — REV-174,
-следующий тикет.
+нужным именем. Указатель листов и сквозная нумерация комплекта — REV-174.
+
+## Индекс листов (REV-174)
+
+| Tool | Revit command | What it does |
+|------|---------------|--------------|
+| `create_sheet_index` | нет своей — `export_sheet_set` (`listRevisions`), `create_schedule`, `place_view_on_sheet`, `set_elements_parameters` | Три действия: `report` (дубли и дыры в нумерации, список листов с текущей ревизией), `renumber` (сквозная перенумерация, превью «старый → новый» пока не передан `apply: true`), `schedule` (ведомость листов, опционально на лист) |
+
+Последний тикет эпика «Что изменилось» — и единственный из четырёх, где не
+понадобилось ни строчки C#. Всё, что нужно, уже было: перенумерация — та же
+`buildAutoNumberPlan`, что REV-47 использует для комнат и штампов; дубли —
+`findDuplicateNumbers` из `sheetReadiness.ts`; ревизии на листе — `listRevisions`
+из REV-173; сама ведомость — `create_schedule`, направленный на `OST_Sheets`
+вместо дверей или окон. Единственная новая логика — дыры в нумерации
+(`utils/sheetIndex.ts`, `findNumberingGaps`), протестированная без Revit.
+
+**Дыра ищется по (префикс, ширина числа), не только по префиксу.** На реальном
+проекте (44 листа) «000» и «00» — титульные листы — делят пустой префикс с
+«2»…«39» — планами. Группировка по одному префиксу нашла бы выдуманную дыру
+между «00» и «2»; ширина числа развела их по разным последовательностям.
+Группа из одного листа не может быть дырой по определению — «TEST-REV22» сам
+по себе ничего не говорит о том, что должно стоять рядом, — и тихо не
+попадает в отчёт вместо того, чтобы выглядеть подозрительно.
+
+**Перенумерация — превью по умолчанию, запись только по явному apply.**
+`buildAutoNumberPlan` уже возвращает два прохода — `tempAssignments` (временные
+номера, чтобы Revit не отказал на дубле номера посреди пачки) и `assignments`
+(итог). Без `apply: true` инструмент отдаёт план и не трогает модель; с
+`apply: true` пишет оба прохода через `set_elements_parameters` — тот же
+инструмент, что доступен и напрямую, никакой отдельной записи параметров не
+понадобилось.
+
+**Ведомость — `create_schedule` с полями через `|`.** Поля ищутся по
+отображаемому имени (`ScheduleDefinition.GetSchedulableFields`), которое
+зависит от языка Revit; `parameterName: "Sheet Number|Номер листа"` пробует
+алиасы по очереди — первый найденный побеждает (тот же приём, что и везде в
+этом файле для двуязычного Revit, REV-165). Категория — `"OST_Sheets"`,
+резолвится напрямую через `Enum.TryParse<BuiltInCategory>` в
+`CreateScheduleEventHandler.cs`, минуя таблицу алиасов `CategoryResolver.cs` —
+для нового category name её трогать не пришлось.
 
 ## Assistant tool profiles (in-Revit chat, REV-112)
 
