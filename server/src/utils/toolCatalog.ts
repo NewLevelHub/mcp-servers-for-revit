@@ -179,11 +179,11 @@ export const TOOL_GROUPS: Readonly<Record<ToolGroupName, readonly string[]>> = {
   links: ["get_linked_models", "check_link_clashes", "create_mep_openings", "check_shared_site"],
 
   /**
-   * «Что изменилось с прошлой выдачи» — the snapshot and the diff built on it.
+   * «Что изменилось с прошлой выдачи» — snapshot, diff, and clouds drawn from it.
    * Kept out of `quality`: those tools answer "is the model in good shape now",
    * this one answers "what is different from the version we issued".
    */
-  changes: ["create_model_snapshot", "compare_model_versions"],
+  changes: ["create_model_snapshot", "compare_model_versions", "create_revision_clouds"],
 
   /** Structure and circulation the everyday set does not cover. */
   modeling: [
@@ -216,7 +216,7 @@ export const TOOL_GROUP_SUMMARIES: Readonly<Record<ToolGroupName, string>> = {
   links:
     "linked models of смежники — what is linked in, in which раздел, where it sits in our coordinates, where it clashes with our model, and the задание на отверстия that follows",
   changes:
-    "снимок модели в базу и сравнение версий — «что изменилось с прошлой выдачи» человеческим языком",
+    "снимок модели, сравнение версий и облака изменений — «что изменилось с прошлой выдачи» человеческим языком и на листе",
   modeling: "grids, stairs, railings, floor openings, framing, family loading",
   advanced: "raw code execution and the connection smoke test",
 };

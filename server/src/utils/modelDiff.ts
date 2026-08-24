@@ -138,6 +138,12 @@ export interface ElementChange {
   oldType?: string;
   newType?: string;
   changedParameters: ParameterChange[];
+  /**
+   * Bounding-box centre in mm, current position for added/modified, last known
+   * position for removed — where REV-172 anchors a change for clustering into a
+   * revision cloud. `null` when the snapshot carries no bounding box.
+   */
+  location: { x: number; y: number; z: number } | null;
 }
 
 export interface DiffOptions {
@@ -238,6 +244,7 @@ function buildAdded(row: SnapshotElementRow): ElementChange {
     roomChanged: false,
     typeChanged: false,
     changedParameters: [],
+    location: bboxCenter(row),
   };
 }
 
@@ -257,6 +264,7 @@ function buildRemoved(row: SnapshotElementRow): ElementChange {
     roomChanged: false,
     typeChanged: false,
     changedParameters: [],
+    location: bboxCenter(row),
   };
 }
 
@@ -313,6 +321,7 @@ function buildModified(
     oldType: typeChanged ? describeElement(oldRow) : undefined,
     newType: typeChanged ? describeElement(newRow) : undefined,
     changedParameters,
+    location: newCenter ?? oldCenter,
   };
 }
 

@@ -212,6 +212,8 @@ export function registerCompareModelVersionsTool(server: McpServer) {
       "кривых, периметр помещения) в diff не попадают — иначе список нечитаем; площадь самого " +
       "помещения (ROOM_AREA) остаётся, это и есть та цифра, ради которой всё затевалось. " +
       "Список может быть длинным — используйте offset/limit. " +
+      "Каждое изменение несёт location (центр габарита в мм) — это то, чем create_revision_clouds " +
+      "кластерует изменения в облака на видах. " +
       "Ничего не пишет в модель и не создаёт снимков сам — для этого есть create_model_snapshot.",
     {
       fromSnapshotId: z.number().int().optional().describe("Более ранний снимок, по id — из create_model_snapshot (action: \"list\")."),
@@ -348,9 +350,13 @@ export function registerCompareModelVersionsTool(server: McpServer) {
                     elementId: change.elementId,
                     uniqueId: change.uniqueId,
                     category: change.category,
+                    level: change.level,
                     moved: change.moved,
                     moveDistanceMm: change.moveDistanceMm,
                     changedParameters: change.changedParameters,
+                    // Where to anchor a revision cloud (REV-172) — bounding-box centre in mm,
+                    // null when the snapshot carried no bounding box for this element.
+                    location: change.location,
                   })),
               }))
               .filter((room) => room.changes.length > 0),

@@ -210,6 +210,29 @@ test("a level change and a room change are both flagged, independent of geometry
   assert.equal(changes[0].roomChanged, true);
 });
 
+// --- location (REV-172 anchors a revision cloud on this) ---------------------
+
+test("a modified element's location is its current bounding-box centre, in mm", () => {
+  const before = [row({ uniqueId: "w1", bboxMinX: 0, bboxMaxX: 1000, bboxMinY: 0, bboxMaxY: 200 })];
+  const after = [row({ uniqueId: "w1", bboxMinX: 4000, bboxMaxX: 5000, bboxMinY: 0, bboxMaxY: 200 })];
+
+  const [change] = diffSnapshotElements(before, after);
+  assert.deepEqual(change.location, { x: 4500, y: 100, z: 1500 });
+});
+
+test("a removed element's location is where it last stood", () => {
+  const removed = diffSnapshotElements([row({ uniqueId: "w1" })], []);
+  assert.deepEqual(removed[0].location, { x: 500, y: 100, z: 1500 });
+});
+
+test("no bounding box means no location, not a crash", () => {
+  const before = [row({ uniqueId: "w1", bboxMinX: null, bboxMaxX: null })];
+  const after = [row({ uniqueId: "w1", bboxMinX: null, bboxMaxX: null, roomName: "Кухня" })];
+
+  const [change] = diffSnapshotElements(before, after);
+  assert.equal(change.location, null);
+});
+
 // --- grouping -----------------------------------------------------------------
 
 test("changes group by level, then by room, busiest first", () => {
