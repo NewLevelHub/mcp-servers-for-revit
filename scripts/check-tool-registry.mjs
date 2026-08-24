@@ -54,6 +54,10 @@ const TOOL_TWINS = [
   // with "no earlier state to compare against", which is the wrong failure mode
   // to discover mid-turn.
   ["create_model_snapshot", "compare_model_versions"],
+  // One grades the штамп, the other prints/exports the set and refuses a sheet
+  // that failed that same grade unless told not to (REV-173). Reaching straight
+  // for the exporter skips the chance to fix a blank field before the PDFs exist.
+  ["check_sheet_readiness", "export_sheet_set"],
 ];
 
 /**

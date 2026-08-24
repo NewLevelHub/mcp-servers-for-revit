@@ -1,17 +1,11 @@
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { withRevitConnection } from "../utils/ConnectionManager.js";
-import { SHEET_NUMBER_ALIASES } from "../utils/titleBlock.js";
-import {
-  fetchParametersBatch,
-  findParamValue,
-  parseFilteredElements,
-} from "../utils/revitElementQuery.js";
+import { fetchAllSheetsWithParameters } from "../utils/revitElementQuery.js";
 import {
   REQUIRED_SHEET_FIELDS,
   buildReadinessReport,
   summarizeReadiness,
-  type SheetInput,
 } from "../utils/sheetReadiness.js";
 import { paginateRows } from "../utils/responseTrimming.js";
 
@@ -22,7 +16,9 @@ export function registerCheckSheetReadinessTool(server: McpServer) {
       "number, or no name. Answers «готов ли комплект к выдаче» before the set goes out. Read-only — it reports, " +
       "it does not fill anything in; hand the result to fill_title_block to write the missing names. " +
       "Checks the sheets themselves; for what Revit flagged in the model use get_model_warnings, and for " +
-      "СП/ГОСТ compliance use run_norm_audit.",
+      "СП/ГОСТ compliance use run_norm_audit. " +
+      "To actually issue the set — print PDF, export DWG, named by the organisation's template — use " +
+      "export_sheet_set, which grades readiness the same way this tool does and skips a sheet that fails it.",
     {
       fields: z
         .array(z.enum(["drawnBy", "checkedBy", "chiefEngineer", "normControl", "issueDate", "totalSheets"]))
@@ -57,16 +53,8 @@ export function registerCheckSheetReadinessTool(server: McpServer) {
     async (args) => {
       try {
         const report = await withRevitConnection(async (revitClient) => {
-          const sheetsResponse = await revitClient.sendCommand("ai_element_filter", {
-            data: {
-              filterCategory: "OST_Sheets",
-              includeTypes: false,
-              includeInstances: true,
-            },
-          });
-
-          const sheetElements = parseFilteredElements(sheetsResponse);
-          if (sheetElements.length === 0) {
+          const { sheets, unreadable } = await fetchAllSheetsWithParameters(revitClient);
+          if (sheets.length === 0) {
             return {
               success: true,
               message: "В проекте нет листов (OST_Sheets) — проверять нечего.",
@@ -80,27 +68,6 @@ export function registerCheckSheetReadinessTool(server: McpServer) {
               sheets: [],
             };
           }
-
-          const paramsBySheet = await fetchParametersBatch(
-            revitClient,
-            sheetElements.map((sheet) => sheet.id)
-          );
-
-          const sheets: SheetInput[] = sheetElements.map((sheet) => {
-            const parameters = paramsBySheet.get(sheet.id)?.parameters ?? [];
-            return {
-              id: sheet.id,
-              name: sheet.name,
-              number: findParamValue(parameters, SHEET_NUMBER_ALIASES),
-              parameters,
-            };
-          });
-
-          // A sheet whose parameters could not be read would otherwise be graded
-          // as "every field blank" — a confident wrong answer about someone's work.
-          const unreadable = sheets.filter(
-            (sheet) => (paramsBySheet.get(sheet.id)?.parameters ?? []).length === 0
-          );
 
           const graded = buildReadinessReport(
             sheets.filter((sheet) => !unreadable.includes(sheet)),
