@@ -84,10 +84,12 @@ public static class DetailDrawing
     }
 
     /// <summary>
-    ///     Builds a closed loop from mm coordinates. Duplicate consecutive points are dropped —
-    ///     CurveLoop.Append throws on zero-length curves.
+    ///     Drops duplicate consecutive points (and a closing point that repeats the first) from a
+    ///     contour, within <see cref="MinSegmentLengthMm" />. Shared by every "build a closed shape
+    ///     from points" helper below — a zero-length edge is what both CurveLoop.Append and
+    ///     RevisionCloud.Create refuse.
     /// </summary>
-    public static CurveLoop BuildClosedLoop(IReadOnlyList<XYZ> points)
+    private static List<XYZ> CleanClosedContour(IReadOnlyList<XYZ> points)
     {
         if (points == null || points.Count < 3)
             throw new ArgumentException("A closed contour needs at least 3 points.");
@@ -101,18 +103,43 @@ public static class DetailDrawing
                 cleaned.Add(point);
         }
 
-        // A contour whose last point repeats the first is already closed; the loop adds that edge.
         while (cleaned.Count > 1 && cleaned[0].DistanceTo(cleaned[cleaned.Count - 1]) < tolerance)
             cleaned.RemoveAt(cleaned.Count - 1);
 
         if (cleaned.Count < 3)
             throw new ArgumentException("A closed contour needs at least 3 distinct points.");
 
+        return cleaned;
+    }
+
+    /// <summary>
+    ///     Builds a closed loop from mm coordinates. Duplicate consecutive points are dropped —
+    ///     CurveLoop.Append throws on zero-length curves.
+    /// </summary>
+    public static CurveLoop BuildClosedLoop(IReadOnlyList<XYZ> points)
+    {
+        var cleaned = CleanClosedContour(points);
+
         var loop = new CurveLoop();
         for (var i = 0; i < cleaned.Count; i++)
             loop.Append(Line.CreateBound(cleaned[i], cleaned[(i + 1) % cleaned.Count]));
 
         return loop;
+    }
+
+    /// <summary>
+    ///     Same shape as <see cref="BuildClosedLoop" />, as a flat curve list — what
+    ///     <c>RevisionCloud.Create</c> takes instead of a <c>CurveLoop</c>.
+    /// </summary>
+    public static List<Curve> BuildClosedCurves(IReadOnlyList<XYZ> points)
+    {
+        var cleaned = CleanClosedContour(points);
+
+        var curves = new List<Curve>();
+        for (var i = 0; i < cleaned.Count; i++)
+            curves.Add(Line.CreateBound(cleaned[i], cleaned[(i + 1) % cleaned.Count]));
+
+        return curves;
     }
 
     public static FilledRegion FillContour(

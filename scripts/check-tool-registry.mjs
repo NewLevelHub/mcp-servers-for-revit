@@ -49,6 +49,11 @@ const TOOL_TWINS = [
   // costs the diff outright — there is no way to recover the state afterwards
   // (REV-170).
   ["analyze_model_statistics", "create_model_snapshot"],
+  // One records a выдача, the other reads two of them back and says what changed
+  // (REV-171). Calling the comparison tool with nothing yet snapshotted answers
+  // with "no earlier state to compare against", which is the wrong failure mode
+  // to discover mid-turn.
+  ["create_model_snapshot", "compare_model_versions"],
 ];
 
 /**
@@ -73,6 +78,9 @@ const SERVER_ONLY_TOOLS = new Set([
   "check_sheet_readiness",
   // Сверка общей площадки: считает по данным get_linked_models, своей команды нет.
   "check_shared_site",
+  // Diffs two model_snapshots rows (or a snapshot and a fresh export_model_snapshot
+  // read) in TypeScript; no Revit command of its own (REV-171).
+  "compare_model_versions",
   "number_rooms",
   "trace_walls_from_cad",
   "trace_openings_from_cad",

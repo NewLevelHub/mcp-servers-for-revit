@@ -344,6 +344,11 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "create_revision_clouds",
+      "description": "Облака изменений по кластерам из diff'а: Revision, облако на плане уровня, попадание в таблицу ревизий",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "create_node_detail",
       "description": "Сгенерировать узел по слоям типа стены/пола: контуры, штриховки, размеры, подписи",
       "assemblyPath": "RevitMCPCommandSet.dll"

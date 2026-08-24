@@ -354,6 +354,94 @@ export function snapshotCategoryBreakdown(
     .all(snapshotId, limit) as SnapshotBreakdownRow[];
 }
 
+interface SnapshotElementDbRow {
+  unique_id: string;
+  element_id: number;
+  category_key: string;
+  category: string;
+  family_name: string;
+  type_name: string;
+  type_id: number | null;
+  level_name: string;
+  room_name: string;
+  room_number: string;
+  bbox_min_x: number | null;
+  bbox_min_y: number | null;
+  bbox_min_z: number | null;
+  bbox_max_x: number | null;
+  bbox_max_y: number | null;
+  bbox_max_z: number | null;
+  param_hash: string;
+  params_json: string;
+}
+
+function toElementRow(row: SnapshotElementDbRow): SnapshotElementRow {
+  return {
+    elementId: row.element_id,
+    uniqueId: row.unique_id,
+    categoryKey: row.category_key,
+    category: row.category,
+    familyName: row.family_name,
+    typeName: row.type_name,
+    typeId: row.type_id,
+    levelName: row.level_name,
+    roomName: row.room_name,
+    roomNumber: row.room_number,
+    bboxMinX: row.bbox_min_x,
+    bboxMinY: row.bbox_min_y,
+    bboxMinZ: row.bbox_min_z,
+    bboxMaxX: row.bbox_max_x,
+    bboxMaxY: row.bbox_max_y,
+    bboxMaxZ: row.bbox_max_z,
+    paramHash: row.param_hash,
+    paramsJson: row.params_json,
+  };
+}
+
+/**
+ * Every element of one snapshot — what `compare_model_versions` (REV-171) diffs.
+ *
+ * Read whole rather than paged: the diff is a join over both sides, and a
+ * snapshot already sits in SQLite for exactly this kind of question. A few
+ * hundred thousand rows of plain columns is well within what a Node process
+ * holds twice over without trouble; paging would only move the same cost into
+ * the caller.
+ */
+export function getSnapshotElements(db: Database, snapshotId: number): SnapshotElementRow[] {
+  ensureSnapshotSchema(db);
+
+  const rows = db
+    .prepare(
+      `SELECT unique_id, element_id, category_key, category, family_name, type_name, type_id,
+              level_name, room_name, room_number,
+              bbox_min_x, bbox_min_y, bbox_min_z, bbox_max_x, bbox_max_y, bbox_max_z,
+              param_hash, params_json
+         FROM snapshot_elements
+        WHERE snapshot_id = ?`
+    )
+    .all(snapshotId) as SnapshotElementDbRow[];
+
+  return rows.map(toElementRow);
+}
+
+/** The parameter key → display label map recorded when the snapshot was taken. */
+export function getSnapshotParameterLabels(db: Database, snapshotId: number): Record<string, string> {
+  ensureSnapshotSchema(db);
+
+  const row = db
+    .prepare("SELECT parameter_labels FROM model_snapshots WHERE id = ?")
+    .get(snapshotId) as { parameter_labels: string | null } | undefined;
+
+  if (!row?.parameter_labels) return {};
+
+  try {
+    const parsed = JSON.parse(row.parameter_labels);
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
 /** Elements per level — the grouping REV-171 will report the diff in. */
 export function snapshotLevelBreakdown(
   db: Database,

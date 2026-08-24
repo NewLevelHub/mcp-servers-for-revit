@@ -11,6 +11,8 @@ import {
   ensureSnapshotSchema,
   finishSnapshot,
   findSnapshotByLabel,
+  getSnapshotElements,
+  getSnapshotParameterLabels,
   insertSnapshotElements,
   listSnapshots,
   pruneSnapshots,
@@ -194,6 +196,49 @@ test("the breakdown counts what was actually stored", () => {
     { key: "2 этаж", count: 3 },
     { key: "1 этаж", count: 1 },
   ]);
+});
+
+// --- reading a snapshot back (REV-171) --------------------------------------
+
+test("getSnapshotElements returns every row of that snapshot, and none of another's", () => {
+  const db = open();
+  const { id: first } = beginSnapshot(db, { modelName: "Короткий блок", label: "выдача 1" });
+  const { id: second } = beginSnapshot(db, { modelName: "Короткий блок", label: "выдача 2" });
+
+  insertSnapshotElements(db, first, toSnapshotRows([element({ uniqueId: "u-1" })]));
+  insertSnapshotElements(
+    db,
+    second,
+    toSnapshotRows([element({ uniqueId: "u-1" }), element({ uniqueId: "u-2", elementId: 2 })])
+  );
+
+  const rows = getSnapshotElements(db, second);
+  assert.equal(rows.length, 2);
+  assert.deepEqual(
+    rows.map((r) => r.uniqueId).sort(),
+    ["u-1", "u-2"]
+  );
+  assert.equal(getSnapshotElements(db, first).length, 1);
+});
+
+test("getSnapshotParameterLabels reads back what finishSnapshot recorded", () => {
+  const db = open();
+  const { id } = beginSnapshot(db, { modelName: "Короткий блок", label: "выдача" });
+  finishSnapshot(db, id, {
+    durationMs: 100,
+    parameterLabels: { ALL_MODEL_MARK: "Марка", ROOM_AREA: "Площадь" },
+  });
+
+  assert.deepEqual(getSnapshotParameterLabels(db, id), {
+    ALL_MODEL_MARK: "Марка",
+    ROOM_AREA: "Площадь",
+  });
+});
+
+test("getSnapshotParameterLabels is empty for a snapshot that never finished", () => {
+  const db = open();
+  const { id } = beginSnapshot(db, { modelName: "Короткий блок", label: "выдача" });
+  assert.deepEqual(getSnapshotParameterLabels(db, id), {});
 });
 
 // --- where the file lives (REV-170) -----------------------------------------

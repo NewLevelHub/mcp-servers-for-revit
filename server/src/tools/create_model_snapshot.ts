@@ -85,7 +85,10 @@ export function registerCreateModelSnapshotTool(server: McpServer) {
       "again while one is running. " +
       "Snapshots are kept outside the add-in folder, so updating the plugin does not lose them. " +
       "For «сколько элементов в модели сейчас» use analyze_model_statistics instead — it answers " +
-      "in seconds and writes nothing.",
+      "in seconds and writes nothing. " +
+      "To read what changed since a snapshot was taken — «что изменилось с прошлой выдачи» — use " +
+      "compare_model_versions; it takes the snapshot from here and either a second one or the " +
+      "model as it is open right now.",
     {
       action: z
         .enum(["create", "list", "delete"])
