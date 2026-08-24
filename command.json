@@ -114,6 +114,11 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "export_model_snapshot",
+      "description": "Страница снимка модели: элементы с типом, уровнем, помещением, габаритом и ключевыми параметрами",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "create_mep_openings",
       "description": "Задание на отверстия: проёмы под трубы и воздуховоды связи, превью и создание",
       "assemblyPath": "RevitMCPCommandSet.dll"

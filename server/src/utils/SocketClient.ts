@@ -40,6 +40,10 @@ const HEAVY_COMMANDS = new Set([
   "create_mep_openings",
   // A full batch (20 sub-commands, e.g. fill_title_block writes) can exceed 120 s.
   "batch_execute",
+  // The first page of a snapshot pays for a full pass over the model — every
+  // element materialised to read its category — before it returns a single row.
+  // The plugin waits 180 s for that; the socket has to outlast it.
+  "export_model_snapshot",
 ]);
 
 export type ConnectionStatus = "connected" | "reconnecting" | "offline";

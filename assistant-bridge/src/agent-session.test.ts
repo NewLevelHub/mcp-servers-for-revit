@@ -40,6 +40,22 @@ test("«проверь противопожарные двери» reaches the n
   assert.match(chosen, /norms/);
 });
 
+// REV-170. «снимки» и «снимок» — разные основы, и на первом прогоне «покажи
+// снимки» оставалось на `lite`, где create_model_snapshot скрыт.
+for (const question of [
+  "сними снимок модели",
+  "снимок перед выдачей",
+  "покажи снимки",
+  "удали старые снимки",
+  "что изменилось с прошлой выдачи",
+]) {
+  test(`«${question}» reaches the snapshot tool`, () => {
+    const chosen = profile(question);
+    assert.notEqual(chosen, LITE, "остался бы lite — create_model_snapshot скрыт");
+    assert.match(chosen, /changes/);
+  });
+}
+
 test("the same question through the panel's context prefix", () => {
   assert.match(profile(withContext("проверь противопожарные двери")), /norms/);
 });
@@ -164,6 +180,7 @@ test("every group named by a hint exists on the server", () => {
     "annotation",
     "cad",
     "links",
+    "changes",
     "modeling",
     "advanced",
   ]);

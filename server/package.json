@@ -14,7 +14,7 @@
         "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('build', { recursive: true, force: true });\"",
         "prebuild": "npm run clean",
         "build": "npx tsc",
-        "test": "npm run build && node --test \"build/normatives/**/*.test.js\" \"build/utils/*.test.js\" \"build/cad/**/*.test.js\" \"build/tools/*.test.js\"",
+        "test": "npm run build && node --test \"build/normatives/**/*.test.js\" \"build/utils/*.test.js\" \"build/cad/**/*.test.js\" \"build/tools/*.test.js\" \"build/database/*.test.js\"",
         "seed:norms": "npm run build && node build/scripts/seed-norm-library.js",
         "seed:residential-norms": "npm run build && node build/scripts/seed-residential-norms.js",
         "export:norm-catalog": "npm run build && node build/scripts/exportNormCatalog.js",

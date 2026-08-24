@@ -18,6 +18,9 @@ const ALIASES = {
   color_elements: "color_splash",
   tag_all_rooms: "tag_rooms",
   tag_all_walls: "tag_walls",
+  // The tool takes a snapshot; the Revit command hands out one page of it and
+  // knows nothing about the database the pages are written into (REV-170).
+  create_model_snapshot: "export_model_snapshot",
 };
 
 /** Revit commands that must NOT have a public 1:1 MCP tool (internal building blocks). */
@@ -40,6 +43,12 @@ const TOOL_TWINS = [
   // Both read "a link". One means a DWG underlay, the other a linked .rvt of a
   // смежник, and the wrong pick reads the wrong file entirely (REV-166).
   ["get_cad_link_geometry", "get_linked_models"],
+  // Both walk the whole model and report what is in it. One takes seconds and
+  // stores nothing; the other takes minutes and is the only one a later
+  // comparison can be built on. Picking the cheap one to "record the выдача"
+  // costs the diff outright — there is no way to recover the state afterwards
+  // (REV-170).
+  ["analyze_model_statistics", "create_model_snapshot"],
 ];
 
 /**

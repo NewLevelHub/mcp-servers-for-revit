@@ -75,6 +75,7 @@ export const TOOL_GROUP_NAMES = [
   "annotation",
   "cad",
   "links",
+  "changes",
   "modeling",
   "advanced",
 ] as const;
@@ -177,6 +178,13 @@ export const TOOL_GROUPS: Readonly<Record<ToolGroupName, readonly string[]>> = {
   /** Смежники: the linked АР/КР/ИОС models of the same project. */
   links: ["get_linked_models", "check_link_clashes", "create_mep_openings", "check_shared_site"],
 
+  /**
+   * «Что изменилось с прошлой выдачи» — the snapshot the comparison stands on.
+   * Kept out of `quality`: those tools answer "is the model in good shape now",
+   * this one answers "what is different from the version we issued".
+   */
+  changes: ["create_model_snapshot"],
+
   /** Structure and circulation the everyday set does not cover. */
   modeling: [
     "create_grid",
@@ -207,6 +215,8 @@ export const TOOL_GROUP_SUMMARIES: Readonly<Record<ToolGroupName, string>> = {
   cad: "tracing walls, openings and columns from a DWG underlay",
   links:
     "linked models of смежники — what is linked in, in which раздел, where it sits in our coordinates, where it clashes with our model, and the задание на отверстия that follows",
+  changes:
+    "снимок модели в базу — состояние выдачи, записанное так, чтобы следующую версию было с чем сравнить",
   modeling: "grids, stairs, railings, floor openings, framing, family loading",
   advanced: "raw code execution and the connection smoke test",
 };
