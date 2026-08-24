@@ -146,6 +146,19 @@ test("labels beyond the cap are marked truncated rather than silently dropped", 
   assert.equal(cluster.labelsTruncated, true);
 });
 
+test("describeCluster does not double a period when labels already end in one", () => {
+  // compare_model_versions' own `describeChange` output — a full sentence, already punctuated.
+  const changes = [
+    change({ uniqueId: "a", label: "Стены «Кладка 250» (id 1): Марка: — → Т1." }),
+    change({ uniqueId: "b", x: 500, label: "Стены «Кладка 250» (id 2): Марка: — → Т1." }),
+  ];
+
+  const text = describeCluster(clusterChangeLocations(changes)[0]);
+
+  assert.doesNotMatch(text, /\.\./);
+  assert.match(text, /Т1\.$/);
+});
+
 test("describeCluster folds the overflow into 'и ещё N' instead of listing nine labels", () => {
   const changes = Array.from({ length: 9 }, (_, i) =>
     change({ uniqueId: `u${i}`, elementId: i, x: i * 100, y: 0, label: `элемент ${i}` })

@@ -197,9 +197,18 @@ export function clusterChangeLocations(
   });
 }
 
-/** One line for the cloud's own comment/tooltip — what an architect reads in Revit, not just in the tool's answer. */
+/**
+ * One line for the cloud's own comment/tooltip — what an architect reads in
+ * Revit, not just in the tool's answer.
+ *
+ * Labels are often `compare_model_versions`' own `text` — full sentences that
+ * already end in a period (REV-171's `describeChange`) — so a trailing "."
+ * added unconditionally would read as "...test..": two ways of ending the
+ * same sentence stacked on top of each other.
+ */
 export function describeCluster(cluster: CloudCluster): string {
   const shown = cluster.labels.join(", ");
   const rest = cluster.labelsTruncated ? ` и ещё ${cluster.changeCount - cluster.labels.length}` : "";
-  return `Изменений: ${cluster.changeCount} — ${shown}${rest}.`;
+  const body = `Изменений: ${cluster.changeCount} — ${shown}${rest}`;
+  return body.endsWith(".") ? body : `${body}.`;
 }
