@@ -107,7 +107,7 @@ export interface SkippedSheet {
   sheetId: number;
   number: string;
   name: string;
-  reason: "not_ready" | "wrong_discipline" | "not_in_list" | "no_such_revision" | "unreadable";
+  reason: "not_ready" | "wrong_discipline" | "not_in_list" | "no_such_revision" | "unreadable" | "sheet_not_found";
   detail: string;
 }
 
@@ -147,6 +147,24 @@ export function selectSheetsForExport(
   const requestedIds = options.sheetIds ? new Set(options.sheetIds) : null;
   const wantedDiscipline = options.discipline?.trim().toLowerCase();
   const wantedRevision = options.revisionDescription?.trim().toLowerCase();
+
+  // A requested id that names no real sheet — deleted since, or simply mistyped — would
+  // otherwise vanish with no trace: not selected, not skipped, no explanation for the gap
+  // between "5 requested" and "4 accounted for".
+  if (requestedIds) {
+    const knownIds = new Set([...sheets, ...unreadable].map((sheet) => sheet.id));
+    for (const id of requestedIds) {
+      if (!knownIds.has(id)) {
+        skipped.push({
+          sheetId: id,
+          number: "",
+          name: "",
+          reason: "sheet_not_found",
+          detail: "Такого листа в проекте нет — не найден среди OST_Sheets.",
+        });
+      }
+    }
+  }
 
   const readable = sheets.filter((sheet) => !unreadableIds.has(sheet.id));
   const readiness = buildReadinessReport(readable, options.readinessFields ?? REQUIRED_SHEET_FIELDS);

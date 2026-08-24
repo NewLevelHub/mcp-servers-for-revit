@@ -182,11 +182,10 @@ export function registerExportSheetSetTool(server: McpServer) {
         )) as ExportResponse;
 
         if (response?.success === false) {
+          const base = response.message || "Плагин не смог выпустить комплект.";
+          const setups = response.availableDwgSetups;
           return failed(
-            response.message ||
-              (response.availableDwgSetups
-                ? `Не выбрана настройка экспорта DWG. Доступные: ${response.availableDwgSetups.join(", ")}.`
-                : "Плагин не смог выпустить комплект.")
+            setups && setups.length > 0 ? `${base} Доступные настройки: ${setups.join(", ")}.` : base
           );
         }
 

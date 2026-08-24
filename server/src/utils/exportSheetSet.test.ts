@@ -143,6 +143,18 @@ test("an explicit sheetIds list excludes everything else, по списку", ()
   assert.equal(skipped[0].reason, "not_in_list");
 });
 
+test("a requested sheetId that names no real sheet is reported, not silently dropped", () => {
+  const real = sheet();
+  const { selected, skipped } = selectSheetsForExport([real], [], new Map(), {
+    sheetIds: [real.id, 999999999],
+  });
+
+  assert.equal(selected.length, 1);
+  const ghost = skipped.find((s) => s.sheetId === 999999999);
+  assert.ok(ghost, "the nonexistent id must show up in skipped");
+  assert.equal(ghost.reason, "sheet_not_found");
+});
+
 test("по разделу matches the resolved discipline, case-insensitively", () => {
   const ar = sheet({ number: "АР-01" });
   const kr = sheet({ number: "КР-01" });
