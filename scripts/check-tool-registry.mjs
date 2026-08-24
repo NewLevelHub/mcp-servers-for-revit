@@ -58,6 +58,10 @@ const TOOL_TWINS = [
   // that failed that same grade unless told not to (REV-173). Reaching straight
   // for the exporter skips the chance to fix a blank field before the PDFs exist.
   ["check_sheet_readiness", "export_sheet_set"],
+  // Both answer "the drawing set as a whole": one issues files, the other reports
+  // and renumbers the листы behind them (REV-174). Renumbering after files are
+  // already named from the old numbers defeats the point of doing it first.
+  ["export_sheet_set", "create_sheet_index"],
 ];
 
 /**
@@ -85,6 +89,9 @@ const SERVER_ONLY_TOOLS = new Set([
   // Diffs two model_snapshots rows (or a snapshot and a fresh export_model_snapshot
   // read) in TypeScript; no Revit command of its own (REV-171).
   "compare_model_versions",
+  // Orchestrates existing commands (export_sheet_set's listRevisions, create_schedule,
+  // place_view_on_sheet, set_elements_parameters) — no Revit command of its own (REV-174).
+  "create_sheet_index",
   "number_rooms",
   "trace_walls_from_cad",
   "trace_openings_from_cad",

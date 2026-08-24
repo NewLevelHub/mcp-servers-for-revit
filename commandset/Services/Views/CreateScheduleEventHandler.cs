@@ -105,9 +105,15 @@ public class CreateScheduleEventHandler : IExternalEventHandler, IWaitableExtern
         var categoryId = ResolveCategoryId(info);
         var scheduleType = (info.Type ?? "Regular").Trim();
 
-        ViewSchedule created = scheduleType.Equals("KeySchedule", StringComparison.OrdinalIgnoreCase)
-            ? ViewSchedule.CreateKeySchedule(doc, categoryId)
-            : ViewSchedule.CreateSchedule(doc, categoryId);
+        // Sheets refuses the generic constructor outright — "categoryId is not a valid
+        // category for a regular schedule" — because a ведомость листов is not a model
+        // category schedule in Revit's own object model. CreateSheetList is the one API
+        // that produces it; nothing here is a workaround, it is the only door (REV-174).
+        ViewSchedule created = categoryId == new ElementId(BuiltInCategory.OST_Sheets)
+            ? ViewSchedule.CreateSheetList(doc)
+            : scheduleType.Equals("KeySchedule", StringComparison.OrdinalIgnoreCase)
+                ? ViewSchedule.CreateKeySchedule(doc, categoryId)
+                : ViewSchedule.CreateSchedule(doc, categoryId);
 
         created.Name = GetUniqueScheduleName(doc, info.Name, info.CategoryName);
         return created;
