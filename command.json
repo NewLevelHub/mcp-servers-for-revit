@@ -417,6 +417,11 @@
       "commandName": "render_tep_table",
       "description": "Таблица ТЭП на листе «Общие данные» из export_tep_data",
       "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "export_sheet_set",
+      "description": "Выпуск комплекта: PDF/DWG пачкой листов, имена по шаблону; читает ревизии на листах",
+      "assemblyPath": "RevitMCPCommandSet.dll"
     }
   ]
 }

@@ -139,7 +139,7 @@ export const TOOL_GROUPS: Readonly<Record<ToolGroupName, readonly string[]>> = {
     "get_material_quantities",
   ],
 
-  /** Sheets, title blocks and ТЭП — laying drawings out. */
+  /** Sheets, title blocks, ТЭП and issuing the finished set. */
   sheets: [
     "create_sheet",
     "place_view_on_sheet",
@@ -148,6 +148,7 @@ export const TOOL_GROUPS: Readonly<Record<ToolGroupName, readonly string[]>> = {
     "render_tep_table",
     "export_tep_data",
     "create_detail_view",
+    "export_sheet_set",
   ],
 
   /** Dimensions, tags, text and 2D detailing on a view. */
@@ -210,7 +211,7 @@ export const TOOL_GROUP_SUMMARIES: Readonly<Record<ToolGroupName, string>> = {
     "model health before issue — Revit's own warnings, and blank/duplicate штамп fields on sheets",
   schedules:
     "schedules and ведомости (doors, windows, floors, finishes) plus bulk data export",
-  sheets: "sheets, title blocks, view placement, auto-layout, ТЭП table",
+  sheets: "sheets, title blocks, view placement, auto-layout, ТЭП table, and printing/exporting the finished set",
   annotation: "dimensions, tags, text notes, filled regions, node details",
   cad: "tracing walls, openings and columns from a DWG underlay",
   links:

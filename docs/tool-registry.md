@@ -46,7 +46,7 @@ is in neither, so nothing can go missing silently.
 | `norms` | the `check_*` family, `run_norm_audit`, `apply_norm_result`, the rule library, and the geometry readers they feed on |
 | `quality` | `get_model_warnings`, `check_sheet_readiness` — model health before issue |
 | `schedules` | schedules and ведомости, `validate_schedule`, bulk data export |
-| `sheets` | sheets, title blocks, view placement, auto-layout, ТЭП table |
+| `sheets` | sheets, title blocks, view placement, auto-layout, ТЭП table, `export_sheet_set` — печать/экспорт готового комплекта |
 | `annotation` | dimensions, tags, text notes, filled regions, node details |
 | `cad` | `get_cad_link_geometry` + `trace_*_from_cad` |
 | `links` | `get_linked_models`, `check_link_clashes` — связи смежников и коллизии с ними |
@@ -451,9 +451,10 @@ Revit на тестовой машине запускается то по-рус
 **Чего пока нет.** В режиме openai панель этот инструмент не видит: каталог там
 пишется руками в `plugin/Core/Assistant/ToolCatalog.cs`. Это тот же пробел, что
 у эпика «Смежники», и закрывается тем же тикетом (`links-openai-catalog`) —
-добавляя туда связи, добавьте и `create_model_snapshot` (и `compare_model_versions`
-с `create_revision_clouds`, REV-171/172 — тот же пробел, ещё не закрыт). В режиме
-cursor инструмент виден сразу: сервер находит его сканированием папки.
+добавляя туда связи, добавьте и `create_model_snapshot` (и `compare_model_versions`,
+`create_revision_clouds`, `export_sheet_set` — весь эпик REV-171/172/173, тот же
+пробел, ещё не закрыт). В режиме cursor инструмент виден сразу: сервер находит
+его сканированием папки.
 
 Замеры времени снятия — [performance.md](performance.md).
 
@@ -555,6 +556,59 @@ diff'а), а не имя вида: `create_revision_clouds` сам ищет пл
 размещается — только сама ревизия и облако. Комментарии — единственное место,
 где хранится сигнатура; переименование параметра Comments вручную в Revit
 потеряет дедупликацию для этого облака (новый прогон нарисует его повторно).
+
+## Выпуск комплекта (REV-173)
+
+| Tool | Revit command | What it does |
+|------|---------------|--------------|
+| `export_sheet_set` | `export_sheet_set` (`commandset/Commands/Views/ExportSheetSetCommand.cs`, действия `listRevisions`/`export`) | Печатает PDF и/или экспортирует DWG пачкой листов, с именами по шаблону организации. Отбор — по списку, по разделу, по ревизии; листы, не прошедшие `check_sheet_readiness`, по умолчанию пропускаются |
+
+Четвёртый и последний тикет эпика — замыкает цикл, на котором раньше всё
+обрывалось на `check_sheet_readiness`: проверка была, а того, что читает её
+ответ и что-то с ним делает, не было.
+
+**Кто решает что, а кто печатает.** Отбор листов, шаблон имени файла, раздел
+по номеру листа, годность по `check_sheet_readiness` — всё в
+`server/src/utils/exportSheetSet.ts`, проверено `exportSheetSet.test.ts` без
+Revit. Плагин отвечает только на то, чего TypeScript не видит через
+дженерик-чтение параметров: какие ревизии показаны на каком листе
+(`ViewSheet.GetAllRevisionIds()` — нативный API, не `Parameter`), и
+собственно печать/экспорт.
+
+**Раздел определяется дважды.** Сначала — штамп-параметр («Раздел», «Раздел
+проекта», …), а если его в проекте нет — буквы перед первым разделителем в
+номере листа: «АР-01» читается как «АР» без единого заполненного поля. Так
+`discipline`-фильтр и `{discipline}` в шаблоне работают на любом проекте, а не
+только там, где кто-то завёл отдельный параметр.
+
+**`{revision}` в имени файла — не всегда требует лишний запрос к Revit.**
+Плагин спрашивается про ревизии, только если явно задан фильтр
+`revisionDescription` ИЛИ шаблон имени файла реально содержит `{revision}` —
+иначе типовой вызов («выпусти в PDF») не платит обход документа за
+плейсхолдер, который никто не просил.
+
+**Один битый лист не роняет пачку.** Экспорт каждого листа обёрнут в свой
+`try/catch` на стороне плагина; результат — строка с `success`/`error` на
+каждый лист, а не одно исключение на всю партию. Отбор (readiness, раздел,
+список) уже случился в TypeScript до этого — до Revit доходят только листы,
+которым там самое место.
+
+**DWG-настройки берутся из проекта, не изобретаются.** `dwgSetupName` —
+именованная настройка экспорта; если их несколько и имя не передано, отказ
+называет варианты (`BaseExportOptions.GetPredefinedSetupNames`), а не
+подставляет первую попавшуюся молча.
+
+**PDF работает с Revit 2022.** `PDFExportOptions` — API этой версии и новее;
+на 2020/2021 (`#if REVIT2022_OR_GREATER` в `ExportSheetSetEventHandler.cs`)
+`format: "pdf"`/`"both"` отвечает понятной ошибкой вместо попытки собрать
+экспорт через устаревший `PrintManager`, который здесь не реализован.
+
+**Чего эта версия не делает.** Марка ГИПа на комплект («выдано в производство
+работ» и т.п.) и штамп «Копия верна» не проставляются — только сам файл под
+нужным именем. Указатель листов и сквозная нумерация комплекта — REV-174,
+следующий тикет.
+
+## Assistant tool profiles (in-Revit chat, REV-112)
 
 Separate from `MCP_TOOL_PROFILE` (server env). The dockable assistant filters
 `plugin/Core/Assistant/ToolCatalog.cs` so the model sees **≤ 30** tools per

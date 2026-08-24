@@ -71,6 +71,19 @@ export const PROJECT_FIELD_ALIASES: Record<string, readonly string[]> = {
 
 export const SHEET_NUMBER_ALIASES: readonly string[] = ["Номер листа", "Sheet Number"];
 
+/**
+ * Раздел проекта on a SHEET (АР/КР/ИОС), for export_sheet_set's filename template
+ * (REV-173). Project-wide discipline templates keep this on Project Information
+ * instead; a sheet whose title block has neither falls back to the letters before
+ * the first separator in its own number — see `resolveDiscipline`.
+ */
+export const SHEET_DISCIPLINE_ALIASES: readonly string[] = [
+  "Раздел",
+  "Раздел проекта",
+  "ADSK_Раздел проекта",
+  "Discipline",
+];
+
 export interface AvailableParameter {
   name: string;
   isReadOnly?: boolean;

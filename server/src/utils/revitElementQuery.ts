@@ -9,7 +9,8 @@
  */
 import { z } from "zod";
 import type { RevitClientConnection } from "./SocketClient.js";
-import { chunk } from "./titleBlock.js";
+import { chunk, SHEET_NUMBER_ALIASES } from "./titleBlock.js";
+import type { SheetInput } from "./sheetReadiness.js";
 
 /** `get_elements_parameters` accepts at most this many ids per call. */
 export const PARAMETER_BATCH_SIZE = 20;
@@ -110,6 +111,54 @@ export async function fetchParametersBatch(
     }
   }
   return byId;
+}
+
+export interface SheetReadResult {
+  sheets: SheetInput[];
+  /** Sheets whose parameters could not be read — grading them would report "every field blank" on someone's work. */
+  unreadable: SheetInput[];
+}
+
+/**
+ * Every sheet in the project, with its штамп parameters — the same three-step
+ * read (`ai_element_filter` → `get_elements_parameters` → number by alias) that
+ * `check_sheet_readiness` used inline before REV-173 needed the identical read
+ * for `export_sheet_set`. One place, so a future fourth caller does not re-copy it.
+ */
+export async function fetchAllSheetsWithParameters(
+  revitClient: RevitClientConnection
+): Promise<SheetReadResult> {
+  const sheetsResponse = await revitClient.sendCommand("ai_element_filter", {
+    data: {
+      filterCategory: "OST_Sheets",
+      includeTypes: false,
+      includeInstances: true,
+    },
+  });
+
+  const sheetElements = parseFilteredElements(sheetsResponse);
+  if (sheetElements.length === 0) return { sheets: [], unreadable: [] };
+
+  const paramsBySheet = await fetchParametersBatch(
+    revitClient,
+    sheetElements.map((sheet) => sheet.id)
+  );
+
+  const sheets: SheetInput[] = sheetElements.map((sheet) => {
+    const parameters = paramsBySheet.get(sheet.id)?.parameters ?? [];
+    return {
+      id: sheet.id,
+      name: sheet.name,
+      number: findParamValue(parameters, SHEET_NUMBER_ALIASES),
+      parameters,
+    };
+  });
+
+  const unreadable = sheets.filter(
+    (sheet) => (paramsBySheet.get(sheet.id)?.parameters ?? []).length === 0
+  );
+
+  return { sheets, unreadable };
 }
 
 /**
