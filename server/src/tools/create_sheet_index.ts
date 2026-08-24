@@ -240,9 +240,12 @@ async function handleSchedule(args: { scheduleName: string; sheetIdToPlaceOn?: n
         fields: [
           { parameterName: "Sheet Number|Номер листа", fieldType: "Instance", heading: "№" },
           { parameterName: "Sheet Name|Имя листа|Название листа", fieldType: "Instance", heading: "Наименование" },
-          { parameterName: "Current Revision|Текущая ревизия", fieldType: "Instance", heading: "Ревизия" },
+          // Revit's own Russian label is "изменение", not "ревизия" — GetSchedulableFields on a
+          // live "Короткий блок" (REV-174) confirmed these exact strings; "Текущая ревизия" (what
+          // the ticket's own wording would suggest) matches nothing and silently drops the column.
+          { parameterName: "Current Revision|Текущее изменение", fieldType: "Instance", heading: "Ревизия" },
           {
-            parameterName: "Current Revision Description|Описание текущей ревизии",
+            parameterName: "Current Revision Description|Описание текущего изменения",
             fieldType: "Instance",
             heading: "Описание ревизии",
           },
