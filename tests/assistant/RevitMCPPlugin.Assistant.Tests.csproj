@@ -24,6 +24,7 @@
     <Compile Include="..\..\plugin\Core\Assistant\AssistantSystemPrompt.cs" Link="AssistantSystemPrompt.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\AssistantPlaybooks.cs" Link="AssistantPlaybooks.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\ScenarioPresets.cs" Link="ScenarioPresets.cs" />
+    <Compile Include="..\..\plugin\Core\Assistant\UserScenarioStore.cs" Link="UserScenarioStore.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\AssistantQueryRouting.cs" Link="AssistantQueryRouting.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\ExportRoomDataScopeRules.cs" Link="ExportRoomDataScopeRules.cs" />
     <Compile Include="..\..\plugin\Core\Assistant\NormCheckSchemaKeys.cs" Link="NormCheckSchemaKeys.cs" />

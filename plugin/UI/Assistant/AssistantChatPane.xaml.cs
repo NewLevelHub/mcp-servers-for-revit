@@ -17,6 +17,7 @@ using Microsoft.Win32;
 using revit_mcp_plugin.Configuration;
 using revit_mcp_plugin.Core;
 using revit_mcp_plugin.Core.Assistant;
+using revit_mcp_plugin.Core.Recorder;
 
 namespace revit_mcp_plugin.UI.Assistant
 {
@@ -45,6 +46,8 @@ namespace revit_mcp_plugin.UI.Assistant
         private string _currentUserText;
         private readonly Dictionary<string, string> _userTextByTurnId =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        /// <summary>REV-178: unlike _currentUserText, not cleared when the turn finishes — the Save Scenario button needs it afterward.</summary>
+        private string _lastTurnUserText;
 
         public AssistantChatPane()
         {
@@ -99,6 +102,45 @@ namespace revit_mcp_plugin.UI.Assistant
             // Человек должен видеть в переписке, где он находится: молчаливая смена режима
             // выглядит как «ассистент вдруг перестал работать».
             AddBotMessage(TutorMode.NoticeFor(_tutorMode));
+        }
+
+        /// <summary>
+        /// REV-177: start/stop the panel's own action recording. Not persisted across a Revit
+        /// restart the way TutorMode is — recording is inherently session-scoped, so there is
+        /// nothing to restore on load. Replay itself is a normal tool call (replay_recording),
+        /// not wired here — ask the assistant "повтори это на этажах 4-9" once a recording exists.
+        /// </summary>
+        private void RecordActionsToggle_Changed(object sender, RoutedEventArgs e)
+        {
+            var isChecked = RecordActionsToggle.IsChecked == true;
+
+            if (isChecked)
+            {
+                var doc = _uiApp?.ActiveUIDocument?.Document;
+                var view = _uiApp?.ActiveUIDocument?.ActiveView;
+                if (doc == null)
+                {
+                    AddBotMessage("Не удалось начать запись: нет активного документа.");
+                    // Resets the toggle; this re-enters here with isChecked:false, where
+                    // ActionRecorder.Stop() harmlessly returns null since Start() never ran.
+                    RecordActionsToggle.IsChecked = false;
+                    return;
+                }
+
+                ActionRecorder.Start(doc, view, null);
+                AddBotMessage(
+                    "⏺ Запись включена. Делайте действия в Revit — стены, двери, окна, отметки " +
+                    "(марка, комментарий). Нажмите кнопку ещё раз, чтобы остановить и сохранить.");
+                return;
+            }
+
+            var recipe = ActionRecorder.Stop();
+            if (recipe == null)
+                return;
+
+            AddBotMessage(
+                $"⏹ Запись «{recipe.Name}» сохранена.\n{recipe.SummaryText}\n\n" +
+                "Чтобы повторить на других этажах, напишите, например: «повтори это на этажах 4–9».");
         }
 
         private void ShowWelcomeMessage()
@@ -435,6 +477,19 @@ namespace revit_mcp_plugin.UI.Assistant
             ChipsPanel.Children.Clear();
             foreach (var preset in ScenarioPresets.Pilot)
                 ChipsPanel.Children.Add(MakeChipButton(preset));
+
+            // REV-178: user-saved scenarios, in save order, after the built-in Pilot ones.
+            List<ScenarioPreset> userScenarios;
+            try
+            {
+                userScenarios = UserScenarioStore.LoadAll();
+            }
+            catch
+            {
+                userScenarios = new List<ScenarioPreset>();
+            }
+            foreach (var preset in userScenarios)
+                ChipsPanel.Children.Add(MakeChipButton(preset));
         }
 
         private Button MakeChipButton(ScenarioPreset preset)
@@ -456,7 +511,8 @@ namespace revit_mcp_plugin.UI.Assistant
             });
 
             var tip = (string.IsNullOrWhiteSpace(preset.Hint) ? preset.Label : preset.Hint)
-                + "\nКлик — править · Ctrl+клик — сразу";
+                + "\nКлик — править · Ctrl+клик — сразу"
+                + (preset.IsUserCreated ? " · ПКМ — переименовать/удалить" : "");
             var btn = new Button
             {
                 Content = content,
@@ -465,7 +521,80 @@ namespace revit_mcp_plugin.UI.Assistant
                 ToolTip = tip
             };
             btn.Click += Chip_Click;
+
+            // REV-178: rename/delete only ever apply to a user-saved scenario — a built-in
+            // Pilot chip gets no context menu, so it can neither be renamed nor deleted.
+            if (preset.IsUserCreated)
+            {
+                var menu = new System.Windows.Controls.ContextMenu();
+                var renameItem = new System.Windows.Controls.MenuItem { Header = "✎ Переименовать" };
+                renameItem.Click += (s, args) => RenameUserScenario(preset);
+                var deleteItem = new System.Windows.Controls.MenuItem { Header = "🗑 Удалить" };
+                deleteItem.Click += (s, args) => DeleteUserScenario(preset);
+                menu.Items.Add(renameItem);
+                menu.Items.Add(deleteItem);
+                btn.ContextMenu = menu;
+            }
+
             return btn;
+        }
+
+        private void SaveScenarioButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(_lastTurnUserText))
+                return;
+
+            var dialog = new SaveScenarioDialog { Owner = Window.GetWindow(this) };
+            if (dialog.ShowDialog() != true)
+                return;
+
+            try
+            {
+                UserScenarioStore.Save(dialog.ScenarioName, _lastTurnUserText, dialog.ScenarioDescription);
+                BuildChips();
+                AddBotMessage($"💾 Сценарий «{dialog.ScenarioName}» сохранён — чип появился внизу и переживёт перезапуск Revit.");
+            }
+            catch (Exception ex)
+            {
+                AddBotMessage("Не удалось сохранить сценарий: " + ex.Message);
+            }
+        }
+
+        private void RenameUserScenario(ScenarioPreset preset)
+        {
+            var dialog = new SaveScenarioDialog(preset.Label) { Owner = Window.GetWindow(this), Title = "Переименовать сценарий" };
+            if (dialog.ShowDialog() != true)
+                return;
+
+            try
+            {
+                UserScenarioStore.Rename(preset.Id, dialog.ScenarioName);
+                BuildChips();
+            }
+            catch (Exception ex)
+            {
+                AddBotMessage("Не удалось переименовать сценарий: " + ex.Message);
+            }
+        }
+
+        private void DeleteUserScenario(ScenarioPreset preset)
+        {
+            if (MessageBox.Show(
+                    $"Удалить сценарий «{preset.Label}»?",
+                    "Удалить сценарий",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question) != MessageBoxResult.Yes)
+                return;
+
+            try
+            {
+                UserScenarioStore.Delete(preset.Id);
+                BuildChips();
+            }
+            catch (Exception ex)
+            {
+                AddBotMessage("Не удалось удалить сценарий: " + ex.Message);
+            }
         }
 
         private void Chip_Click(object sender, RoutedEventArgs e)
@@ -930,6 +1059,11 @@ namespace revit_mcp_plugin.UI.Assistant
             _currentTurnId = turnId;
             _currentUserText = displayText;
             _userTextByTurnId[turnId] = displayText;
+            if (!string.IsNullOrWhiteSpace(displayText))
+            {
+                _lastTurnUserText = displayText;
+                SaveScenarioButton.IsEnabled = true;
+            }
             try
             {
                 var result = await _agent.RunAsync(

@@ -106,6 +106,11 @@ export const TOOL_GROUPS: Readonly<Record<ToolGroupName, readonly string[]>> = {
     "query_norm_rules",
     "save_norm_rule",
     "extract_norm_rules_from_pdf",
+    // Same shape of job, but the document is the project's own ТЗ, not the law
+    // (REV-182) — kept in this group rather than a new one since the workflow
+    // (extract → save → query by topic, honest "not found") is identical.
+    "query_project_brief",
+    "check_against_brief",
     // Hot in the logs, but only ever called to feed a check.
     "get_door_egress_info",
     "get_opening_geometry_info",
@@ -119,7 +124,15 @@ export const TOOL_GROUPS: Readonly<Record<ToolGroupName, readonly string[]>> = {
    * good shape", not "does it meet СП/ГОСТ", and an architect asks them at
    * different moments.
    */
-  quality: ["get_model_warnings", "check_sheet_readiness"],
+  quality: [
+    "get_model_warnings",
+    "check_sheet_readiness",
+    "check_model_standard",
+    "explain_model_warnings",
+    "fix_redundant_room_separators",
+    "check_data_completeness",
+    "fill_parameters_by_rule",
+  ],
 
   /** Schedules, ведомости, and the bulk exports that back them. */
   schedules: [
@@ -198,6 +211,9 @@ export const TOOL_GROUPS: Readonly<Record<ToolGroupName, readonly string[]>> = {
     "ensure_opening_type",
     "load_family",
     "ai_element_filter",
+    // Replays a panel-recorded action recipe on other levels (REV-177) — creation, same as
+    // the rest of this group, just from a saved recipe instead of a fresh description.
+    "replay_recording",
   ],
 
   /** Escape hatches, kept apart so neither is reached for by accident. */
@@ -209,7 +225,9 @@ export const TOOL_GROUP_SUMMARIES: Readonly<Record<ToolGroupName, string>> = {
   norms:
     "norm checks — fire doors, evacuation width/distance, room depth, min dimensions, accessibility — plus the rule library",
   quality:
-    "model health before issue — Revit's own warnings, and blank/duplicate штамп fields on sheets",
+    "model health before issue — Revit's own warnings (raw or explained in plain language, sorted " +
+    "by real danger, with one safe auto-fix), blank/duplicate штамп fields on sheets, and an audit " +
+    "against the organization's own BIM standard (naming, levels, worksets, duplicate types)",
   schedules:
     "schedules and ведомости (doors, windows, floors, finishes) plus bulk data export",
   sheets: "sheets, title blocks, view placement, auto-layout, ТЭП table, printing/exporting the finished set, sheet index and renumbering",

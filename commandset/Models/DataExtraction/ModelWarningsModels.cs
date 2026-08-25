@@ -12,6 +12,16 @@ namespace RevitMCPCommandSet.Models.DataExtraction
         [JsonProperty("description")]
         public string Description { get; set; } = string.Empty;
 
+        /// <summary>
+        /// FailureDefinitionId.Guid — stable across Revit's UI language, unlike Description.
+        /// Revit's UI language is known to flip between sessions on the same machine (RU/EN);
+        /// grouping/explaining by the localized text alone would silently split one warning
+        /// kind into two groups, or miss a catalog match entirely, depending on which language
+        /// happened to be active (REV-180).
+        /// </summary>
+        [JsonProperty("failureDefinitionGuid")]
+        public string FailureDefinitionGuid { get; set; } = string.Empty;
+
         /// <summary>Warning / Error / DocumentCorruption, from FailureSeverity.</summary>
         [JsonProperty("severity")]
         public string Severity { get; set; } = string.Empty;

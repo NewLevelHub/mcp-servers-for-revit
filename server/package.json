@@ -14,7 +14,7 @@
         "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('build', { recursive: true, force: true });\"",
         "prebuild": "npm run clean",
         "build": "npx tsc",
-        "test": "npm run build && node --test \"build/normatives/**/*.test.js\" \"build/utils/*.test.js\" \"build/cad/**/*.test.js\" \"build/tools/*.test.js\" \"build/database/*.test.js\"",
+        "test": "npm run build && node --test \"build/normatives/**/*.test.js\" \"build/utils/*.test.js\" \"build/cad/**/*.test.js\" \"build/tools/*.test.js\" \"build/database/*.test.js\" \"build/quality/*.test.js\" \"build/projectBrief/*.test.js\"",
         "seed:norms": "npm run build && node build/scripts/seed-norm-library.js",
         "seed:residential-norms": "npm run build && node build/scripts/seed-residential-norms.js",
         "export:norm-catalog": "npm run build && node build/scripts/exportNormCatalog.js",
@@ -51,6 +51,7 @@
     "dependencies": {
         "@modelcontextprotocol/sdk": "^1.7.0",
         "better-sqlite3": "^12.8.0",
+        "mammoth": "^1.12.1",
         "pdf-parse": "^1.1.1",
         "ws": "^8.18.1",
         "zod": "^3.24.2"

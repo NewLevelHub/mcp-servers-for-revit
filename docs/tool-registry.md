@@ -43,8 +43,8 @@ is in neither, so nothing can go missing silently.
 
 | Group | Contents |
 |-------|----------|
-| `norms` | the `check_*` family, `run_norm_audit`, `apply_norm_result`, the rule library, and the geometry readers they feed on |
-| `quality` | `get_model_warnings`, `check_sheet_readiness` — model health before issue |
+| `norms` | the `check_*` family, `run_norm_audit`, `apply_norm_result`, the rule library, and the geometry readers they feed on; `query_project_brief` / `check_against_brief` — the same rule-library shape, but for THIS project's own ТЗ instead of the law (REV-182) |
+| `quality` | `get_model_warnings` / `explain_model_warnings`, `fix_redundant_room_separators`, `check_sheet_readiness`, `check_model_standard` — model health before issue, and an audit against the organization's own BIM standard; `check_data_completeness` / `fill_parameters_by_rule` — blank required fields before a spec is assembled, and filling one parameter from a template of the others |
 | `schedules` | schedules and ведомости, `validate_schedule`, bulk data export |
 | `sheets` | sheets, title blocks, view placement, auto-layout, ТЭП table, `export_sheet_set` — печать/экспорт готового комплекта, `create_sheet_index` — ведомость, перенумерация, дыры/дубли |
 | `annotation` | dimensions, tags, text notes, filled regions, node details |
@@ -115,15 +115,63 @@ static catalog, a hidden tool stays unreachable for the whole session.
 
 ## Model health before issue (REV-47)
 
-Two tools answer "is this ready to go out", which is a different question from
-"does it meet СП/ГОСТ" — hence their own `quality` group rather than `norms`.
+Three tools answer "is this ready to go out" / "is this model in good shape",
+which is a different question from "does it meet СП/ГОСТ" — hence their own
+`quality` group rather than `norms`.
 
 | Tool | Revit command | What it reads |
 |------|---------------|---------------|
-| `get_model_warnings` | `get_model_warnings` | `Document.GetWarnings()` — the «Просмотр предупреждений» list, folded by warning text, biggest group first |
+| `get_model_warnings` | `get_model_warnings` | `Document.GetWarnings()` — the «Просмотр предупреждений» list, folded by `FailureDefinitionId` (not the localized text — REV-180), biggest group first |
+| `explain_model_warnings` | *(server-only, wraps `get_model_warnings`)* | the same data, graded: plain-language risk/fix per warning kind, sorted by danger rather than count (REV-180) |
 | `check_sheet_readiness` | *(server-only)* | sheets via `ai_element_filter` + `get_elements_parameters`: blank штамп lines, missing/duplicate sheet numbers, blank sheet names |
+| `check_model_standard` | `check_model_standard` | loaded types + instance counts, elements without a level, workset per category, groups, views, links — graded against the organization's own config (REV-179) |
+| `check_data_completeness` | *(server-only, wraps `get_elements_parameters`)* | which of the given elements are missing which required parameters — by element and by field, never just a count (REV-181) |
+| `fill_parameters_by_rule` | *(server-only, wraps `get_elements_parameters` + `set_elements_parameters`)* | fills one parameter from a `{Token}` template of the others already set on the same elements, preview by default (REV-181) |
 
-Both are read-only and open no transaction.
+All are read-only and open no transaction, except `fix_redundant_room_separators`
+(writes only after `confirm: true`) and `fill_parameters_by_rule` (writes only
+after `confirm: true`).
+
+### Explaining and fixing warnings (REV-180)
+
+`get_model_warnings` groups by `FailureDefinitionId.Guid`, not by the warning's
+own description text — Revit's UI language is known to flip between sessions on
+the same machine, and bucketing by localized text would silently split one
+warning kind into two groups (or merge two different ones) depending on which
+language happened to be active. `explain_model_warnings` calls the same command
+and looks each GUID up in `server/src/quality/warningCatalog.ts`, a catalog
+grounded in real data — every entry was harvested live from a real
+35k-element production model, not written from a Revit API reference. An
+unrecognized GUID still gets a fair fallback (Revit's own text, generic
+risk copy, never auto-fixable) rather than going silent.
+
+Sorting is by `dangerRank` (1 = most urgent), not raw occurrence count: on the
+model this was built against, «Стены перекрываются» at ordinary wall joins
+fired **1628 times** and is dangerRank 4 (usually normal Revit behaviour at a
+corner), while a single "two Room elements share one boundary" warning is
+dangerRank 1 (silently wrong area in every schedule that uses it). Only one
+warning kind ships with a working auto-fix — `fix_redundant_room_separators`
+deletes a room-separation line Revit has flagged as redundant because a wall
+already overlaps it, never the wall itself. `dangerRank`/`autoFixable`
+classification for every cataloged GUID (including which ones are
+deliberately *not* auto-fixable, and why) is covered by
+`warningCatalog.test.ts` without Revit.
+
+### Org-standard audit (REV-179)
+
+`check_model_standard` splits the way `check_link_clashes`/`compare_model_versions`
+already do: `CheckModelStandardEventHandler.cs` reports raw facts only (what
+types exist, how many elements sit without a level, which workset a category
+really lives in) — cheap regardless of model size, because it reports counts
+and a 5-id sample, never full element lists. Grading lives in
+`server/src/quality/standardRules.ts`, driven entirely by a config the org
+supplies (`server/model-standard.config.json`, see
+`model-standard.config.example.json` for the shape) — no config means no
+naming rules, since there is no sane organization-wide default for what a
+type name should look like, but the structural checks (level, workset,
+duplicate type names, unused types, empty groups, unloaded links) still run.
+Findings come back critical / поправить / на усмотрение, most severe first,
+and `standardRules.test.ts` covers every rule without Revit.
 
 `check_sheet_readiness` shares `SHEET_FIELD_ALIASES` with `fill_title_block`, so a
 штамп this can check is one that can be filled — hand its output straight to
@@ -138,6 +186,76 @@ left ungraded rather than reported as "everything blank".
 **Not covered yet:** views that sit on no sheet, and schedules with zero rows.
 Both need a new Revit read; `check_sheet_readiness` deliberately stayed
 server-only so it ships with a server update and no plugin reinstall.
+
+### Fill-by-rule and completeness (REV-181)
+
+Both tools take an `elementIds` list the caller already picked (usually via
+`ai_element_filter`) rather than doing their own element search — one job per
+tool. `server/src/utils/parameterBatch.ts` reads `parameterNames` for those ids
+through `get_elements_parameters`, batching in groups of 100 (its own
+per-ExternalEvent cap) on one held connection; a parameter absent from an
+element (not just empty) folds into the same "missing" bucket `hasValue()`
+already uses, so callers never special-case it.
+
+`check_data_completeness` runs `server/src/quality/dataCompleteness.ts`
+against that read and reports which elements are missing which required
+fields, plus a `byField` summary — never just a bare count, per the ticket.
+
+`fill_parameters_by_rule` runs `server/src/quality/fillRules.ts`: a template
+like `"{Тип} {Толщина}мм"` resolves from each element's own parameters
+(`resolveTemplate`), and `planFill` decides per element whether to write —
+skipping (and naming) an element missing a source field, and skipping one
+whose target parameter already has a non-empty value unless `overwrite: true`
+is also passed. `confirm` defaults to false: the reply is always a full
+preview first, and only `confirm: true` calls `set_elements_parameters` (also
+batched in groups of 100) to actually write.
+
+### Project brief library (REV-182)
+
+`server/src/projectBrief/` mirrors `server/src/normatives/` — extract → save →
+query by topic, honest "not found" instead of a guess — but the document is
+the project's own ТЗ / задание на проектирование / протокол совещания, not a
+normative code. One tool covers the library end-to-end
+(`query_project_brief`, action-based like `extract_norm_rules_from_pdf`:
+`filePath` (.pdf/.docx) to extract, `saveToLibrary: true` to persist, `topic`
+to search); `check_against_brief` numerically compares the model's rooms
+against whatever `room_count`/`room_area_min` requirements are saved.
+
+**Built on general heuristics, not a real sample ТЗ** — the user had none on
+hand when this shipped (unlike normatives' curated ГОСТ/СП texts, and unlike
+REV-179/180/181's live-model grounding). `extractRequirements.ts`'s own header
+says so explicitly and treats every pattern as a starting set: extend it the
+moment a real document shows a phrasing it misses. Its vocabulary
+(студия/N-комнатная квартира/пентхаус/машиноместо/кладовая/офис/торговое
+помещение/квартира) is apartment-programme wording; live-tested against the
+real production model's actual room names ("Кухня", "Ванная", …), which
+aren't in that vocabulary, extraction correctly produced nothing rather than
+guessing — the honest failure the ticket asks for, not a bug. Every numeric
+pattern requires an unambiguous cue ("шт"/"штук", "не менее", "количество")
+rather than nearest-number proximity, because a false positive (wrong count
+attributed to the wrong room type) is worse than a false negative here.
+
+Caught by the unit tests before shipping, twice: JS `\w` is ASCII-only (same
+gotcha `normatives/extractRules.ts` already documents) — `комнатн\w*` matched
+zero characters of a Cyrillic suffix and silently stopped matching
+"комнатных" one letter in; fixed with an explicit `[а-яё]*` class. Separately,
+`долж\w*`/`предусмотр\w*` were literal stems that are not actually prefixes of
+every conjugated form (до**лж**ен has an е the stem lacked; предусм**атр**ивать
+vs предусм**отр**еть is an о/а aspectual alternation) — fixed by shortening
+the stems and re-testing.
+
+`check_against_brief` matches a requirement's `object` against Revit Room
+names by equality or a `object + " "` / `object + "-"` prefix (so "Студия",
+"Студия 205", "Студия-3" all count toward `object: "студия"`) — live-verified
+against the real model: saved a hand-built requirement for a real room
+name with a deliberately wrong count, and got back the ticket's own message
+shape exactly, `«Ванная»: требуется 79 — в модели 75`, from 572 real rooms via
+`export_room_data`. **Known limitation, not silently papered over:** a Revit
+Room element is one space, not one apartment — a requirement like
+`2-комнатная квартира` has no single Room element carrying that name (an
+apartment is several rooms grouped by a unit parameter this module doesn't
+read), so it comes back `matched: false` with an explanation rather than a
+wrong `0`.
 
 ### Legacy / full-only (keep files, not in default)
 
@@ -764,6 +882,68 @@ The same rule applies one level down: a filter the target cannot parse must be
 refused, never passed on. Revit resolves categories by the exact `OST_*` enum
 and returns *everything* when nothing parses, so category arguments go through
 `normalizeCategoryNames` first.
+
+## Запись действий и повтор на других уровнях (REV-177)
+
+`plugin/Core/Recorder/ActionRecorder.cs` subscribes to `DocumentChanged` once,
+unconditionally, in `Application.cs` (same shape as `DocumentSaved`/`Opened`/
+`Closed` there) — it only ever does anything while the panel's "⏺ Запись"
+toggle is on. Recording never opens its own transaction and only ever reads
+what Revit already committed, so it cannot be the thing that breaks a real
+modeling transaction; a capture failure is swallowed by design.
+
+**Modify capture is a merge, not a separate step.** An edit to an element
+created earlier in the *same* recording (e.g. typing a Mark right after
+drawing a wall) folds into that element's own create action rather than
+becoming its own "modify" — matching how a person would describe it. A
+pre-existing element the user edited becomes its own modify action, but is
+never replayed (see below) — this handler only ever creates new elements, it
+never touches anything that was already on the target level.
+
+A saved recipe is one JSON file in `%USERPROFILE%\.mcp-servers-for-revit\
+recordings\` — the plugin (`RecordingStore.cs`) and commandset
+(`ReplayRecordingEventHandler.cs`) are separate assemblies with no project
+reference between them, so this directory and the exact field names in
+`RecordedAction`/`ReplayRecordingModels.cs` ARE the contract, not a shared
+compiled type.
+
+| Tool | Revit command | What it does |
+|------|---------------|--------------|
+| `replay_recording` | `replay_recording` | `action:"list"` reads the recordings directory directly (no Revit needed); given `recordingId` + `targetLevelNames` or `fromFloor`/`toFloor`, replays the recipe — preview by default, `confirm:true` to create |
+
+**Scope, live-verified rather than assumed:**
+- Only wall (straight-line) and point-based family-instance creates replay.
+  A hosted instance (door/window) whose host wall is itself part of the same
+  recording resolves the host from what was (or would be) just created; a
+  host outside the recording falls back to the nearest existing wall on the
+  target level within ~50mm of the original host's own midpoint. Neither path
+  found → the action fails with a stated reason, never a silent skip.
+- Walls keep only X/Y from the recorded curve — Z is rebuilt at 0 and the
+  target level + recorded base offset drive vertical placement, matching how
+  `CreateLineElementEventHandler` already creates walls elsewhere in this
+  codebase. Point-based instances DO shift by the source→target level
+  elevation delta, because `NewFamilyInstance` takes an absolute point Revit
+  does not re-derive from a level the way `Wall.Create` does.
+- A parameter edit or a deletion of a pre-existing (not recorded-created)
+  element is captured for the summary/count but never replayed on another
+  level — the safety property that makes an unattended multi-level replay
+  defensible at all.
+- **Known gap, found live, not fixed:** a curtain-wall-style door family
+  (`AC_ДверьВитражная_...`) does not expose a plain `LocationPoint` the way an
+  ordinary hosted door does, so it records as `не поддерживается для повтора`
+  — confirmed live by recording one, then re-testing with an ordinary
+  `AC_Дверь_Двупольная_Деревянная` door, which captured and replayed cleanly.
+  Curtain-panel-based door placement would need its own code path.
+- **Revit's own internal bookkeeping shows up as noise, on purpose, not
+  filtered out.** Live testing on the real model consistently surfaced 3–4
+  extra "modify" entries for unrelated pre-existing elements (and once a
+  "delete") on every single wall/door creation, regardless of what was
+  actually drawn — Revit updates its own dependent bookkeeping elements
+  (survey/project base point-adjacent elements, and the door's own
+  `FamilySymbol` reporting "modified" when a new instance activates it) on
+  any geometry change anywhere in the document. These are recorded honestly
+  (never silently dropped) and always refused at replay time, same as any
+  other pre-existing-element edit.
 
 ## Checklist: adding a tool
 

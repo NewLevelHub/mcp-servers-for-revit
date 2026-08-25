@@ -117,6 +117,31 @@ public class LearningModeTests
     }
 
     [Fact]
+    public void A_user_saved_scenario_chip_cannot_escape_tutor_mode_either()
+    {
+        // REV-178: a user-saved scenario carries Profiles:null (the router would normally
+        // decide), not an explicit profile list like a built-in Pilot chip — this confirms
+        // TutorMode.ResolveProfiles' override still applies to that shape, not just to a
+        // chip that names its own profiles. Built directly (no disk I/O) — UserScenarioStoreTests
+        // covers persistence separately; this test is only about the shape ResolveProfiles sees.
+        var userScenario = new ScenarioPreset
+        {
+            Id = "user_test123",
+            Label = "Мой сценарий",
+            Prompt = "Построй стены и двери",
+            Profiles = null,
+            IsUserCreated = true,
+        };
+
+        Assert.Null(userScenario.Profiles);
+
+        var resolved = TutorMode.ResolveProfiles(enabled: true, requested: userScenario.Profiles);
+
+        Assert.Equal(new[] { ToolCatalog.Profiles.Learning }, resolved.ToArray());
+        Assert.False(ToolCatalog.IsToolAllowed("create_line_based_element", resolved));
+    }
+
+    [Fact]
     public void Turning_the_toggle_off_removes_learning_from_the_request()
     {
         // Обычная работа с урезанным до чтения каталогом выглядела бы как поломка.

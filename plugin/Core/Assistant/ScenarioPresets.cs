@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace revit_mcp_plugin.Core.Assistant
@@ -14,8 +15,16 @@ namespace revit_mcp_plugin.Core.Assistant
         public string AgentInstruction { get; set; }
         /// <summary>Подсказка при наведении на чип — что будет сделано.</summary>
         public string Hint { get; set; }
-        /// <summary>Assistant tool profiles for REV-112 (chip → exact profiles, no router).</summary>
+        /// <summary>
+        /// Assistant tool profiles for REV-112 (chip → exact profiles, no router). Left null on a
+        /// user-saved scenario (REV-178) — the router decides, same as free-form typing would;
+        /// TutorMode.ResolveProfiles overrides this either way when the toggle is on, null or not.
+        /// </summary>
         public string[] Profiles { get; set; }
+
+        /// <summary>REV-178: true only for a scenario the user saved from chat — built-in Pilot presets are always false and are never renamed/deleted through UserScenarioStore.</summary>
+        public bool IsUserCreated { get; set; }
+        public DateTime CreatedUtc { get; set; }
     }
 
     public static class ScenarioPresets

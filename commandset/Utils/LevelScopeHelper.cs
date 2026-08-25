@@ -116,5 +116,32 @@ namespace RevitMCPCommandSet.Utils
 
             return null;
         }
+
+        /// <summary>Same number extraction as ExtractFloorKey, but as an int for range queries (REV-177: "этажи 3–16").</summary>
+        public static bool TryExtractFloorNumber(string name, out int number)
+        {
+            number = 0;
+            var key = ExtractFloorKey(name);
+            return key != null && int.TryParse(key, out number);
+        }
+
+        /// <summary>
+        /// Every level in the document whose name's floor number falls in [from, to] inclusive,
+        /// ordered by elevation. "Этажи 3–16" from a replay request becomes this list — a level
+        /// named "3 этаж" and one named "этаж 3" both resolve the same way, same as everywhere
+        /// else this file already treats level names loosely (REV-177).
+        /// </summary>
+        public static List<Level> ResolveLevelsInRange(Document doc, int from, int to)
+        {
+            var lo = Math.Min(from, to);
+            var hi = Math.Max(from, to);
+
+            return new FilteredElementCollector(doc)
+                .OfClass(typeof(Level))
+                .Cast<Level>()
+                .Where(level => TryExtractFloorNumber(level.Name, out var n) && n >= lo && n <= hi)
+                .OrderBy(level => level.Elevation)
+                .ToList();
+        }
     }
 }
