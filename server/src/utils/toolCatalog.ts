@@ -125,6 +125,8 @@ export const TOOL_GROUPS: Readonly<Record<ToolGroupName, readonly string[]>> = {
     "check_model_standard",
     "explain_model_warnings",
     "fix_redundant_room_separators",
+    "check_data_completeness",
+    "fill_parameters_by_rule",
   ],
 
   /** Schedules, ведомости, and the bulk exports that back them. */

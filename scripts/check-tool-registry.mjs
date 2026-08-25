@@ -67,6 +67,12 @@ const TOOL_TWINS = [
   // Reaching for the raw one when the question is "what should I actually fix
   // first" means re-deriving the ranking by hand.
   ["get_model_warnings", "explain_model_warnings"],
+  // One says which elements/fields are still blank before a spec is assembled, the
+  // other fills a parameter from the others already set on the same elements
+  // (REV-181). Filling first without checking completeness can paper over a hole a
+  // template can't reach (a source field itself missing); checking without a way to
+  // fill leaves the fix as manual per-element typing.
+  ["check_data_completeness", "fill_parameters_by_rule"],
 ];
 
 /**
@@ -97,6 +103,12 @@ const SERVER_ONLY_TOOLS = new Set([
   // Diffs two model_snapshots rows (or a snapshot and a fresh export_model_snapshot
   // read) in TypeScript; no Revit command of its own (REV-171).
   "compare_model_versions",
+  // Orchestrates get_elements_parameters + set_elements_parameters in TypeScript
+  // (template fill/preview logic), no Revit command of its own (REV-181).
+  "fill_parameters_by_rule",
+  // Orchestrates get_elements_parameters in TypeScript (completeness report), no
+  // Revit command of its own (REV-181).
+  "check_data_completeness",
   // Orchestrates existing commands (export_sheet_set's listRevisions, create_schedule,
   // place_view_on_sheet, set_elements_parameters) — no Revit command of its own (REV-174).
   "create_sheet_index",

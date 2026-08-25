@@ -44,7 +44,7 @@ is in neither, so nothing can go missing silently.
 | Group | Contents |
 |-------|----------|
 | `norms` | the `check_*` family, `run_norm_audit`, `apply_norm_result`, the rule library, and the geometry readers they feed on |
-| `quality` | `get_model_warnings` / `explain_model_warnings`, `fix_redundant_room_separators`, `check_sheet_readiness`, `check_model_standard` — model health before issue, and an audit against the organization's own BIM standard |
+| `quality` | `get_model_warnings` / `explain_model_warnings`, `fix_redundant_room_separators`, `check_sheet_readiness`, `check_model_standard` — model health before issue, and an audit against the organization's own BIM standard; `check_data_completeness` / `fill_parameters_by_rule` — blank required fields before a spec is assembled, and filling one parameter from a template of the others |
 | `schedules` | schedules and ведомости, `validate_schedule`, bulk data export |
 | `sheets` | sheets, title blocks, view placement, auto-layout, ТЭП table, `export_sheet_set` — печать/экспорт готового комплекта, `create_sheet_index` — ведомость, перенумерация, дыры/дубли |
 | `annotation` | dimensions, tags, text notes, filled regions, node details |
@@ -125,9 +125,12 @@ which is a different question from "does it meet СП/ГОСТ" — hence their 
 | `explain_model_warnings` | *(server-only, wraps `get_model_warnings`)* | the same data, graded: plain-language risk/fix per warning kind, sorted by danger rather than count (REV-180) |
 | `check_sheet_readiness` | *(server-only)* | sheets via `ai_element_filter` + `get_elements_parameters`: blank штамп lines, missing/duplicate sheet numbers, blank sheet names |
 | `check_model_standard` | `check_model_standard` | loaded types + instance counts, elements without a level, workset per category, groups, views, links — graded against the organization's own config (REV-179) |
+| `check_data_completeness` | *(server-only, wraps `get_elements_parameters`)* | which of the given elements are missing which required parameters — by element and by field, never just a count (REV-181) |
+| `fill_parameters_by_rule` | *(server-only, wraps `get_elements_parameters` + `set_elements_parameters`)* | fills one parameter from a `{Token}` template of the others already set on the same elements, preview by default (REV-181) |
 
-All four are read-only and open no transaction. `fix_redundant_room_separators`
-(below) is the one exception that writes to the model, and only after `confirm: true`.
+All are read-only and open no transaction, except `fix_redundant_room_separators`
+(writes only after `confirm: true`) and `fill_parameters_by_rule` (writes only
+after `confirm: true`).
 
 ### Explaining and fixing warnings (REV-180)
 
@@ -183,6 +186,29 @@ left ungraded rather than reported as "everything blank".
 **Not covered yet:** views that sit on no sheet, and schedules with zero rows.
 Both need a new Revit read; `check_sheet_readiness` deliberately stayed
 server-only so it ships with a server update and no plugin reinstall.
+
+### Fill-by-rule and completeness (REV-181)
+
+Both tools take an `elementIds` list the caller already picked (usually via
+`ai_element_filter`) rather than doing their own element search — one job per
+tool. `server/src/utils/parameterBatch.ts` reads `parameterNames` for those ids
+through `get_elements_parameters`, batching in groups of 100 (its own
+per-ExternalEvent cap) on one held connection; a parameter absent from an
+element (not just empty) folds into the same "missing" bucket `hasValue()`
+already uses, so callers never special-case it.
+
+`check_data_completeness` runs `server/src/quality/dataCompleteness.ts`
+against that read and reports which elements are missing which required
+fields, plus a `byField` summary — never just a bare count, per the ticket.
+
+`fill_parameters_by_rule` runs `server/src/quality/fillRules.ts`: a template
+like `"{Тип} {Толщина}мм"` resolves from each element's own parameters
+(`resolveTemplate`), and `planFill` decides per element whether to write —
+skipping (and naming) an element missing a source field, and skipping one
+whose target parameter already has a non-empty value unless `overwrite: true`
+is also passed. `confirm` defaults to false: the reply is always a full
+preview first, and only `confirm: true` calls `set_elements_parameters` (also
+batched in groups of 100) to actually write.
 
 ### Legacy / full-only (keep files, not in default)
 
