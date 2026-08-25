@@ -226,6 +226,29 @@
               </ControlTemplate>
             </Button.Template>
           </Button>
+          <!-- REV-178: сохранить последний запрос из чата как свой чип-сценарий. -->
+          <Button x:Name="SaveScenarioButton" Content="💾 Сценарий"
+                  ToolTip="Сохранить последний запрос как чип — переживает перезапуск Revit"
+                  Margin="0,0,6,4" Padding="8,5" FontSize="11" FontWeight="SemiBold"
+                  Cursor="Hand" Click="SaveScenarioButton_Click" IsEnabled="False"
+                  Background="#2F5D8A" Foreground="White" BorderThickness="0">
+            <Button.Template>
+              <ControlTemplate TargetType="Button">
+                <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="12"
+                        Padding="{TemplateBinding Padding}">
+                  <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <ControlTemplate.Triggers>
+                  <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="bd" Property="Background" Value="#3D7EA6"/>
+                  </Trigger>
+                  <Trigger Property="IsEnabled" Value="False">
+                    <Setter TargetName="bd" Property="Opacity" Value="0.4"/>
+                  </Trigger>
+                </ControlTemplate.Triggers>
+              </ControlTemplate>
+            </Button.Template>
+          </Button>
           <Button x:Name="NewChatButton" Content="+ Новый"
                   ToolTip="Новый диалог — очистить историю и журнал созданных элементов"
                   Margin="0,0,8,4" Padding="10,5" FontSize="11" FontWeight="SemiBold"
