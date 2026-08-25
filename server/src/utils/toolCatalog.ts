@@ -106,6 +106,11 @@ export const TOOL_GROUPS: Readonly<Record<ToolGroupName, readonly string[]>> = {
     "query_norm_rules",
     "save_norm_rule",
     "extract_norm_rules_from_pdf",
+    // Same shape of job, but the document is the project's own ТЗ, not the law
+    // (REV-182) — kept in this group rather than a new one since the workflow
+    // (extract → save → query by topic, honest "not found") is identical.
+    "query_project_brief",
+    "check_against_brief",
     // Hot in the logs, but only ever called to feed a check.
     "get_door_egress_info",
     "get_opening_geometry_info",

@@ -73,6 +73,11 @@ const TOOL_TWINS = [
   // template can't reach (a source field itself missing); checking without a way to
   // fill leaves the fix as manual per-element typing.
   ["check_data_completeness", "fill_parameters_by_rule"],
+  // One extracts/searches a project brief's own text (quotes, qualitative), the other
+  // numerically compares the model's rooms against that library's room_count/
+  // room_area_min rows (REV-182). Reading brief quotes by hand to answer "хватает ли
+  // студий" instead of the numeric check risks a miscount a computer would not make.
+  ["query_project_brief", "check_against_brief"],
 ];
 
 /**
@@ -109,6 +114,12 @@ const SERVER_ONLY_TOOLS = new Set([
   // Orchestrates get_elements_parameters in TypeScript (completeness report), no
   // Revit command of its own (REV-181).
   "check_data_completeness",
+  // PDF/DOCX extraction + local SQLite library, same shape as extract_norm_rules_from_pdf
+  // but no Revit involved at all — no Revit command of its own (REV-182).
+  "query_project_brief",
+  // Orchestrates export_room_data + the saved brief library in TypeScript, no Revit
+  // command of its own (REV-182).
+  "check_against_brief",
   // Orchestrates existing commands (export_sheet_set's listRevisions, create_schedule,
   // place_view_on_sheet, set_elements_parameters) — no Revit command of its own (REV-174).
   "create_sheet_index",

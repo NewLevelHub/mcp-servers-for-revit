@@ -43,7 +43,7 @@ is in neither, so nothing can go missing silently.
 
 | Group | Contents |
 |-------|----------|
-| `norms` | the `check_*` family, `run_norm_audit`, `apply_norm_result`, the rule library, and the geometry readers they feed on |
+| `norms` | the `check_*` family, `run_norm_audit`, `apply_norm_result`, the rule library, and the geometry readers they feed on; `query_project_brief` / `check_against_brief` — the same rule-library shape, but for THIS project's own ТЗ instead of the law (REV-182) |
 | `quality` | `get_model_warnings` / `explain_model_warnings`, `fix_redundant_room_separators`, `check_sheet_readiness`, `check_model_standard` — model health before issue, and an audit against the organization's own BIM standard; `check_data_completeness` / `fill_parameters_by_rule` — blank required fields before a spec is assembled, and filling one parameter from a template of the others |
 | `schedules` | schedules and ведомости, `validate_schedule`, bulk data export |
 | `sheets` | sheets, title blocks, view placement, auto-layout, ТЭП table, `export_sheet_set` — печать/экспорт готового комплекта, `create_sheet_index` — ведомость, перенумерация, дыры/дубли |
@@ -209,6 +209,53 @@ whose target parameter already has a non-empty value unless `overwrite: true`
 is also passed. `confirm` defaults to false: the reply is always a full
 preview first, and only `confirm: true` calls `set_elements_parameters` (also
 batched in groups of 100) to actually write.
+
+### Project brief library (REV-182)
+
+`server/src/projectBrief/` mirrors `server/src/normatives/` — extract → save →
+query by topic, honest "not found" instead of a guess — but the document is
+the project's own ТЗ / задание на проектирование / протокол совещания, not a
+normative code. One tool covers the library end-to-end
+(`query_project_brief`, action-based like `extract_norm_rules_from_pdf`:
+`filePath` (.pdf/.docx) to extract, `saveToLibrary: true` to persist, `topic`
+to search); `check_against_brief` numerically compares the model's rooms
+against whatever `room_count`/`room_area_min` requirements are saved.
+
+**Built on general heuristics, not a real sample ТЗ** — the user had none on
+hand when this shipped (unlike normatives' curated ГОСТ/СП texts, and unlike
+REV-179/180/181's live-model grounding). `extractRequirements.ts`'s own header
+says so explicitly and treats every pattern as a starting set: extend it the
+moment a real document shows a phrasing it misses. Its vocabulary
+(студия/N-комнатная квартира/пентхаус/машиноместо/кладовая/офис/торговое
+помещение/квартира) is apartment-programme wording; live-tested against the
+real production model's actual room names ("Кухня", "Ванная", …), which
+aren't in that vocabulary, extraction correctly produced nothing rather than
+guessing — the honest failure the ticket asks for, not a bug. Every numeric
+pattern requires an unambiguous cue ("шт"/"штук", "не менее", "количество")
+rather than nearest-number proximity, because a false positive (wrong count
+attributed to the wrong room type) is worse than a false negative here.
+
+Caught by the unit tests before shipping, twice: JS `\w` is ASCII-only (same
+gotcha `normatives/extractRules.ts` already documents) — `комнатн\w*` matched
+zero characters of a Cyrillic suffix and silently stopped matching
+"комнатных" one letter in; fixed with an explicit `[а-яё]*` class. Separately,
+`долж\w*`/`предусмотр\w*` were literal stems that are not actually prefixes of
+every conjugated form (до**лж**ен has an е the stem lacked; предусм**атр**ивать
+vs предусм**отр**еть is an о/а aspectual alternation) — fixed by shortening
+the stems and re-testing.
+
+`check_against_brief` matches a requirement's `object` against Revit Room
+names by equality or a `object + " "` / `object + "-"` prefix (so "Студия",
+"Студия 205", "Студия-3" all count toward `object: "студия"`) — live-verified
+against the real model: saved a hand-built requirement for a real room
+name with a deliberately wrong count, and got back the ticket's own message
+shape exactly, `«Ванная»: требуется 79 — в модели 75`, from 572 real rooms via
+`export_room_data`. **Known limitation, not silently papered over:** a Revit
+Room element is one space, not one apartment — a requirement like
+`2-комнатная квартира` has no single Room element carrying that name (an
+apartment is several rooms grouped by a unit parameter this module doesn't
+read), so it comes back `matched: false` with an explanation rather than a
+wrong `0`.
 
 ### Legacy / full-only (keep files, not in default)
 
