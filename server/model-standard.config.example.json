@@ -1,0 +1,25 @@
+{
+  "_comment": "REV-179: copy this file to model-standard.config.json (same folder) and edit for your organization. check_model_standard looks for that exact filename by default; without it, only the structural checks below run (no naming rules).",
+
+  "typeNamePattern": {
+    "_comment": "Regex source (JS RegExp), per Revit category (OST_ name) or \"*\" for every category, tested against type names.",
+    "OST_Doors": "^ДВ-\\d{2,3}$",
+    "OST_Windows": "^ОК-\\d{2,3}$"
+  },
+
+  "familyNamePattern": {
+    "_comment": "Same idea, tested against family names. Skipped for system types (walls, floors) — they have no family.",
+    "*": "^ADSK_"
+  },
+
+  "flagElementsWithoutLevel": true,
+  "flagWorksetOutliers": true,
+  "flagDuplicateTypeNames": true,
+  "flagUnusedTypes": true,
+  "flagSuspiciousGroups": true,
+  "flagViewsWithoutTemplate": false,
+  "flagBrokenLinks": true,
+
+  "worksetOutlierMinCount": 1,
+  "maxGroupInstances": 200
+}

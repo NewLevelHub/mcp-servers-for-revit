@@ -109,6 +109,11 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "check_model_standard",
+      "description": "Сырые факты для аудита BIM-стандарта: типы и семейства с числом экземпляров, элементы без уровня, ворксеты по категориям, группы, виды, связи",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "get_linked_models",
       "description": "Связи Revit: раздел, статус, число элементов и координаты связи в наших координатах",
       "assemblyPath": "RevitMCPCommandSet.dll"

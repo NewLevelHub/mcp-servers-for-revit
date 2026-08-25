@@ -44,7 +44,7 @@ is in neither, so nothing can go missing silently.
 | Group | Contents |
 |-------|----------|
 | `norms` | the `check_*` family, `run_norm_audit`, `apply_norm_result`, the rule library, and the geometry readers they feed on |
-| `quality` | `get_model_warnings`, `check_sheet_readiness` — model health before issue |
+| `quality` | `get_model_warnings`, `check_sheet_readiness`, `check_model_standard` — model health before issue, and an audit against the organization's own BIM standard |
 | `schedules` | schedules and ведомости, `validate_schedule`, bulk data export |
 | `sheets` | sheets, title blocks, view placement, auto-layout, ТЭП table, `export_sheet_set` — печать/экспорт готового комплекта, `create_sheet_index` — ведомость, перенумерация, дыры/дубли |
 | `annotation` | dimensions, tags, text notes, filled regions, node details |
@@ -115,15 +115,33 @@ static catalog, a hidden tool stays unreachable for the whole session.
 
 ## Model health before issue (REV-47)
 
-Two tools answer "is this ready to go out", which is a different question from
-"does it meet СП/ГОСТ" — hence their own `quality` group rather than `norms`.
+Three tools answer "is this ready to go out" / "is this model in good shape",
+which is a different question from "does it meet СП/ГОСТ" — hence their own
+`quality` group rather than `norms`.
 
 | Tool | Revit command | What it reads |
 |------|---------------|---------------|
 | `get_model_warnings` | `get_model_warnings` | `Document.GetWarnings()` — the «Просмотр предупреждений» list, folded by warning text, biggest group first |
 | `check_sheet_readiness` | *(server-only)* | sheets via `ai_element_filter` + `get_elements_parameters`: blank штамп lines, missing/duplicate sheet numbers, blank sheet names |
+| `check_model_standard` | `check_model_standard` | loaded types + instance counts, elements without a level, workset per category, groups, views, links — graded against the organization's own config (REV-179) |
 
-Both are read-only and open no transaction.
+All three are read-only and open no transaction.
+
+### Org-standard audit (REV-179)
+
+`check_model_standard` splits the way `check_link_clashes`/`compare_model_versions`
+already do: `CheckModelStandardEventHandler.cs` reports raw facts only (what
+types exist, how many elements sit without a level, which workset a category
+really lives in) — cheap regardless of model size, because it reports counts
+and a 5-id sample, never full element lists. Grading lives in
+`server/src/quality/standardRules.ts`, driven entirely by a config the org
+supplies (`server/model-standard.config.json`, see
+`model-standard.config.example.json` for the shape) — no config means no
+naming rules, since there is no sane organization-wide default for what a
+type name should look like, but the structural checks (level, workset,
+duplicate type names, unused types, empty groups, unloaded links) still run.
+Findings come back critical / поправить / на усмотрение, most severe first,
+and `standardRules.test.ts` covers every rule without Revit.
 
 `check_sheet_readiness` shares `SHEET_FIELD_ALIASES` with `fill_title_block`, so a
 штамп this can check is one that can be filled — hand its output straight to
