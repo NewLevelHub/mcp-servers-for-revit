@@ -211,6 +211,9 @@ export const TOOL_GROUPS: Readonly<Record<ToolGroupName, readonly string[]>> = {
     "ensure_opening_type",
     "load_family",
     "ai_element_filter",
+    // Replays a panel-recorded action recipe on other levels (REV-177) — creation, same as
+    // the rest of this group, just from a saved recipe instead of a fresh description.
+    "replay_recording",
   ],
 
   /** Escape hatches, kept apart so neither is reached for by accident. */

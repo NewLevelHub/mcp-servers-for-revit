@@ -883,6 +883,68 @@ refused, never passed on. Revit resolves categories by the exact `OST_*` enum
 and returns *everything* when nothing parses, so category arguments go through
 `normalizeCategoryNames` first.
 
+## Запись действий и повтор на других уровнях (REV-177)
+
+`plugin/Core/Recorder/ActionRecorder.cs` subscribes to `DocumentChanged` once,
+unconditionally, in `Application.cs` (same shape as `DocumentSaved`/`Opened`/
+`Closed` there) — it only ever does anything while the panel's "⏺ Запись"
+toggle is on. Recording never opens its own transaction and only ever reads
+what Revit already committed, so it cannot be the thing that breaks a real
+modeling transaction; a capture failure is swallowed by design.
+
+**Modify capture is a merge, not a separate step.** An edit to an element
+created earlier in the *same* recording (e.g. typing a Mark right after
+drawing a wall) folds into that element's own create action rather than
+becoming its own "modify" — matching how a person would describe it. A
+pre-existing element the user edited becomes its own modify action, but is
+never replayed (see below) — this handler only ever creates new elements, it
+never touches anything that was already on the target level.
+
+A saved recipe is one JSON file in `%USERPROFILE%\.mcp-servers-for-revit\
+recordings\` — the plugin (`RecordingStore.cs`) and commandset
+(`ReplayRecordingEventHandler.cs`) are separate assemblies with no project
+reference between them, so this directory and the exact field names in
+`RecordedAction`/`ReplayRecordingModels.cs` ARE the contract, not a shared
+compiled type.
+
+| Tool | Revit command | What it does |
+|------|---------------|--------------|
+| `replay_recording` | `replay_recording` | `action:"list"` reads the recordings directory directly (no Revit needed); given `recordingId` + `targetLevelNames` or `fromFloor`/`toFloor`, replays the recipe — preview by default, `confirm:true` to create |
+
+**Scope, live-verified rather than assumed:**
+- Only wall (straight-line) and point-based family-instance creates replay.
+  A hosted instance (door/window) whose host wall is itself part of the same
+  recording resolves the host from what was (or would be) just created; a
+  host outside the recording falls back to the nearest existing wall on the
+  target level within ~50mm of the original host's own midpoint. Neither path
+  found → the action fails with a stated reason, never a silent skip.
+- Walls keep only X/Y from the recorded curve — Z is rebuilt at 0 and the
+  target level + recorded base offset drive vertical placement, matching how
+  `CreateLineElementEventHandler` already creates walls elsewhere in this
+  codebase. Point-based instances DO shift by the source→target level
+  elevation delta, because `NewFamilyInstance` takes an absolute point Revit
+  does not re-derive from a level the way `Wall.Create` does.
+- A parameter edit or a deletion of a pre-existing (not recorded-created)
+  element is captured for the summary/count but never replayed on another
+  level — the safety property that makes an unattended multi-level replay
+  defensible at all.
+- **Known gap, found live, not fixed:** a curtain-wall-style door family
+  (`AC_ДверьВитражная_...`) does not expose a plain `LocationPoint` the way an
+  ordinary hosted door does, so it records as `не поддерживается для повтора`
+  — confirmed live by recording one, then re-testing with an ordinary
+  `AC_Дверь_Двупольная_Деревянная` door, which captured and replayed cleanly.
+  Curtain-panel-based door placement would need its own code path.
+- **Revit's own internal bookkeeping shows up as noise, on purpose, not
+  filtered out.** Live testing on the real model consistently surfaced 3–4
+  extra "modify" entries for unrelated pre-existing elements (and once a
+  "delete") on every single wall/door creation, regardless of what was
+  actually drawn — Revit updates its own dependent bookkeeping elements
+  (survey/project base point-adjacent elements, and the door's own
+  `FamilySymbol` reporting "modified" when a new instance activates it) on
+  any geometry change anywhere in the document. These are recorded honestly
+  (never silently dropped) and always refused at replay time, same as any
+  other pre-existing-element edit.
+
 ## Checklist: adding a tool
 
 1. Implement `commandset` Command + EventHandler (if Revit work is needed).

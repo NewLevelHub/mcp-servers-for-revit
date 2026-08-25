@@ -17,6 +17,7 @@ using Microsoft.Win32;
 using revit_mcp_plugin.Configuration;
 using revit_mcp_plugin.Core;
 using revit_mcp_plugin.Core.Assistant;
+using revit_mcp_plugin.Core.Recorder;
 
 namespace revit_mcp_plugin.UI.Assistant
 {
@@ -99,6 +100,45 @@ namespace revit_mcp_plugin.UI.Assistant
             // Человек должен видеть в переписке, где он находится: молчаливая смена режима
             // выглядит как «ассистент вдруг перестал работать».
             AddBotMessage(TutorMode.NoticeFor(_tutorMode));
+        }
+
+        /// <summary>
+        /// REV-177: start/stop the panel's own action recording. Not persisted across a Revit
+        /// restart the way TutorMode is — recording is inherently session-scoped, so there is
+        /// nothing to restore on load. Replay itself is a normal tool call (replay_recording),
+        /// not wired here — ask the assistant "повтори это на этажах 4-9" once a recording exists.
+        /// </summary>
+        private void RecordActionsToggle_Changed(object sender, RoutedEventArgs e)
+        {
+            var isChecked = RecordActionsToggle.IsChecked == true;
+
+            if (isChecked)
+            {
+                var doc = _uiApp?.ActiveUIDocument?.Document;
+                var view = _uiApp?.ActiveUIDocument?.ActiveView;
+                if (doc == null)
+                {
+                    AddBotMessage("Не удалось начать запись: нет активного документа.");
+                    // Resets the toggle; this re-enters here with isChecked:false, where
+                    // ActionRecorder.Stop() harmlessly returns null since Start() never ran.
+                    RecordActionsToggle.IsChecked = false;
+                    return;
+                }
+
+                ActionRecorder.Start(doc, view, null);
+                AddBotMessage(
+                    "⏺ Запись включена. Делайте действия в Revit — стены, двери, окна, отметки " +
+                    "(марка, комментарий). Нажмите кнопку ещё раз, чтобы остановить и сохранить.");
+                return;
+            }
+
+            var recipe = ActionRecorder.Stop();
+            if (recipe == null)
+                return;
+
+            AddBotMessage(
+                $"⏹ Запись «{recipe.Name}» сохранена.\n{recipe.SummaryText}\n\n" +
+                "Чтобы повторить на других этажах, напишите, например: «повтори это на этажах 4–9».");
         }
 
         private void ShowWelcomeMessage()

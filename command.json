@@ -114,6 +114,11 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "replay_recording",
+      "description": "Повторяет записанные вручную действия (стены, двери/окна, отмеченные параметры) на других уровнях — превью по умолчанию, создаёт только с confirm=true",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "check_model_standard",
       "description": "Сырые факты для аудита BIM-стандарта: типы и семейства с числом экземпляров, элементы без уровня, ворксеты по категориям, группы, виды, связи",
       "assemblyPath": "RevitMCPCommandSet.dll"

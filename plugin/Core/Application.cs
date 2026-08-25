@@ -62,6 +62,10 @@ namespace revit_mcp_plugin.Core
             application.ControlledApplication.DocumentOpened += OnDocumentOpened;
             application.ControlledApplication.DocumentClosed += OnDocumentClosed;
 
+            // REV-177: always subscribed, like the three above — ActionRecorder itself
+            // no-ops unless a recording is in progress, so this costs nothing when idle.
+            application.ControlledApplication.DocumentChanged += Recorder.ActionRecorder.OnDocumentChanged;
+
             // Dismisses warnings raised while a tool call is running, so a modal
             // dialog nobody can click cannot stall the rest of the turn. Armed
             // only around agent commands — see AgentFailureGuard.
@@ -168,6 +172,7 @@ namespace revit_mcp_plugin.Core
             application.ControlledApplication.DocumentSaved -= OnDocumentSaved;
             application.ControlledApplication.DocumentOpened -= OnDocumentOpened;
             application.ControlledApplication.DocumentClosed -= OnDocumentClosed;
+            application.ControlledApplication.DocumentChanged -= Recorder.ActionRecorder.OnDocumentChanged;
             application.ControlledApplication.FailuresProcessing -=
                 AgentFailureGuard.OnFailuresProcessing;
             if (_uiApp != null)
