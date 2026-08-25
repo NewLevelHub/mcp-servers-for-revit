@@ -10,7 +10,8 @@ export function registerGetModelWarningsTool(server: McpServer) {
       "Occurrences are folded by warning text, biggest group first, each with a count, the categories involved " +
       "and a sample of element ids. Use it before issuing a set, when the model behaves oddly, or after a bulk " +
       "edit or a DWG trace to see what it left behind. Read-only: it never changes the model. " +
-      "Reports what Revit already flagged — for norm compliance use run_norm_audit or the check_* tools instead.",
+      "Reports what Revit already flagged — for norm compliance use run_norm_audit or the check_* tools instead. " +
+      "Want a plain-language explanation and a danger-sorted list instead of raw text? Use explain_model_warnings.",
     {
       severity: z
         .enum(["Warning", "Error", "DocumentCorruption"])

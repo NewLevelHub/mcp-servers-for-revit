@@ -109,6 +109,11 @@
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
+      "commandName": "fix_redundant_room_separators",
+      "description": "Удаляет линии-разделители помещений, ставшие лишними из-за перекрывающей стены — превью по умолчанию, применяет только с confirm=true",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
       "commandName": "check_model_standard",
       "description": "Сырые факты для аудита BIM-стандарта: типы и семейства с числом экземпляров, элементы без уровня, ворксеты по категориям, группы, виды, связи",
       "assemblyPath": "RevitMCPCommandSet.dll"

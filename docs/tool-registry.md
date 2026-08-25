@@ -44,7 +44,7 @@ is in neither, so nothing can go missing silently.
 | Group | Contents |
 |-------|----------|
 | `norms` | the `check_*` family, `run_norm_audit`, `apply_norm_result`, the rule library, and the geometry readers they feed on |
-| `quality` | `get_model_warnings`, `check_sheet_readiness`, `check_model_standard` — model health before issue, and an audit against the organization's own BIM standard |
+| `quality` | `get_model_warnings` / `explain_model_warnings`, `fix_redundant_room_separators`, `check_sheet_readiness`, `check_model_standard` — model health before issue, and an audit against the organization's own BIM standard |
 | `schedules` | schedules and ведомости, `validate_schedule`, bulk data export |
 | `sheets` | sheets, title blocks, view placement, auto-layout, ТЭП table, `export_sheet_set` — печать/экспорт готового комплекта, `create_sheet_index` — ведомость, перенумерация, дыры/дубли |
 | `annotation` | dimensions, tags, text notes, filled regions, node details |
@@ -121,11 +121,38 @@ which is a different question from "does it meet СП/ГОСТ" — hence their 
 
 | Tool | Revit command | What it reads |
 |------|---------------|---------------|
-| `get_model_warnings` | `get_model_warnings` | `Document.GetWarnings()` — the «Просмотр предупреждений» list, folded by warning text, biggest group first |
+| `get_model_warnings` | `get_model_warnings` | `Document.GetWarnings()` — the «Просмотр предупреждений» list, folded by `FailureDefinitionId` (not the localized text — REV-180), biggest group first |
+| `explain_model_warnings` | *(server-only, wraps `get_model_warnings`)* | the same data, graded: plain-language risk/fix per warning kind, sorted by danger rather than count (REV-180) |
 | `check_sheet_readiness` | *(server-only)* | sheets via `ai_element_filter` + `get_elements_parameters`: blank штамп lines, missing/duplicate sheet numbers, blank sheet names |
 | `check_model_standard` | `check_model_standard` | loaded types + instance counts, elements without a level, workset per category, groups, views, links — graded against the organization's own config (REV-179) |
 
-All three are read-only and open no transaction.
+All four are read-only and open no transaction. `fix_redundant_room_separators`
+(below) is the one exception that writes to the model, and only after `confirm: true`.
+
+### Explaining and fixing warnings (REV-180)
+
+`get_model_warnings` groups by `FailureDefinitionId.Guid`, not by the warning's
+own description text — Revit's UI language is known to flip between sessions on
+the same machine, and bucketing by localized text would silently split one
+warning kind into two groups (or merge two different ones) depending on which
+language happened to be active. `explain_model_warnings` calls the same command
+and looks each GUID up in `server/src/quality/warningCatalog.ts`, a catalog
+grounded in real data — every entry was harvested live from a real
+35k-element production model, not written from a Revit API reference. An
+unrecognized GUID still gets a fair fallback (Revit's own text, generic
+risk copy, never auto-fixable) rather than going silent.
+
+Sorting is by `dangerRank` (1 = most urgent), not raw occurrence count: on the
+model this was built against, «Стены перекрываются» at ordinary wall joins
+fired **1628 times** and is dangerRank 4 (usually normal Revit behaviour at a
+corner), while a single "two Room elements share one boundary" warning is
+dangerRank 1 (silently wrong area in every schedule that uses it). Only one
+warning kind ships with a working auto-fix — `fix_redundant_room_separators`
+deletes a room-separation line Revit has flagged as redundant because a wall
+already overlaps it, never the wall itself. `dangerRank`/`autoFixable`
+classification for every cataloged GUID (including which ones are
+deliberately *not* auto-fixable, and why) is covered by
+`warningCatalog.test.ts` without Revit.
 
 ### Org-standard audit (REV-179)
 

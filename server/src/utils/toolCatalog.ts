@@ -119,7 +119,13 @@ export const TOOL_GROUPS: Readonly<Record<ToolGroupName, readonly string[]>> = {
    * good shape", not "does it meet СП/ГОСТ", and an architect asks them at
    * different moments.
    */
-  quality: ["get_model_warnings", "check_sheet_readiness", "check_model_standard"],
+  quality: [
+    "get_model_warnings",
+    "check_sheet_readiness",
+    "check_model_standard",
+    "explain_model_warnings",
+    "fix_redundant_room_separators",
+  ],
 
   /** Schedules, ведомости, and the bulk exports that back them. */
   schedules: [
@@ -209,8 +215,9 @@ export const TOOL_GROUP_SUMMARIES: Readonly<Record<ToolGroupName, string>> = {
   norms:
     "norm checks — fire doors, evacuation width/distance, room depth, min dimensions, accessibility — plus the rule library",
   quality:
-    "model health before issue — Revit's own warnings, blank/duplicate штамп fields on sheets, and " +
-    "an audit against the organization's own BIM standard (naming, levels, worksets, duplicate types)",
+    "model health before issue — Revit's own warnings (raw or explained in plain language, sorted " +
+    "by real danger, with one safe auto-fix), blank/duplicate штамп fields on sheets, and an audit " +
+    "against the organization's own BIM standard (naming, levels, worksets, duplicate types)",
   schedules:
     "schedules and ведомости (doors, windows, floors, finishes) plus bulk data export",
   sheets: "sheets, title blocks, view placement, auto-layout, ТЭП table, printing/exporting the finished set, sheet index and renumbering",

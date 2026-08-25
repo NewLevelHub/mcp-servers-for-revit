@@ -62,6 +62,11 @@ const TOOL_TWINS = [
   // and renumbers the листы behind them (REV-174). Renumbering after files are
   // already named from the old numbers defeats the point of doing it first.
   ["export_sheet_set", "create_sheet_index"],
+  // One is the raw Revit warning list, the other grades and explains the same
+  // data for a ГАП and sorts by real danger, not occurrence count (REV-180).
+  // Reaching for the raw one when the question is "what should I actually fix
+  // first" means re-deriving the ranking by hand.
+  ["get_model_warnings", "explain_model_warnings"],
 ];
 
 /**
@@ -84,6 +89,9 @@ const SERVER_ONLY_TOOLS = new Set([
   "fill_title_block",
   // orchestrates ai_element_filter + get_elements_parameters, no Revit command of its own
   "check_sheet_readiness",
+  // Grades+explains get_model_warnings' own output in TypeScript; no Revit command of
+  // its own (REV-180).
+  "explain_model_warnings",
   // Сверка общей площадки: считает по данным get_linked_models, своей команды нет.
   "check_shared_site",
   // Diffs two model_snapshots rows (or a snapshot and a fresh export_model_snapshot

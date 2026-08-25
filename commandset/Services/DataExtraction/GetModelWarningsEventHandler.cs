@@ -64,10 +64,18 @@ namespace RevitMCPCommandSet.Services.DataExtraction
                     }
 
                     var description = warning.GetDescriptionText() ?? string.Empty;
-                    if (!buckets.TryGetValue(description, out var bucket))
+                    // The GUID is what stays stable across a language flip (REV-180); text is
+                    // still the bucket key fallback for the rare warning whose GUID read fails,
+                    // so one bad occurrence does not lose the whole group.
+                    string guid;
+                    try { guid = warning.GetFailureDefinitionId().Guid.ToString(); }
+                    catch { guid = string.Empty; }
+                    var bucketKey = string.IsNullOrEmpty(guid) ? description : guid;
+
+                    if (!buckets.TryGetValue(bucketKey, out var bucket))
                     {
-                        bucket = new WarningBucket { Description = description, Severity = severity };
-                        buckets[description] = bucket;
+                        bucket = new WarningBucket { Description = description, Severity = severity, FailureDefinitionGuid = guid };
+                        buckets[bucketKey] = bucket;
                     }
 
                     bucket.Count++;
@@ -135,6 +143,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
             return new ModelWarningGroup
             {
                 Description = bucket.Description,
+                FailureDefinitionGuid = bucket.FailureDefinitionGuid,
                 Severity = bucket.Severity,
                 Count = bucket.Count,
                 ElementCount = ids.Count,
@@ -148,6 +157,7 @@ namespace RevitMCPCommandSet.Services.DataExtraction
         private sealed class WarningBucket
         {
             public string Description { get; set; } = string.Empty;
+            public string FailureDefinitionGuid { get; set; } = string.Empty;
             public string Severity { get; set; } = string.Empty;
             public int Count { get; set; }
             /// A set: the same element is named by many occurrences of the same warning.
