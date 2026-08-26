@@ -5,7 +5,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              mc:Ignorable="d"
              d:DesignHeight="720" d:DesignWidth="380"
-             Background="#F0F4F8"
+             Background="#F7F8FA"
              FontFamily="Segoe UI"
              AllowDrop="True"
              PreviewDragOver="Attachment_DragOver"
@@ -19,12 +19,22 @@
     <SolidColorBrush x:Key="Line" Color="#D5DEE8"/>
     <SolidColorBrush x:Key="WarnBg" Color="#FFF6E5"/>
     <SolidColorBrush x:Key="WarnBorder" Color="#E0A800"/>
+    <!-- Redesign (soft modern chat): header gradient + translucent-on-navy button surfaces,
+         card shadows instead of hard borders. Old flat brushes above are untouched so the
+         other bubble types (Plan/ToolJournal/AskUser) keep matching without edits. -->
+    <SolidColorBrush x:Key="CardBorder" Color="#E4E9F0"/>
+    <SolidColorBrush x:Key="HeaderChipFill" Color="#26FFFFFF"/>
+    <SolidColorBrush x:Key="HeaderChipFillHover" Color="#3DFFFFFF"/>
+    <LinearGradientBrush x:Key="HeaderGradient" StartPoint="0,0" EndPoint="1,1">
+      <GradientStop Color="#1A2744" Offset="0"/>
+      <GradientStop Color="#284366" Offset="1"/>
+    </LinearGradientBrush>
 
     <Style TargetType="Button" x:Key="ChipButton">
       <Setter Property="Margin" Value="0,0,6,6"/>
       <Setter Property="Padding" Value="11,7"/>
       <Setter Property="Background" Value="White"/>
-      <Setter Property="BorderBrush" Value="{StaticResource Line}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource CardBorder}"/>
       <Setter Property="BorderThickness" Value="1"/>
       <Setter Property="FontSize" Value="11.5"/>
       <Setter Property="Foreground" Value="{StaticResource Navy}"/>
@@ -36,14 +46,14 @@
                     Background="{TemplateBinding Background}"
                     BorderBrush="{TemplateBinding BorderBrush}"
                     BorderThickness="{TemplateBinding BorderThickness}"
-                    CornerRadius="16"
+                    CornerRadius="18"
                     Padding="{TemplateBinding Padding}">
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
-                <Setter TargetName="bd" Property="Background" Value="#E3EEF7"/>
-                <Setter TargetName="bd" Property="BorderBrush" Value="#3D7EA6"/>
+                <Setter TargetName="bd" Property="Background" Value="#EEF4FA"/>
+                <Setter TargetName="bd" Property="BorderBrush" Value="#B9D3E6"/>
               </Trigger>
               <Trigger Property="IsEnabled" Value="False">
                 <Setter TargetName="bd" Property="Opacity" Value="0.45"/>
@@ -65,8 +75,11 @@
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="Button">
-            <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="10"
+            <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="12"
                     Padding="{TemplateBinding Padding}">
+              <Border.Effect>
+                <DropShadowEffect Color="#1A2744" Opacity="0.28" BlurRadius="10" ShadowDepth="2" Direction="270"/>
+              </Border.Effect>
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
@@ -75,6 +88,7 @@
               </Trigger>
               <Trigger Property="IsEnabled" Value="False">
                 <Setter TargetName="bd" Property="Opacity" Value="0.4"/>
+                <Setter TargetName="bd" Property="Effect" Value="{x:Null}"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -86,7 +100,7 @@
       <Setter Property="Background" Value="White"/>
       <Setter Property="Foreground" Value="{StaticResource Muted}"/>
       <Setter Property="Padding" Value="12,7"/>
-      <Setter Property="BorderBrush" Value="{StaticResource Line}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource CardBorder}"/>
       <Setter Property="BorderThickness" Value="1"/>
       <Setter Property="FontSize" Value="12"/>
       <Setter Property="Cursor" Value="Hand"/>
@@ -97,13 +111,79 @@
                     Background="{TemplateBinding Background}"
                     BorderBrush="{TemplateBinding BorderBrush}"
                     BorderThickness="{TemplateBinding BorderThickness}"
-                    CornerRadius="10"
+                    CornerRadius="12"
                     Padding="{TemplateBinding Padding}">
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
-                <Setter TargetName="bd" Property="Background" Value="#F7FAFC"/>
+                <Setter TargetName="bd" Property="Background" Value="#F2F6FA"/>
+                <Setter TargetName="bd" Property="BorderBrush" Value="#C7D3E0"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="bd" Property="Opacity" Value="0.4"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- Shared shape for the header's utility buttons (Экспорт/Сценарий/Новый): translucent
+         white over the gradient header instead of five duplicated solid-steel templates. -->
+    <Style TargetType="Button" x:Key="HeaderChipButton">
+      <Setter Property="Margin" Value="0,0,6,4"/>
+      <Setter Property="Padding" Value="10,5"/>
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Background" Value="{StaticResource HeaderChipFill}"/>
+      <Setter Property="Foreground" Value="White"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="12"
+                    Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="{StaticResource HeaderChipFillHover}"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="bd" Property="Opacity" Value="0.4"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- Same shape, checkable — Наставник/Запись keep their own "on" color via ToggleButton.Tag,
+         read by the shared template below. -->
+    <Style TargetType="ToggleButton" x:Key="HeaderChipToggle">
+      <Setter Property="Margin" Value="0,0,6,4"/>
+      <Setter Property="Padding" Value="10,5"/>
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Background" Value="{StaticResource HeaderChipFill}"/>
+      <Setter Property="Foreground" Value="White"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ToggleButton">
+            <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="12"
+                    Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="{StaticResource HeaderChipFillHover}"/>
+              </Trigger>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}"/>
               </Trigger>
               <Trigger Property="IsEnabled" Value="False">
                 <Setter TargetName="bd" Property="Opacity" Value="0.4"/>
@@ -123,7 +203,7 @@
     </Grid.RowDefinitions>
 
     <!-- Header band -->
-    <Border Grid.Row="0" Background="{StaticResource Navy}" Padding="14,12">
+    <Border Grid.Row="0" Background="{StaticResource HeaderGradient}" Padding="14,12">
       <!-- Кнопки вынесены во вторую строку: панель узкая и докируется сбоку,
            в одну строку с заголовком они его зажимали до «AI-ассисте». -->
       <Grid>
@@ -137,7 +217,13 @@
         </Grid.RowDefinitions>
 
         <Border Grid.Row="0" Grid.Column="0" Width="36" Height="36" CornerRadius="18"
-                Background="#2F5D8A" VerticalAlignment="Center">
+                VerticalAlignment="Center">
+          <Border.Background>
+            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+              <GradientStop Color="#3D7EA6" Offset="0"/>
+              <GradientStop Color="#2F5D8A" Offset="1"/>
+            </LinearGradientBrush>
+          </Border.Background>
           <TextBlock Text="✦" FontSize="16" Foreground="White"
                      HorizontalAlignment="Center" VerticalAlignment="Center"/>
         </Border>
@@ -156,125 +242,35 @@
 
         <WrapPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,10,0,0">
           <!-- REV-154: режим наставника. Включён — ассистент объясняет и ведёт по шагам. -->
-          <ToggleButton x:Name="TutorModeToggle" Content="🎓 Наставник"
+          <ToggleButton x:Name="TutorModeToggle" Content="🎓 Наставник" Tag="#2E7D52"
                         ToolTip="Режим обучения: ассистент объясняет по шагам и ничего не делает за вас"
-                        Margin="0,0,6,4" Padding="10,5" FontSize="11" FontWeight="SemiBold"
-                        Cursor="Hand" Checked="TutorModeToggle_Changed" Unchecked="TutorModeToggle_Changed"
-                        Background="#2F5D8A" Foreground="White" BorderThickness="0">
-            <ToggleButton.Template>
-              <ControlTemplate TargetType="ToggleButton">
-                <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="12"
-                        Padding="{TemplateBinding Padding}">
-                  <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                </Border>
-                <ControlTemplate.Triggers>
-                  <Trigger Property="IsMouseOver" Value="True">
-                    <Setter TargetName="bd" Property="Background" Value="#3D7EA6"/>
-                  </Trigger>
-                  <Trigger Property="IsChecked" Value="True">
-                    <Setter TargetName="bd" Property="Background" Value="#2E7D52"/>
-                  </Trigger>
-                  <Trigger Property="IsEnabled" Value="False">
-                    <Setter TargetName="bd" Property="Opacity" Value="0.4"/>
-                  </Trigger>
-                </ControlTemplate.Triggers>
-              </ControlTemplate>
-            </ToggleButton.Template>
-          </ToggleButton>
+                        Style="{StaticResource HeaderChipToggle}"
+                        Checked="TutorModeToggle_Changed" Unchecked="TutorModeToggle_Changed"/>
           <!-- REV-177: запись действий для повтора на других уровнях. -->
-          <ToggleButton x:Name="RecordActionsToggle" Content="⏺ Запись"
+          <ToggleButton x:Name="RecordActionsToggle" Content="⏺ Запись" Tag="#B33636"
                         ToolTip="Записать следующие действия (стены, двери, окна, отмеченные параметры), чтобы повторить их на других уровнях"
-                        Margin="0,0,6,4" Padding="10,5" FontSize="11" FontWeight="SemiBold"
-                        Cursor="Hand" Checked="RecordActionsToggle_Changed" Unchecked="RecordActionsToggle_Changed"
-                        Background="#2F5D8A" Foreground="White" BorderThickness="0">
-            <ToggleButton.Template>
-              <ControlTemplate TargetType="ToggleButton">
-                <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="12"
-                        Padding="{TemplateBinding Padding}">
-                  <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                </Border>
-                <ControlTemplate.Triggers>
-                  <Trigger Property="IsMouseOver" Value="True">
-                    <Setter TargetName="bd" Property="Background" Value="#3D7EA6"/>
-                  </Trigger>
-                  <Trigger Property="IsChecked" Value="True">
-                    <Setter TargetName="bd" Property="Background" Value="#B33636"/>
-                  </Trigger>
-                  <Trigger Property="IsEnabled" Value="False">
-                    <Setter TargetName="bd" Property="Opacity" Value="0.4"/>
-                  </Trigger>
-                </ControlTemplate.Triggers>
-              </ControlTemplate>
-            </ToggleButton.Template>
-          </ToggleButton>
+                        Style="{StaticResource HeaderChipToggle}"
+                        Checked="RecordActionsToggle_Changed" Unchecked="RecordActionsToggle_Changed"/>
           <Button x:Name="ExportFeedbackButton" Content="📊 0"
                   ToolTip="Собрать жалобы со скриншотами в архив и отправить разработчику"
-                  Margin="0,0,6,4" Padding="8,5" FontSize="11" FontWeight="SemiBold"
-                  Cursor="Hand" Click="ExportFeedbackButton_Click"
-                  Background="#2F5D8A" Foreground="White" BorderThickness="0" Visibility="Collapsed">
-            <Button.Template>
-              <ControlTemplate TargetType="Button">
-                <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="12"
-                        Padding="{TemplateBinding Padding}">
-                  <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                </Border>
-                <ControlTemplate.Triggers>
-                  <Trigger Property="IsMouseOver" Value="True">
-                    <Setter TargetName="bd" Property="Background" Value="#3D7EA6"/>
-                  </Trigger>
-                </ControlTemplate.Triggers>
-              </ControlTemplate>
-            </Button.Template>
-          </Button>
+                  Style="{StaticResource HeaderChipButton}" Padding="8,5"
+                  Click="ExportFeedbackButton_Click" Visibility="Collapsed"/>
           <!-- REV-178: сохранить последний запрос из чата как свой чип-сценарий. -->
           <Button x:Name="SaveScenarioButton" Content="💾 Сценарий"
                   ToolTip="Сохранить последний запрос как чип — переживает перезапуск Revit"
-                  Margin="0,0,6,4" Padding="8,5" FontSize="11" FontWeight="SemiBold"
-                  Cursor="Hand" Click="SaveScenarioButton_Click" IsEnabled="False"
-                  Background="#2F5D8A" Foreground="White" BorderThickness="0">
-            <Button.Template>
-              <ControlTemplate TargetType="Button">
-                <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="12"
-                        Padding="{TemplateBinding Padding}">
-                  <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                </Border>
-                <ControlTemplate.Triggers>
-                  <Trigger Property="IsMouseOver" Value="True">
-                    <Setter TargetName="bd" Property="Background" Value="#3D7EA6"/>
-                  </Trigger>
-                  <Trigger Property="IsEnabled" Value="False">
-                    <Setter TargetName="bd" Property="Opacity" Value="0.4"/>
-                  </Trigger>
-                </ControlTemplate.Triggers>
-              </ControlTemplate>
-            </Button.Template>
-          </Button>
+                  Style="{StaticResource HeaderChipButton}" Padding="8,5"
+                  Click="SaveScenarioButton_Click" IsEnabled="False"/>
           <Button x:Name="NewChatButton" Content="+ Новый"
                   ToolTip="Новый диалог — очистить историю и журнал созданных элементов"
-                  Margin="0,0,8,4" Padding="10,5" FontSize="11" FontWeight="SemiBold"
-                  Cursor="Hand" Click="NewChatButton_Click"
-                  Background="#2F5D8A" Foreground="White" BorderThickness="0">
-            <Button.Template>
-              <ControlTemplate TargetType="Button">
-                <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="12"
-                        Padding="{TemplateBinding Padding}">
-                  <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                </Border>
-                <ControlTemplate.Triggers>
-                  <Trigger Property="IsMouseOver" Value="True">
-                    <Setter TargetName="bd" Property="Background" Value="#3D7EA6"/>
-                  </Trigger>
-                  <Trigger Property="IsEnabled" Value="False">
-                    <Setter TargetName="bd" Property="Opacity" Value="0.4"/>
-                  </Trigger>
-                </ControlTemplate.Triggers>
-              </ControlTemplate>
-            </Button.Template>
-          </Button>
+                  Style="{StaticResource HeaderChipButton}" Margin="0,0,8,4"
+                  Click="NewChatButton_Click"/>
           <Border x:Name="StatusPill" CornerRadius="12" Padding="10,4" Margin="0,0,0,4"
                   Background="#3D7EA6" VerticalAlignment="Center">
-            <TextBlock x:Name="StatusText" Text="Готов" FontSize="11" FontWeight="SemiBold"
-                       Foreground="White"/>
+            <StackPanel Orientation="Horizontal">
+              <Ellipse Width="6" Height="6" Fill="White" Margin="0,0,6,0" VerticalAlignment="Center"/>
+              <TextBlock x:Name="StatusText" Text="Готов" FontSize="11" FontWeight="SemiBold"
+                         Foreground="White"/>
+            </StackPanel>
           </Border>
         </WrapPanel>
       </Grid>
@@ -306,15 +302,18 @@
       </Border>
 
       <!-- Chat card -->
-      <Border Grid.Row="1" Background="White" BorderBrush="{StaticResource Line}"
-              BorderThickness="1" CornerRadius="14"
+      <Border Grid.Row="1" Background="White" BorderBrush="{StaticResource CardBorder}"
+              BorderThickness="1" CornerRadius="16" ClipToBounds="True"
               AllowDrop="True" PreviewDragOver="Attachment_DragOver" Drop="Attachment_Drop">
+        <Border.Effect>
+          <DropShadowEffect Color="#1A2744" Opacity="0.08" BlurRadius="16" ShadowDepth="3" Direction="270"/>
+        </Border.Effect>
         <Grid>
           <Grid.RowDefinitions>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
           </Grid.RowDefinitions>
-          <ScrollViewer x:Name="ChatScroll" VerticalScrollBarVisibility="Auto" Padding="10,12">
+          <ScrollViewer x:Name="ChatScroll" VerticalScrollBarVisibility="Auto" Padding="12,14">
             <StackPanel x:Name="MessagesPanel"/>
           </ScrollViewer>
 
@@ -371,10 +370,14 @@
       </StackPanel>
     </Grid>
 
-    <!-- Composer -->
-    <Border Grid.Row="2" Background="White" BorderBrush="{StaticResource Line}"
-            BorderThickness="0,1,0,0" Padding="12,10,12,12"
+    <!-- Composer: floating rounded bar with its own shadow, set off from the page
+         instead of a full-bleed strip glued to the bottom edge. -->
+    <Border Grid.Row="2" Background="White" BorderBrush="{StaticResource CardBorder}"
+            BorderThickness="1" CornerRadius="16" Margin="12,10,12,12" Padding="10,10,10,10"
             AllowDrop="True" PreviewDragOver="Attachment_DragOver" Drop="Attachment_Drop">
+      <Border.Effect>
+        <DropShadowEffect Color="#1A2744" Opacity="0.10" BlurRadius="14" ShadowDepth="2" Direction="270"/>
+      </Border.Effect>
       <Grid>
         <Grid.RowDefinitions>
           <RowDefinition Height="Auto"/>
@@ -397,7 +400,8 @@
                   VerticalAlignment="Bottom" MinWidth="40" FontSize="16"
                   Click="AttachButton_Click"/>
 
-          <Border Grid.Column="1" Background="#F7FAFC" BorderBrush="{StaticResource Line}" BorderThickness="1"
+          <Border x:Name="InputWrapper" Grid.Column="1" Background="#F7FAFC"
+                  BorderBrush="{StaticResource CardBorder}" BorderThickness="1"
                   CornerRadius="12" Padding="2">
             <TextBox x:Name="InputBox" MinHeight="52" MaxHeight="120"
                      AcceptsReturn="True" TextWrapping="Wrap"
@@ -406,7 +410,8 @@
                      Padding="10,8" FontSize="13"
                      VerticalContentAlignment="Top"
                      ToolTip="Enter — отправить · Shift+Enter — новая строка · можно перетащить файл в чат"
-                     PreviewKeyDown="InputBox_PreviewKeyDown"/>
+                     PreviewKeyDown="InputBox_PreviewKeyDown"
+                     GotFocus="InputBox_GotFocus" LostFocus="InputBox_LostFocus"/>
           </Border>
 
           <StackPanel Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Bottom">

@@ -6,6 +6,7 @@ using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using revit_mcp_plugin.Core.Assistant;
@@ -241,19 +242,25 @@ namespace revit_mcp_plugin.UI.Assistant
                 Padding = new Thickness(0),
                 Margin = new Thickness(0, 0, 4, 0),
                 Background = Brushes.Transparent,
-                BorderBrush = new SolidColorBrush(Color.FromRgb(0xD5, 0xDE, 0xE8)),
+                BorderBrush = Brushes.Transparent,
                 BorderThickness = new Thickness(1),
                 Cursor = Cursors.Hand,
                 ToolTip = automationName,
             };
             AutomationProperties.SetName(btn, automationName);
-            btn.Template = MakeRoundButtonTemplate(28);
+            btn.Template = MakeRoundButtonTemplate(28, hoverable: true);
             return btn;
         }
 
-        private static ControlTemplate MakeRoundButtonTemplate(double size)
+        /// <summary>
+        /// Recessed by default (transparent) and only shows its rounded fill on hover — a
+        /// row of five always-bordered squares read as five separate controls instead of
+        /// one calm action row.
+        /// </summary>
+        private static ControlTemplate MakeRoundButtonTemplate(double size, bool hoverable = false)
         {
             var factory = new FrameworkElementFactory(typeof(Border));
+            factory.Name = "bd";
             factory.SetBinding(Border.BackgroundProperty,
                 new System.Windows.Data.Binding("Background") { RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.TemplatedParent) });
             factory.SetBinding(Border.BorderBrushProperty,
@@ -265,7 +272,18 @@ namespace revit_mcp_plugin.UI.Assistant
             content.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
             content.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
             factory.AppendChild(content);
-            return new ControlTemplate(typeof(Button)) { VisualTree = factory };
+
+            var template = new ControlTemplate(typeof(Button)) { VisualTree = factory };
+            if (hoverable)
+            {
+                var hover = new Trigger { Property = Button.IsMouseOverProperty, Value = true };
+                hover.Setters.Add(new Setter(Border.BackgroundProperty,
+                    new SolidColorBrush(Color.FromRgb(0xEE, 0xF2, 0xF7)), "bd"));
+                hover.Setters.Add(new Setter(Border.BorderBrushProperty,
+                    new SolidColorBrush(Color.FromRgb(0xD5, 0xDE, 0xE8)), "bd"));
+                template.Triggers.Add(hover);
+            }
+            return template;
         }
 
         private Border BuildDislikeForm()
@@ -717,6 +735,7 @@ namespace revit_mcp_plugin.UI.Assistant
         private static ControlTemplate BuildSimpleRoundedButtonTemplate(double radius)
         {
             var factory = new FrameworkElementFactory(typeof(Border));
+            factory.Name = "bd";
             factory.SetBinding(Border.BackgroundProperty,
                 new System.Windows.Data.Binding("Background") { RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.TemplatedParent) });
             factory.SetBinding(Border.BorderBrushProperty,
@@ -730,7 +749,12 @@ namespace revit_mcp_plugin.UI.Assistant
             cp.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
             cp.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
             factory.AppendChild(cp);
-            return new ControlTemplate(typeof(Button)) { VisualTree = factory };
+
+            var template = new ControlTemplate(typeof(Button)) { VisualTree = factory };
+            var hover = new Trigger { Property = Button.IsMouseOverProperty, Value = true };
+            hover.Setters.Add(new Setter(UIElement.OpacityProperty, 0.8, "bd"));
+            template.Triggers.Add(hover);
+            return template;
         }
 
         private void OnLikeClick()
@@ -828,15 +852,25 @@ namespace revit_mcp_plugin.UI.Assistant
 
         private static FrameworkElement CreateAvatar(bool fromUser)
         {
+            var gradient = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 1) };
+            if (fromUser)
+            {
+                gradient.GradientStops.Add(new GradientStop(Color.FromRgb(0x3D, 0x7E, 0xA6), 0));
+                gradient.GradientStops.Add(new GradientStop(Color.FromRgb(0x2F, 0x5D, 0x8A), 1));
+            }
+            else
+            {
+                gradient.GradientStops.Add(new GradientStop(Color.FromRgb(0x28, 0x43, 0x66), 0));
+                gradient.GradientStops.Add(new GradientStop(Color.FromRgb(0x1A, 0x27, 0x44), 1));
+            }
+
             var circle = new Border
             {
                 Width = 28,
                 Height = 28,
                 CornerRadius = new CornerRadius(14),
                 VerticalAlignment = VerticalAlignment.Top,
-                Background = new SolidColorBrush(fromUser
-                    ? Color.FromRgb(0x2F, 0x5D, 0x8A)
-                    : Color.FromRgb(0x1A, 0x27, 0x44))
+                Background = gradient
             };
             circle.Child = new TextBlock
             {
@@ -853,8 +887,8 @@ namespace revit_mcp_plugin.UI.Assistant
         private Border CreateBubble(string text, bool fromUser, IList<ChatAttachment> attachments)
         {
             var radius = fromUser
-                ? new CornerRadius(14, 14, 4, 14)
-                : new CornerRadius(14, 14, 14, 4);
+                ? new CornerRadius(16, 16, 4, 16)
+                : new CornerRadius(16, 16, 16, 4);
 
             _messageStack = new StackPanel();
             if (attachments != null && attachments.Count > 0)
@@ -876,18 +910,37 @@ namespace revit_mcp_plugin.UI.Assistant
                 _messageStack.Children.Add(_textHost);
             }
 
+            Brush background;
+            if (fromUser)
+            {
+                var g = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 1) };
+                g.GradientStops.Add(new GradientStop(Color.FromRgb(0x3D, 0x7E, 0xA6), 0));
+                g.GradientStops.Add(new GradientStop(Color.FromRgb(0x2F, 0x5D, 0x8A), 1));
+                background = g;
+            }
+            else
+            {
+                background = new SolidColorBrush(Color.FromRgb(0xF3, 0xF6, 0xF9));
+            }
+
             return new Border
             {
                 CornerRadius = radius,
                 Padding = new Thickness(12, 9, 12, 9),
                 MaxWidth = 280,
-                Background = new SolidColorBrush(fromUser
-                    ? Color.FromRgb(0x2F, 0x5D, 0x8A)
-                    : Color.FromRgb(0xF0, 0xF4, 0xF8)),
+                Background = background,
                 BorderBrush = fromUser
                     ? null
-                    : new SolidColorBrush(Color.FromRgb(0xD5, 0xDE, 0xE8)),
+                    : new SolidColorBrush(Color.FromRgb(0xE4, 0xE9, 0xF0)),
                 BorderThickness = fromUser ? new Thickness(0) : new Thickness(1),
+                Effect = new DropShadowEffect
+                {
+                    Color = Color.FromRgb(0x1A, 0x27, 0x44),
+                    Opacity = fromUser ? 0.12 : 0.05,
+                    BlurRadius = 8,
+                    ShadowDepth = 1.5,
+                    Direction = 270
+                },
                 Child = _messageStack
             };
         }

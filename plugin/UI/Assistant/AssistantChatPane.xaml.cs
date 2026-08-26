@@ -765,6 +765,23 @@ namespace revit_mcp_plugin.UI.Assistant
             }
         }
 
+        private static readonly SolidColorBrush InputFocusBorder = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x3D, 0x7E, 0xA6));
+        private static readonly SolidColorBrush InputRestBorder = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xE4, 0xE9, 0xF0));
+
+        /// <summary>Soft-chat redesign: a thin accent outline on the composer while typing,
+        /// instead of it looking identical focused or idle.</summary>
+        private void InputBox_GotFocus(object sender, RoutedEventArgs e)
+        {
+            InputWrapper.BorderBrush = InputFocusBorder;
+            InputWrapper.BorderThickness = new Thickness(1.4);
+        }
+
+        private void InputBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            InputWrapper.BorderBrush = InputRestBorder;
+            InputWrapper.BorderThickness = new Thickness(1);
+        }
+
         private void Attachment_DragOver(object sender, DragEventArgs e)
         {
             if (_busy)
